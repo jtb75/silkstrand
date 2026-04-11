@@ -21,7 +21,7 @@ func NewHealthHandler(s store.Store, redisPing func(ctx context.Context) error) 
 // Healthz is a basic liveness check — always returns 200 if the process is running.
 func (h *HealthHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // Readyz checks connectivity to Postgres and Redis.
@@ -52,5 +52,5 @@ func (h *HealthHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus)
-	json.NewEncoder(w).Encode(status)
+	_ = json.NewEncoder(w).Encode(status)
 }

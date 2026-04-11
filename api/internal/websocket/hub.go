@@ -56,10 +56,9 @@ func (h *Hub) HandleConnection(w http.ResponseWriter, r *http.Request, agentID s
 	defer h.unregister(agentID)
 
 	conn.SetReadLimit(maxMessageSize)
-	conn.SetReadDeadline(time.Now().Add(pongWait))
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(pongWait))
-		return nil
+		return conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	// Start ping ticker
@@ -99,7 +98,7 @@ func (h *Hub) Send(agentID string, msg Message) error {
 		return fmt.Errorf("agent %s not connected", agentID)
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(writeWait))
+	_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 	return conn.WriteJSON(msg)
 }
 
@@ -157,7 +156,7 @@ func (h *Hub) pingLoop(agentID string, conn *websocket.Conn) {
 			return
 		}
 
-		conn.SetWriteDeadline(time.Now().Add(writeWait))
+		_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 		if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 			return
 		}

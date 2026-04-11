@@ -246,7 +246,7 @@ func (s *PostgresStore) CreateScanResults(ctx context.Context, scanID string, re
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO scan_results (scan_id, control_id, title, status, severity, evidence, remediation)
