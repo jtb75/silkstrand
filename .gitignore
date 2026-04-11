@@ -50,3 +50,4 @@ credentials.json
 # Coverage
 coverage/
 *.coverprofile
+api/silkstrand-api

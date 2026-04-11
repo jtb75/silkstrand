@@ -10,7 +10,7 @@ permissions:
   id-token: write
 
 env:
-  GO_VERSION: "1.22"
+  GO_VERSION: "1.24"
   NODE_VERSION: "20"
   TERRAFORM_VERSION: "1.7"
 
@@ -56,11 +56,13 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Lint agent
+        if: hashFiles('agent/go.mod') != ''
         uses: golangci/golangci-lint-action@v4
         with:
           working-directory: agent
 
       - name: Test agent
+        if: hashFiles('agent/go.mod') != ''
         run: cd agent && go test ./... -v -race -coverprofile=coverage.out
 
       - name: Lint API
@@ -107,6 +109,7 @@ jobs:
         run: docker build -t silkstrand-api:test -f api/Dockerfile api/
 
       - name: Build Web image
+        if: hashFiles('web/Dockerfile') != ''
         run: docker build -t silkstrand-web:test -f web/Dockerfile web/
 
   terraform-plan-stage:
