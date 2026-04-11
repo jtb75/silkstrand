@@ -240,9 +240,10 @@ resource "google_service_account_iam_member" "wif_prod" {
 locals {
   # Minimum roles for CI/CD to manage SilkStrand infrastructure
   ci_cd_roles = [
-    "roles/run.developer",              # Deploy Cloud Run revisions
+    "roles/run.admin",                  # Create and manage Cloud Run services
     "roles/iam.serviceAccountUser",     # Act as Cloud Run service account
-    "roles/cloudsql.editor",            # Manage Cloud SQL instances
+    "roles/resourcemanager.projectIamAdmin", # Bind IAM roles to service accounts
+    "roles/cloudsql.admin",             # Create and manage Cloud SQL instances
     "roles/storage.objectAdmin",        # Read/write GCS objects (state + bundles)
     "roles/storage.admin",              # Create/manage GCS buckets via Terraform
     "roles/compute.networkAdmin",       # Manage VPC, firewall, serverless VPC connector
