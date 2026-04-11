@@ -132,6 +132,7 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       resources {
+        cpu_idle = true  # Throttle CPU when no requests (required for scale-to-zero)
         limits = {
           cpu    = "1"
           memory = "256Mi"
