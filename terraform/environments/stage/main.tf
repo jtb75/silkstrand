@@ -19,6 +19,10 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "~> 4.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -54,21 +58,68 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
-# DNS records — will be wired up when Cloud Run services are created
+variable "redis_url" {
+  description = "Upstash Redis URL"
+  type        = string
+  sensitive   = true
+}
+
+variable "jwt_secret" {
+  description = "JWT signing secret"
+  type        = string
+  sensitive   = true
+}
+
+# --- Networking ---
+module "networking" {
+  source = "../../modules/networking"
+
+  project_id  = var.project_id
+  region      = var.region
+  environment = "stage"
+}
+
+# --- Database ---
+module "database" {
+  source = "../../modules/database"
+
+  project_id                  = var.project_id
+  region                      = var.region
+  environment                 = "stage"
+  network_id                  = module.networking.network_id
+  tier                        = "db-f1-micro"
+  private_services_connection = module.networking.private_services_connection
+}
+
+# --- Storage ---
+module "storage" {
+  source = "../../modules/storage"
+
+  project_id  = var.project_id
+  region      = var.region
+  environment = "stage"
+}
+
+# --- Cloud Run API ---
+module "cloud_run" {
+  source = "../../modules/cloud-run"
+
+  project_id         = var.project_id
+  region             = var.region
+  environment        = "stage"
+  vpc_connector_name = module.networking.vpc_connector_name
+  database_url       = module.database.database_url
+  redis_url          = var.redis_url
+  jwt_secret         = var.jwt_secret
+  min_instances      = 0
+  max_instances      = 2
+}
+
+# --- DNS ---
 module "dns" {
   source = "../../modules/dns"
 
-  zone_id     = var.cloudflare_zone_id
-  environment = "stage"
-
-  # These will be populated once Cloud Run modules are added:
-  # api_cloud_run_url = module.cloud_run.api_url
-  # web_cloud_run_url = module.cloud_run.web_url
+  zone_id           = var.cloudflare_zone_id
+  environment       = "stage"
+  api_cloud_run_url = module.cloud_run.service_hostname
 }
-
-# TODO: Add modules as we build out infrastructure:
-# - cloud-run (API + Web services)
-# - cloud-sql (PostgreSQL)
-# - gcs (bundle storage)
-# - networking (VPC, firewall)
-# - iam (service accounts, roles)
