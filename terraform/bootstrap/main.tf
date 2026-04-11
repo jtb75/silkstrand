@@ -35,6 +35,48 @@ variable "region" {
   default     = "us-central1"
 }
 
+# --- Enable Required APIs (Stage) ---
+
+resource "google_project_service" "stage_apis" {
+  provider = google.stage
+  for_each = toset([
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "run.googleapis.com",
+    "sqladmin.googleapis.com",
+    "storage.googleapis.com",
+    "compute.googleapis.com",
+    "vpcaccess.googleapis.com",
+    "servicenetworking.googleapis.com",
+  ])
+
+  project            = var.stage_project
+  service            = each.value
+  disable_on_destroy = false
+}
+
+# --- Enable Required APIs (Prod) ---
+
+resource "google_project_service" "prod_apis" {
+  provider = google.prod
+  for_each = toset([
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "run.googleapis.com",
+    "sqladmin.googleapis.com",
+    "storage.googleapis.com",
+    "compute.googleapis.com",
+    "vpcaccess.googleapis.com",
+    "servicenetworking.googleapis.com",
+  ])
+
+  project            = var.prod_project
+  service            = each.value
+  disable_on_destroy = false
+}
+
 # --- Stage State Bucket ---
 
 provider "google" {
@@ -58,6 +100,8 @@ resource "google_storage_bucket" "tfstate_stage" {
   lifecycle {
     prevent_destroy = true
   }
+
+  depends_on = [google_project_service.stage_apis]
 }
 
 # --- Prod State Bucket ---
@@ -83,6 +127,8 @@ resource "google_storage_bucket" "tfstate_prod" {
   lifecycle {
     prevent_destroy = true
   }
+
+  depends_on = [google_project_service.prod_apis]
 }
 
 # --- Workload Identity Federation for GitHub Actions ---
@@ -95,6 +141,8 @@ resource "google_iam_workload_identity_pool" "github_stage" {
   project                   = var.stage_project
   workload_identity_pool_id = "github-actions"
   display_name              = "GitHub Actions"
+
+  depends_on = [google_project_service.stage_apis]
 }
 
 resource "google_iam_workload_identity_pool_provider" "github_stage" {
@@ -122,6 +170,8 @@ resource "google_service_account" "github_actions_stage" {
   project      = var.stage_project
   account_id   = "github-actions"
   display_name = "GitHub Actions CI/CD"
+
+  depends_on = [google_project_service.stage_apis]
 }
 
 resource "google_service_account_iam_member" "wif_stage" {
@@ -139,6 +189,8 @@ resource "google_iam_workload_identity_pool" "github_prod" {
   project                   = var.prod_project
   workload_identity_pool_id = "github-actions"
   display_name              = "GitHub Actions"
+
+  depends_on = [google_project_service.prod_apis]
 }
 
 resource "google_iam_workload_identity_pool_provider" "github_prod" {
@@ -166,6 +218,8 @@ resource "google_service_account" "github_actions_prod" {
   project      = var.prod_project
   account_id   = "github-actions"
   display_name = "GitHub Actions CI/CD"
+
+  depends_on = [google_project_service.prod_apis]
 }
 
 resource "google_service_account_iam_member" "wif_prod" {
@@ -174,6 +228,45 @@ resource "google_service_account_iam_member" "wif_prod" {
   service_account_id = google_service_account.github_actions_prod.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_prod.name}/attribute.repository/jtb75/silkstrand"
+}
+
+# --- IAM Roles for GitHub Actions Service Accounts ---
+# Least privilege: only what's needed to deploy via Terraform + Cloud Run.
+
+locals {
+  # Minimum roles for CI/CD to manage SilkStrand infrastructure
+  ci_cd_roles = [
+    "roles/run.developer",              # Deploy Cloud Run revisions
+    "roles/iam.serviceAccountUser",     # Act as Cloud Run service account
+    "roles/cloudsql.editor",            # Manage Cloud SQL instances
+    "roles/storage.objectAdmin",        # Read/write GCS objects (state + bundles)
+    "roles/storage.admin",              # Create/manage GCS buckets via Terraform
+    "roles/compute.networkAdmin",       # Manage VPC, firewall, serverless VPC connector
+    "roles/vpcaccess.admin",            # Manage Serverless VPC Access connectors
+    "roles/servicenetworking.networksAdmin", # Private service connections (Cloud SQL)
+    "roles/iam.serviceAccountAdmin",    # Create app service accounts via Terraform
+    "roles/secretmanager.admin",        # Manage secrets (DB passwords, API keys)
+  ]
+}
+
+# Stage IAM bindings
+resource "google_project_iam_member" "stage_ci_cd" {
+  provider = google.stage
+  for_each = toset(local.ci_cd_roles)
+
+  project = var.stage_project
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.github_actions_stage.email}"
+}
+
+# Prod IAM bindings
+resource "google_project_iam_member" "prod_ci_cd" {
+  provider = google.prod
+  for_each = toset(local.ci_cd_roles)
+
+  project = var.prod_project
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.github_actions_prod.email}"
 }
 
 # --- Outputs ---

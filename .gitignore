@@ -22,7 +22,8 @@ build/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
-.terraform.lock.hcl
+# Keep lock files for reproducibility
+# .terraform.lock.hcl
 
 # IDE
 .idea/
