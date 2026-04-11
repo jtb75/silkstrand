@@ -23,8 +23,9 @@ variable "environment" {
 }
 
 variable "api_cloud_run_url" {
-  description = "Cloud Run hostname for the API service"
+  description = "Cloud Run hostname for the API service (unused — domain mapping uses ghs.googlehosted.com)"
   type        = string
+  default     = ""
 }
 
 variable "web_cloud_run_url" {
@@ -40,13 +41,14 @@ locals {
 }
 
 # API endpoint: api.silkstrand.io (prod) / api-stage.silkstrand.io (stage)
+# Points to ghs.googlehosted.com for Cloud Run domain mapping (Google-managed TLS)
 resource "cloudflare_record" "api" {
   zone_id = var.zone_id
   name    = local.api_subdomain
-  content = var.api_cloud_run_url
+  content = "ghs.googlehosted.com"
   type    = "CNAME"
-  proxied = true
-  ttl     = 1 # auto when proxied
+  proxied = false
+  ttl     = 300
 }
 
 # Web app: app.silkstrand.io (prod) / app-stage.silkstrand.io (stage)
@@ -62,14 +64,14 @@ resource "cloudflare_record" "web" {
 }
 
 # Agent WSS endpoint: agent.silkstrand.io (prod) / agent-stage.silkstrand.io (stage)
-# Points to the same API service (WSS is handled by the API server)
+# Points to ghs.googlehosted.com for Cloud Run domain mapping (Google-managed TLS)
 resource "cloudflare_record" "agent" {
   zone_id = var.zone_id
   name    = local.wss_subdomain
-  content = var.api_cloud_run_url
+  content = "ghs.googlehosted.com"
   type    = "CNAME"
-  proxied = true
-  ttl     = 1
+  proxied = false
+  ttl     = 300
 }
 
 output "api_fqdn" {
