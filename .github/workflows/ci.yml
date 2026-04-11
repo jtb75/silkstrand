@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+env:
+  GO_VERSION: "1.22"
+  NODE_VERSION: "20"
+  TERRAFORM_VERSION: "1.7"
+
+jobs:
+  go-lint-test:
+    name: Go Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Lint agent
+        uses: golangci/golangci-lint-action@v4
+        with:
+          working-directory: agent
+
+      - name: Test agent
+        run: cd agent && go test ./... -v -race -coverprofile=coverage.out
+
+      - name: Lint API
+        uses: golangci/golangci-lint-action@v4
+        with:
+          working-directory: api
+
+      - name: Test API
+        run: cd api && go test ./... -v -race -coverprofile=coverage.out
+
+  web-lint-test:
+    name: Web Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: cd web && npm ci
+
+      - name: Lint
+        run: cd web && npm run lint
+
+      - name: Type check
+        run: cd web && npm run typecheck
+
+      - name: Test
+        run: cd web && npm run test -- --ci
+
+  build-images:
+    name: Build Container Images (verify)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -t silkstrand-api:test -f api/Dockerfile api/
+
+      - name: Build Web image
+        run: docker build -t silkstrand-web:test -f web/Dockerfile web/
+
+  terraform-plan-stage:
+    name: Terraform Plan (Stage)
+    runs-on: ubuntu-latest
+    env:
+      TF_WORKING_DIR: terraform/environments/stage
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER_STAGE }}
+          service_account: ${{ vars.WIF_SA_STAGE }}
+
+      - name: Terraform Init
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} init
+
+      - name: Terraform Validate
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} plan -no-color -out=tfplan 2>&1 | tee plan-output.txt
+        continue-on-error: true
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('plan-output.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n... (truncated)' : plan;
+            const body = `### Terraform Plan — Stage (\`silkstrand-stage\`)
+
+            <details>
+            <summary>Click to expand plan output</summary>
+
+            \`\`\`
+            ${truncated}
+            \`\`\`
+
+            </details>
+
+            **Result:** ${{ steps.plan.outcome == 'success' && '✅ Plan succeeded' || '❌ Plan failed' }}`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  terraform-plan-prod:
+    name: Terraform Plan (Prod)
+    runs-on: ubuntu-latest
+    env:
+      TF_WORKING_DIR: terraform/environments/prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER_PROD }}
+          service_account: ${{ vars.WIF_SA_PROD }}
+
+      - name: Terraform Init
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} init
+
+      - name: Terraform Validate
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} plan -no-color -out=tfplan 2>&1 | tee plan-output.txt
+        continue-on-error: true
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('plan-output.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n... (truncated)' : plan;
+            const body = `### Terraform Plan — Prod (\`silkstrand-prod\`)
+
+            <details>
+            <summary>Click to expand plan output</summary>
+
+            \`\`\`
+            ${truncated}
+            \`\`\`
+
+            </details>
+
+            **Result:** ${{ steps.plan.outcome == 'success' && '✅ Plan succeeded' || '❌ Plan failed' }}`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1

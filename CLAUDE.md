@@ -118,3 +118,21 @@ silkstrand/
 - **Polyglot bundle system**: Bundles declare their framework in a manifest. Agent selects the appropriate runner. Standardized JSON output schema is the contract.
 - **MVP credential model**: Basic auth stored in platform. Post-MVP: integrate with Vault, CyberArk, AWS/GCP Secrets Manager.
 - **First benchmark**: CIS PostgreSQL — showcases the authenticated scan differentiator.
+
+## Branching & Deployment
+
+- No direct commits to `main` — all changes via `feature/` or `fix/` branches with PR
+- PR triggers CI: lint, test, build verify, Terraform plan (both envs posted as PR comments)
+- Merge to `main` auto-deploys to `silkstrand-stage`
+- Git tag (`v*`) promotes to `silkstrand-prod` using the same image SHA (no rebuild)
+- Agent binary cross-compiled and attached to GitHub Release on tag
+- GCP auth via Workload Identity Federation (no service account keys)
+- Terraform state in GCS: `gs://silkstrand-{stage,prod}-tfstate/`
+- See `docs/cicd.md` for full details
+
+## GCP Projects
+
+| Environment | Project ID | Deploy Trigger |
+|-------------|-----------|----------------|
+| Stage | `silkstrand-stage` | Auto on merge to `main` |
+| Prod | `silkstrand-prod` | Manual via git tag `v*` |
