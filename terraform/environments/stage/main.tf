@@ -66,7 +66,7 @@ module "dns" {
   # web_cloud_run_url = module.cloud_run.web_url
 }
 
-# Additional modules will be added as we build out infrastructure:
+# TODO: Add modules as we build out infrastructure:
 # - cloud-run (API + Web services)
 # - cloud-sql (PostgreSQL)
 # - gcs (bundle storage)
