@@ -159,6 +159,8 @@ resource "google_iam_workload_identity_pool_provider" "github_stage" {
     "attribute.repository" = "assertion.repository"
   }
 
+  attribute_condition = "assertion.repository == \"jtb75/silkstrand\""
+
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }
@@ -206,6 +208,8 @@ resource "google_iam_workload_identity_pool_provider" "github_prod" {
     "attribute.actor"      = "assertion.actor"
     "attribute.repository" = "assertion.repository"
   }
+
+  attribute_condition = "assertion.repository == \"jtb75/silkstrand\""
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
