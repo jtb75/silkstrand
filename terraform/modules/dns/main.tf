@@ -23,19 +23,17 @@ variable "environment" {
 }
 
 variable "api_cloud_run_url" {
-  description = "Cloud Run URL for the API service (e.g., silkstrand-api-xxxxx.run.app)"
+  description = "Cloud Run hostname for the API service"
   type        = string
-  default     = ""
 }
 
 variable "web_cloud_run_url" {
-  description = "Cloud Run URL for the Web service (e.g., silkstrand-web-xxxxx.run.app)"
+  description = "Cloud Run hostname for the Web service"
   type        = string
   default     = ""
 }
 
 locals {
-  # Stage uses subdomains with stage- prefix, prod uses bare subdomains
   api_subdomain = var.environment == "prod" ? "api" : "api-stage"
   app_subdomain = var.environment == "prod" ? "app" : "app-stage"
   wss_subdomain = var.environment == "prod" ? "agent" : "agent-stage"
@@ -43,8 +41,6 @@ locals {
 
 # API endpoint: api.silkstrand.io (prod) / api-stage.silkstrand.io (stage)
 resource "cloudflare_record" "api" {
-  count = var.api_cloud_run_url != "" ? 1 : 0
-
   zone_id = var.zone_id
   name    = local.api_subdomain
   content = var.api_cloud_run_url
@@ -68,8 +64,6 @@ resource "cloudflare_record" "web" {
 # Agent WSS endpoint: agent.silkstrand.io (prod) / agent-stage.silkstrand.io (stage)
 # Points to the same API service (WSS is handled by the API server)
 resource "cloudflare_record" "agent" {
-  count = var.api_cloud_run_url != "" ? 1 : 0
-
   zone_id = var.zone_id
   name    = local.wss_subdomain
   content = var.api_cloud_run_url

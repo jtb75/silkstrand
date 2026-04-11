@@ -75,7 +75,9 @@ jobs:
         run: |
           terraform -chdir=${{ env.TF_WORKING_DIR }} apply -auto-approve \
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}"
+            -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
+            -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_PROD }}" \
+            -var="jwt_secret=${{ secrets.JWT_SECRET_PROD }}"
 
   deploy-cloud-run:
     name: Deploy Cloud Run Services (Prod)

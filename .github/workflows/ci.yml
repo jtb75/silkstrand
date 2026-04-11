@@ -144,6 +144,8 @@ jobs:
           terraform -chdir=${{ env.TF_WORKING_DIR }} plan -no-color \
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
+            -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_STAGE }}" \
+            -var="jwt_secret=${{ secrets.JWT_SECRET_STAGE }}" \
             -out=tfplan 2>&1 | tee plan-output.txt
         continue-on-error: true
 
@@ -210,6 +212,8 @@ jobs:
           terraform -chdir=${{ env.TF_WORKING_DIR }} plan -no-color \
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
+            -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_PROD }}" \
+            -var="jwt_secret=${{ secrets.JWT_SECRET_PROD }}" \
             -out=tfplan 2>&1 | tee plan-output.txt
         continue-on-error: true
 
