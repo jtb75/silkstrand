@@ -129,7 +129,7 @@ resource "google_service_account_iam_member" "wif_stage" {
 
   service_account_id = google_service_account.github_actions_stage.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_stage.name}/attribute.repository/OWNER/silkstrand"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_stage.name}/attribute.repository/jtb75/silkstrand"
 }
 
 # Prod WIF
@@ -173,7 +173,7 @@ resource "google_service_account_iam_member" "wif_prod" {
 
   service_account_id = google_service_account.github_actions_prod.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_prod.name}/attribute.repository/OWNER/silkstrand"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_prod.name}/attribute.repository/jtb75/silkstrand"
 }
 
 # --- Outputs ---
