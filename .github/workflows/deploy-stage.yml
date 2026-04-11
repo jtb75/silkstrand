@@ -107,7 +107,10 @@ jobs:
         run: terraform -chdir=${{ env.TF_WORKING_DIR }} init
 
       - name: Terraform Apply
-        run: terraform -chdir=${{ env.TF_WORKING_DIR }} apply -auto-approve
+        run: |
+          terraform -chdir=${{ env.TF_WORKING_DIR }} apply -auto-approve \
+            -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}"
 
   deploy-cloud-run:
     name: Deploy Cloud Run Services (Stage)
