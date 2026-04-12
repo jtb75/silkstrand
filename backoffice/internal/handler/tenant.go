@@ -5,22 +5,34 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/jtb75/silkstrand/backoffice/internal/clerkclient"
+	"github.com/jtb75/silkstrand/backoffice/internal/crypto"
 	"github.com/jtb75/silkstrand/backoffice/internal/dcclient"
+	"github.com/jtb75/silkstrand/backoffice/internal/mailer"
 	"github.com/jtb75/silkstrand/backoffice/internal/model"
 	"github.com/jtb75/silkstrand/backoffice/internal/store"
 )
 
 type TenantHandler struct {
-	store  store.Store
-	dc     *dcclient.Client
-	clerk  *clerkclient.Client
-	encKey []byte
+	store        store.Store
+	dc           *dcclient.Client
+	clerk        *clerkclient.Client
+	mailer       mailer.Mailer
+	tenantWebURL string
+	encKey       []byte
 }
 
-func NewTenantHandler(s store.Store, dc *dcclient.Client, clerk *clerkclient.Client, encKey []byte) *TenantHandler {
-	return &TenantHandler{store: s, dc: dc, clerk: clerk, encKey: encKey}
+func NewTenantHandler(s store.Store, dc *dcclient.Client, clerk *clerkclient.Client, m mailer.Mailer, tenantWebURL string, encKey []byte) *TenantHandler {
+	return &TenantHandler{
+		store:        s,
+		dc:           dc,
+		clerk:        clerk,
+		mailer:       m,
+		tenantWebURL: tenantWebURL,
+		encKey:       encKey,
+	}
 }
 
 func (h *TenantHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -154,8 +166,8 @@ func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Phase 4: Send Clerk org invitations for requested users (best-effort).
-		tenant.InviteResults = h.sendInvites(tenant.ClerkOrgID, req.Invites)
+		// Phase 4: Create invitation rows and email each recipient (best-effort).
+		tenant.InviteResults = h.sendInvites(r, tenant.ID, tenant.Name, req.Invites)
 	} else if len(req.Invites) > 0 {
 		// No encryption key means we can't provision on DC, so no Clerk org either.
 		tenant.InviteResults = failAllInvites(req.Invites, "tenant not provisioned; invites skipped")
@@ -164,39 +176,44 @@ func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, tenant)
 }
 
-// sendInvites sends Clerk organization invitations for each invite. Each
-// result is returned (invited or failed) — failures never abort tenant creation.
-func (h *TenantHandler) sendInvites(orgID *string, invites []model.TenantInvite) []model.InviteResult {
+// sendInvites creates invitation rows for each requested invite and emails
+// the recipient a signed link to accept. Failures are captured per-invite
+// and never abort tenant creation.
+func (h *TenantHandler) sendInvites(r *http.Request, tenantID, tenantName string, invites []model.TenantInvite) []model.InviteResult {
 	if len(invites) == 0 {
 		return nil
 	}
-	if orgID == nil || *orgID == "" {
-		return failAllInvites(invites, "clerk org not created")
-	}
-	if h.clerk == nil || h.clerk.SecretKey == "" {
-		return failAllInvites(invites, "clerk disabled")
+	if h.mailer == nil {
+		return failAllInvites(invites, "mailer not configured")
 	}
 
+	expiry := time.Now().Add(7 * 24 * time.Hour)
 	results := make([]model.InviteResult, 0, len(invites))
 	for _, inv := range invites {
-		clerkRole := "org:member"
-		if inv.Role == model.InviteRoleAdmin {
-			clerkRole = "org:admin"
-		}
-		if _, err := h.clerk.CreateOrganizationInvitation(*orgID, inv.Email, clerkRole); err != nil {
-			slog.Warn("creating Clerk invitation", "email", inv.Email, "error", err)
+		plaintext, tokenHash, err := crypto.NewURLToken()
+		if err != nil {
 			results = append(results, model.InviteResult{
-				Email:  inv.Email,
-				Role:   inv.Role,
-				Status: "failed",
-				Error:  err.Error(),
+				Email: inv.Email, Role: inv.Role, Status: "failed", Error: err.Error(),
+			})
+			continue
+		}
+		if _, err := h.store.CreateInvitation(r.Context(), tenantID, inv.Email, inv.Role, tokenHash, expiry, nil); err != nil {
+			slog.Warn("creating invitation row", "email", inv.Email, "error", err)
+			results = append(results, model.InviteResult{
+				Email: inv.Email, Role: inv.Role, Status: "failed", Error: err.Error(),
+			})
+			continue
+		}
+		inviteURL := h.tenantWebURL + "/accept-invite?token=" + plaintext
+		if err := h.mailer.SendInvite(inv.Email, inviteURL, tenantName); err != nil {
+			slog.Warn("sending invitation email", "email", inv.Email, "error", err)
+			results = append(results, model.InviteResult{
+				Email: inv.Email, Role: inv.Role, Status: "failed", Error: "email send failed",
 			})
 			continue
 		}
 		results = append(results, model.InviteResult{
-			Email:  inv.Email,
-			Role:   inv.Role,
-			Status: "invited",
+			Email: inv.Email, Role: inv.Role, Status: "invited",
 		})
 	}
 	return results

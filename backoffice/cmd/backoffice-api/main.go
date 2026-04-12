@@ -83,7 +83,7 @@ func run() error {
 	// Handlers
 	healthH := handler.NewHealthHandler(pgStore, dcClient, cfg.EncryptionKey)
 	dcH := handler.NewDataCenterHandler(pgStore, dcClient, cfg.EncryptionKey)
-	tenantH := handler.NewTenantHandler(pgStore, dcClient, clerkClient, cfg.EncryptionKey)
+	tenantH := handler.NewTenantHandler(pgStore, dcClient, clerkClient, tenantMailer, cfg.TenantWebURL, cfg.EncryptionKey)
 	authH := handler.NewAuthHandler(pgStore, cfg.JWTSecret)
 	tenantAuthH := handler.NewTenantAuthHandler(pgStore, tenantMailer, cfg.TenantJWTSecret, cfg.TenantWebURL)
 
