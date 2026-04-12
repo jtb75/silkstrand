@@ -1,6 +1,0 @@
-project_id           = "silkstrand-backoffice"
-region               = "us-central1"
-backoffice_api_image = "us-central1-docker.pkg.dev/silkstrand-backoffice/silkstrand/backoffice-api:latest"
-backoffice_web_image = "us-central1-docker.pkg.dev/silkstrand-backoffice/silkstrand/backoffice-web:latest"
-jwt_secret           = "CHANGE_ME"
-encryption_key       = "CHANGE_ME_64_HEX_CHARS"

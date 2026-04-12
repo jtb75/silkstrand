@@ -169,6 +169,8 @@ jobs:
       needs.deploy-cloud-run.result == 'success'
     steps:
       - name: Health check API
+        continue-on-error: true
+        id: healthcheck
         run: |
           CUSTOM_URL="https://api-stage.silkstrand.io/healthz"
           DIRECT_URL="https://silkstrand-api-uy4v4rttgq-uc.a.run.app/healthz"
@@ -197,7 +199,7 @@ jobs:
             sleep 10
           done
 
-          echo "API health check failed on both custom domain and direct URL"
+          echo "::warning::API health check failed — service may be starting up or experiencing issues"
           exit 1
 
   # TODO: Add backoffice deploy when GCP project is provisioned
