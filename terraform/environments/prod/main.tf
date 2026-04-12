@@ -232,10 +232,7 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
         value = "production"
       }
 
-      env {
-        name  = "PORT"
-        value = "8081"
-      }
+      # Cloud Run sets PORT automatically from container_port; cannot be set as env var
 
       env {
         name  = "DATABASE_URL"
