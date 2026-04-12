@@ -53,8 +53,11 @@ func (c *Client) do(method, url string, body any, conn DCConn) (*http.Response, 
 }
 
 // HealthCheck performs a health check against the data center API.
+// Uses /readyz instead of /healthz because Cloud Run intercepts /healthz
+// (it's configured as the probe path) — external requests to /healthz
+// return a Google-served 404 without reaching the container.
 func (c *Client) HealthCheck(conn DCConn) error {
-	resp, err := c.http.Get(conn.APIURL + "/healthz")
+	resp, err := c.http.Get(conn.APIURL + "/readyz")
 	if err != nil {
 		return fmt.Errorf("health check request: %w", err)
 	}
