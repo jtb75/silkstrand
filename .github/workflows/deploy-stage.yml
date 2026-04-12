@@ -161,24 +161,22 @@ jobs:
           if [ "${{ needs.build-push-api.outputs.image }}" != "" ]; then
             echo "api_image=${{ needs.build-push-api.outputs.image }}" >> "$GITHUB_OUTPUT"
           else
-            echo "api_image=" >> "$GITHUB_OUTPUT"
+            # Fall back to :latest so terraform-only deploys don't revert
+            # the service to the module default (gcr.io/cloudrun/hello).
+            echo "api_image=${{ env.GAR_REGISTRY }}/api:latest" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Terraform Apply
         run: |
-          EXTRA_VARS=""
-          if [ -n "${{ steps.image.outputs.api_image }}" ]; then
-            EXTRA_VARS="-var=image=${{ steps.image.outputs.api_image }}"
-          fi
           terraform -chdir=${{ env.TF_WORKING_DIR }} apply -auto-approve -lock-timeout=5m \
+            -var="image=${{ steps.image.outputs.api_image }}" \
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_STAGE }}" \
             -var="jwt_secret=${{ secrets.JWT_SECRET_STAGE }}" \
             -var="internal_api_key=${{ secrets.INTERNAL_API_KEY_STAGE }}" \
             -var="clerk_jwks_url=${{ vars.CLERK_JWKS_URL }}" \
-            -var="clerk_issuer_url=${{ vars.CLERK_ISSUER_URL }}" \
-            ${EXTRA_VARS}
+            -var="clerk_issuer_url=${{ vars.CLERK_ISSUER_URL }}"
 
   smoke-test:
     name: Smoke Test (Stage)
