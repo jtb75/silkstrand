@@ -490,5 +490,8 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 |-----------|-------------|
 | 001_initial | data_centers, tenants, admin_users |
 | 002_dc_environment | environment column on data_centers (stage/prod) |
-| 003_clerk_org | clerk_org_id on tenants (kept for rollback; unused after Phase 6) |
+| 003_clerk_org | clerk_org_id on tenants (historical — dropped in 007) |
 | 004_users_auth | users, memberships, invitations, password_resets (tenant auth) |
+| 005_membership_status | status column on memberships (active/suspended) |
+| 006_user_status | status column on users (active/suspended) |
+| 007_drop_clerk_org_id | remove clerk_org_id column |

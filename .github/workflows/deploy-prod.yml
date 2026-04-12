@@ -188,10 +188,7 @@ jobs:
             -var="resend_api_key=${{ secrets.RESEND_API_KEY }}" \
             -var="tenant_web_url=https://silkstrand-web-baglom43cq-uc.a.run.app" \
             -var="bootstrap_admin_email=${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}" \
-            -var="bootstrap_admin_password=${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}" \
-            -var="clerk_secret_key=${{ secrets.CLERK_SECRET_KEY }}" \
-            -var="clerk_jwks_url=${{ vars.CLERK_JWKS_URL }}" \
-            -var="clerk_issuer_url=${{ vars.CLERK_ISSUER_URL }}"
+            -var="bootstrap_admin_password=${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}"
 
   smoke-test:
     name: Smoke Test (Prod)
