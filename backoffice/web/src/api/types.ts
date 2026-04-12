@@ -95,3 +95,40 @@ export interface UpdateTenantRequest {
 export interface UpdateTenantStatusRequest {
   status: 'active' | 'suspended';
 }
+
+// Users (cross-tenant backoffice view)
+
+export interface User {
+  id: string;
+  email: string;
+  status: 'active' | 'suspended';
+  email_verified_at?: string | null;
+  last_login_at?: string | null;
+  tenant_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserMembership {
+  tenant_id: string;
+  tenant_name: string;
+  data_center_id: string;
+  dc_name: string;
+  environment: string;
+  role: 'admin' | 'member';
+  status: 'active' | 'suspended';
+  created_at: string;
+}
+
+export interface UserPendingInvite {
+  id: string;
+  email: string;
+  role: 'admin' | 'member';
+  expires_at: string;
+  created_at: string;
+}
+
+export interface UserDetail extends User {
+  memberships: UserMembership[];
+  pending_invites: UserPendingInvite[];
+}

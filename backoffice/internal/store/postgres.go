@@ -348,9 +348,9 @@ func (s *PostgresStore) CountAdmins(ctx context.Context) (int, error) {
 func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
 	var u model.User
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, email, COALESCE(password_hash, ''), email_verified_at, last_login_at, created_at, updated_at
+		`SELECT id, email, COALESCE(password_hash, ''), status, email_verified_at, last_login_at, created_at, updated_at
 		   FROM users WHERE email = $1`, email).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Status, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -363,9 +363,9 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*mode
 func (s *PostgresStore) GetUserByID(ctx context.Context, id string) (*model.User, error) {
 	var u model.User
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, email, COALESCE(password_hash, ''), email_verified_at, last_login_at, created_at, updated_at
+		`SELECT id, email, COALESCE(password_hash, ''), status, email_verified_at, last_login_at, created_at, updated_at
 		   FROM users WHERE id = $1`, id).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Status, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -380,9 +380,9 @@ func (s *PostgresStore) CreateUser(ctx context.Context, email, passwordHash stri
 	err := s.db.QueryRowContext(ctx,
 		`INSERT INTO users (email, password_hash)
 		 VALUES ($1, $2)
-		 RETURNING id, email, COALESCE(password_hash, ''), email_verified_at, last_login_at, created_at, updated_at`,
+		 RETURNING id, email, COALESCE(password_hash, ''), status, email_verified_at, last_login_at, created_at, updated_at`,
 		email, passwordHash).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Status, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("creating user: %w", err)
 	}
@@ -663,6 +663,113 @@ func (s *PostgresStore) DeleteInvitation(ctx context.Context, id, tenantID strin
 		`DELETE FROM invitations WHERE id = $1 AND tenant_id = $2`, id, tenantID)
 	if err != nil {
 		return fmt.Errorf("deleting invitation: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListAllUsers(ctx context.Context) ([]model.UserListItem, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT u.id, u.email, u.status, u.email_verified_at, u.last_login_at, u.created_at, u.updated_at,
+		        COALESCE((SELECT COUNT(*) FROM memberships m WHERE m.user_id = u.id), 0) AS tenant_count
+		   FROM users u
+		  ORDER BY u.email`)
+	if err != nil {
+		return nil, fmt.Errorf("listing users: %w", err)
+	}
+	defer rows.Close()
+	var out []model.UserListItem
+	for rows.Next() {
+		var it model.UserListItem
+		if err := rows.Scan(&it.ID, &it.Email, &it.Status,
+			&it.EmailVerifiedAt, &it.LastLoginAt, &it.CreatedAt, &it.UpdatedAt,
+			&it.TenantCount); err != nil {
+			return nil, fmt.Errorf("scanning user: %w", err)
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetUserDetail(ctx context.Context, id string) (*model.UserDetail, error) {
+	user, err := s.GetUserByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, nil
+	}
+	// Memberships
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.tenant_id, t.name,
+		        t.data_center_id, dc.name, dc.environment,
+		        m.role, m.status, m.created_at
+		   FROM memberships m
+		   JOIN tenants t ON t.id = m.tenant_id
+		   JOIN data_centers dc ON dc.id = t.data_center_id
+		  WHERE m.user_id = $1
+		  ORDER BY t.name`, id)
+	if err != nil {
+		return nil, fmt.Errorf("listing user memberships: %w", err)
+	}
+	defer rows.Close()
+	memberships := []model.UserMembership{}
+	for rows.Next() {
+		var m model.UserMembership
+		if err := rows.Scan(&m.TenantID, &m.TenantName, &m.DataCenterID, &m.DCName,
+			&m.Environment, &m.Role, &m.Status, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning user membership: %w", err)
+		}
+		memberships = append(memberships, m)
+	}
+	// Pending invites for this email
+	inviteRows, err := s.db.QueryContext(ctx,
+		`SELECT id, email, role, expires_at, created_at
+		   FROM invitations
+		  WHERE email = $1
+		    AND accepted_at IS NULL
+		    AND expires_at > NOW()
+		  ORDER BY created_at DESC`, user.Email)
+	if err != nil {
+		return nil, fmt.Errorf("listing user pending invites: %w", err)
+	}
+	defer inviteRows.Close()
+	invites := []model.PendingInvite{}
+	for inviteRows.Next() {
+		var p model.PendingInvite
+		if err := inviteRows.Scan(&p.ID, &p.Email, &p.Role, &p.ExpiresAt, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning invite: %w", err)
+		}
+		invites = append(invites, p)
+	}
+	return &model.UserDetail{
+		User:           *user,
+		Memberships:    memberships,
+		PendingInvites: invites,
+	}, nil
+}
+
+func (s *PostgresStore) UpdateUserStatus(ctx context.Context, id, status string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2`, status, id)
+	if err != nil {
+		return fmt.Errorf("updating user status: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *PostgresStore) DeleteUser(ctx context.Context, id string) error {
+	// memberships/password_resets have ON DELETE CASCADE so this removes them.
+	result, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("deleting user: %w", err)
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {

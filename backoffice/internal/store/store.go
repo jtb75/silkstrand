@@ -40,6 +40,10 @@ type Store interface {
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
 	TouchUserLogin(ctx context.Context, userID string) error
 	MarkUserEmailVerified(ctx context.Context, userID string) error
+	ListAllUsers(ctx context.Context) ([]model.UserListItem, error)
+	GetUserDetail(ctx context.Context, id string) (*model.UserDetail, error)
+	UpdateUserStatus(ctx context.Context, id, status string) error
+	DeleteUser(ctx context.Context, id string) error
 
 	// Memberships
 	CreateMembership(ctx context.Context, userID, tenantID, role string) (*model.Membership, error)

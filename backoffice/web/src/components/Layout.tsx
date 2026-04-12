@@ -20,6 +20,7 @@ export default function Layout() {
           </NavLink>
           <NavLink to="/data-centers">Data Centers</NavLink>
           <NavLink to="/tenants">Tenants</NavLink>
+          <NavLink to="/users">Users</NavLink>
         </nav>
         <div className="sidebar-footer">
           <button className="logout-btn" onClick={handleLogout}>

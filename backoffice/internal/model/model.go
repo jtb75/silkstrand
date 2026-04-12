@@ -48,16 +48,50 @@ const (
 // Prevents abuse/runaway invitation of one account across thousands of orgs.
 const MaxMembershipsPerUser = 20
 
+// User statuses.
+const (
+	UserStatusActive    = "active"
+	UserStatusSuspended = "suspended"
+)
+
 // User is an end-user that authenticates into the tenant frontend.
 // Distinct from AdminUser (backoffice admin).
 type User struct {
 	ID              string     `json:"id"`
 	Email           string     `json:"email"`
 	PasswordHash    string     `json:"-"`
+	Status          string     `json:"status"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
 	LastLoginAt     *time.Time `json:"last_login_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// UserListItem is the row shape returned by the backoffice Users list
+// endpoint — user record plus aggregate membership count.
+type UserListItem struct {
+	User
+	TenantCount int `json:"tenant_count"`
+}
+
+// UserMembership is a joined view for the backoffice Users detail page:
+// one membership with enough tenant/DC context to render and act on it.
+type UserMembership struct {
+	TenantID     string    `json:"tenant_id"`
+	TenantName   string    `json:"tenant_name"`
+	DataCenterID string    `json:"data_center_id"`
+	DCName       string    `json:"dc_name"`
+	Environment  string    `json:"environment"`
+	Role         string    `json:"role"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// UserDetail is what GET /api/v1/users/{id} returns.
+type UserDetail struct {
+	User
+	Memberships     []UserMembership `json:"memberships"`
+	PendingInvites  []PendingInvite  `json:"pending_invites"`
 }
 
 // Membership statuses.

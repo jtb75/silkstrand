@@ -159,3 +159,37 @@ export function deleteTenant(id: string): Promise<void> {
     method: 'DELETE',
   });
 }
+
+// Users (cross-tenant management)
+
+export function listUsers(): Promise<import('./types').User[]> {
+  return request('/api/v1/users');
+}
+
+export function getUser(id: string): Promise<import('./types').UserDetail> {
+  return request(`/api/v1/users/${id}`);
+}
+
+export function updateUserStatus(id: string, status: 'active' | 'suspended'): Promise<void> {
+  return request(`/api/v1/users/${id}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function deleteUser(id: string): Promise<void> {
+  return request(`/api/v1/users/${id}`, { method: 'DELETE' });
+}
+
+export function updateUserMembershipStatus(
+  userId: string, tenantId: string, status: 'active' | 'suspended',
+): Promise<void> {
+  return request(`/api/v1/users/${userId}/memberships/${tenantId}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function removeUserMembership(userId: string, tenantId: string): Promise<void> {
+  return request(`/api/v1/users/${userId}/memberships/${tenantId}`, { method: 'DELETE' });
+}
