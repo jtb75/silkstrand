@@ -219,18 +219,19 @@ export default function Tenants() {
             {invites.map((inv, i) => (
               <div
                 key={i}
-                style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}
+                style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}
               >
                 <input
                   type="email"
                   placeholder="user@example.com"
                   value={inv.email}
                   onChange={(e) => updateInvite(i, { email: e.target.value })}
-                  style={{ flex: 1 }}
+                  style={{ flex: '1 1 auto', minWidth: 0 }}
                 />
                 <select
                   value={inv.role}
                   onChange={(e) => updateInvite(i, { role: e.target.value as InviteRole })}
+                  style={{ flex: '0 0 140px' }}
                 >
                   <option value="admin">Admin</option>
                   <option value="basic">Basic</option>
@@ -240,6 +241,7 @@ export default function Tenants() {
                   className="btn btn-sm"
                   onClick={() => removeInvite(i)}
                   aria-label="Remove invite"
+                  style={{ flex: '0 0 auto' }}
                 >
                   ×
                 </button>
