@@ -171,9 +171,9 @@ resource "google_cloud_run_v2_service" "api" {
   }
 
   lifecycle {
-    ignore_changes = [
-      template[0].containers[0].image,
-    ]
+    # Image is updated via Terraform -var="image=..." during CI/CD deploys.
+    # Do NOT use gcloud run deploy — it creates v1 API revisions that conflict
+    # with this v2 service's routing.
   }
 }
 

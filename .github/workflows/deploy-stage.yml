@@ -54,6 +54,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [changes]
     if: needs.changes.outputs.api == 'true'
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,11 +69,14 @@ jobs:
         run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
       - name: Build and push
+        id: meta
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          docker build -t ${{ env.GAR_REGISTRY }}/api:sha-${SHORT_SHA} -t ${{ env.GAR_REGISTRY }}/api:latest -f api/Dockerfile api/
-          docker push ${{ env.GAR_REGISTRY }}/api:sha-${SHORT_SHA}
+          IMAGE="${{ env.GAR_REGISTRY }}/api:sha-${SHORT_SHA}"
+          docker build -t ${IMAGE} -t ${{ env.GAR_REGISTRY }}/api:latest -f api/Dockerfile api/
+          docker push ${IMAGE}
           docker push ${{ env.GAR_REGISTRY }}/api:latest
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
 
   build-push-web:
     name: Build & Push Web Image
@@ -98,11 +103,17 @@ jobs:
           docker push ${{ env.GAR_REGISTRY }}/web:sha-${SHORT_SHA}
           docker push ${{ env.GAR_REGISTRY }}/web:latest
 
-  terraform-apply:
-    name: Terraform Apply (Stage)
+  # Deploy via Terraform — this is the ONLY way to update Cloud Run services.
+  # Do NOT use gcloud run deploy — it creates v1 API revisions that conflict
+  # with the Terraform-managed v2 services.
+  deploy:
+    name: Deploy to Stage (Terraform)
     runs-on: ubuntu-latest
-    needs: [changes]
-    if: needs.changes.outputs.terraform == 'true'
+    needs: [changes, build-push-api, build-push-web]
+    if: |
+      always() &&
+      (needs.changes.outputs.api == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.terraform == 'true') &&
+      !contains(needs.*.result, 'failure')
     env:
       TF_WORKING_DIR: terraform/environments/stage
     steps:
@@ -121,100 +132,53 @@ jobs:
       - name: Terraform Init
         run: terraform -chdir=${{ env.TF_WORKING_DIR }} init
 
+      - name: Determine API image
+        id: image
+        run: |
+          if [ "${{ needs.build-push-api.outputs.image }}" != "" ]; then
+            echo "api_image=${{ needs.build-push-api.outputs.image }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "api_image=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Terraform Apply
         run: |
+          EXTRA_VARS=""
+          if [ -n "${{ steps.image.outputs.api_image }}" ]; then
+            EXTRA_VARS="-var=image=${{ steps.image.outputs.api_image }}"
+          fi
           terraform -chdir=${{ env.TF_WORKING_DIR }} apply -auto-approve \
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_STAGE }}" \
-            -var="jwt_secret=${{ secrets.JWT_SECRET_STAGE }}"
-
-  deploy-cloud-run:
-    name: Deploy Cloud Run Services (Stage)
-    runs-on: ubuntu-latest
-    needs: [changes, build-push-api, build-push-web]
-    if: |
-      always() &&
-      (needs.changes.outputs.api == 'true' || needs.changes.outputs.web == 'true') &&
-      !contains(needs.*.result, 'failure')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER_STAGE }}
-          service_account: ${{ vars.WIF_SA_STAGE }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Deploy API to Cloud Run
-        if: needs.changes.outputs.api == 'true'
-        run: |
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          gcloud run deploy silkstrand-api \
-            --project=${{ env.GCP_PROJECT }} \
-            --region=${{ env.GCP_REGION }} \
-            --image=${{ env.GAR_REGISTRY }}/api:sha-${SHORT_SHA} \
-            --quiet
+            -var="jwt_secret=${{ secrets.JWT_SECRET_STAGE }}" \
+            ${EXTRA_VARS}
 
   smoke-test:
     name: Smoke Test (Stage)
     runs-on: ubuntu-latest
-    needs: [changes, deploy-cloud-run]
+    needs: [changes, deploy]
     if: |
       always() &&
-      (needs.changes.outputs.api == 'true' || needs.changes.outputs.web == 'true') &&
-      needs.deploy-cloud-run.result == 'success'
+      (needs.changes.outputs.api == 'true' || needs.changes.outputs.terraform == 'true') &&
+      needs.deploy.result == 'success'
     steps:
       - name: Health check API
         continue-on-error: true
-        id: healthcheck
         run: |
-          CUSTOM_URL="https://api-stage.silkstrand.io/healthz"
-          DIRECT_URL="https://silkstrand-api-uy4v4rttgq-uc.a.run.app/healthz"
+          # Use the Terraform-managed v2 URL
+          API_URL="https://api-stage.silkstrand.io/healthz"
 
-          # Try custom domain first
-          echo "Trying custom domain: $CUSTOM_URL"
-          for i in 1 2 3; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" "$CUSTOM_URL")
+          echo "Checking: $API_URL"
+          for i in 1 2 3 4 5 6; do
+            status=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL")
             if [ "$status" = "200" ]; then
-              echo "API health check passed (custom domain)"
+              echo "API health check passed"
               exit 0
             fi
-            echo "Attempt $i: got $status, retrying..."
-            sleep 10
+            echo "Attempt $i: got $status, retrying in 15s..."
+            sleep 15
           done
 
-          # Fall back to direct Cloud Run URL
-          echo "Custom domain unreachable, falling back to direct URL: $DIRECT_URL"
-          for i in 1 2 3; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" "$DIRECT_URL")
-            if [ "$status" = "200" ]; then
-              echo "API health check passed (direct Cloud Run URL)"
-              exit 0
-            fi
-            echo "Fallback attempt $i: got $status, retrying..."
-            sleep 10
-          done
-
-          echo "::warning::API health check failed — service may be starting up or experiencing issues"
+          echo "::warning::API health check failed — service may need domain mapping reconfiguration"
           exit 1
-
-  # TODO: Add backoffice deploy when GCP project is provisioned
-  # backoffice-build-push:
-  #   name: Build & Push Backoffice Images
-  #   runs-on: ubuntu-latest
-  #   needs: [changes]
-  #   if: needs.changes.outputs.backoffice == 'true'
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Build & Push Backoffice API Image
-  #       run: |
-  #         SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-  #         docker build -t backoffice-api:sha-${SHORT_SHA} -f backoffice/Dockerfile backoffice/
-  #     - name: Build & Push Backoffice Web Image
-  #       run: |
-  #         SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-  #         docker build -t backoffice-web:sha-${SHORT_SHA} -f backoffice/web/Dockerfile backoffice/web/
