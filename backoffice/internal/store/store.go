@@ -48,6 +48,9 @@ type Store interface {
 	ListMembershipsByUser(ctx context.Context, userID string) ([]model.MembershipSummary, error)
 	ListMembershipsByTenant(ctx context.Context, tenantID string) ([]model.Membership, error)
 	ListTenantMembers(ctx context.Context, tenantID string) ([]model.TenantMember, error)
+	UpdateMembershipStatus(ctx context.Context, userID, tenantID, status string) error
+	ListPendingInvitations(ctx context.Context, tenantID string) ([]model.PendingInvite, error)
+	DeleteInvitation(ctx context.Context, id, tenantID string) error
 	CountMembershipsByUser(ctx context.Context, userID string) (int, error)
 
 	// Invitations

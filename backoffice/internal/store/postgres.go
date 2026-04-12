@@ -425,10 +425,11 @@ func (s *PostgresStore) CreateMembership(ctx context.Context, userID, tenantID, 
 	err := s.db.QueryRowContext(ctx,
 		`INSERT INTO memberships (user_id, tenant_id, role)
 		 VALUES ($1, $2, $3)
-		 ON CONFLICT (user_id, tenant_id) DO UPDATE SET role = EXCLUDED.role
-		 RETURNING id, user_id, tenant_id, role, created_at`,
+		 ON CONFLICT (user_id, tenant_id) DO UPDATE
+		   SET role = EXCLUDED.role, status = 'active'
+		 RETURNING id, user_id, tenant_id, role, status, created_at`,
 		userID, tenantID, role).
-		Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.CreatedAt)
+		Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.Status, &m.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("creating membership: %w", err)
 	}
@@ -451,10 +452,10 @@ func (s *PostgresStore) DeleteMembership(ctx context.Context, userID, tenantID s
 func (s *PostgresStore) GetMembership(ctx context.Context, userID, tenantID string) (*model.Membership, error) {
 	var m model.Membership
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, tenant_id, role, created_at
+		`SELECT id, user_id, tenant_id, role, status, created_at
 		   FROM memberships WHERE user_id = $1 AND tenant_id = $2`,
 		userID, tenantID).
-		Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.CreatedAt)
+		Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.Status, &m.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -471,6 +472,7 @@ func (s *PostgresStore) ListMembershipsByUser(ctx context.Context, userID string
 		   JOIN tenants t ON t.id = m.tenant_id
 		   JOIN data_centers dc ON dc.id = t.data_center_id
 		  WHERE m.user_id = $1
+		    AND m.status = 'active'
 		    AND t.status = 'active'
 		    AND dc.status = 'active'
 		  ORDER BY t.name`, userID)
@@ -492,7 +494,7 @@ func (s *PostgresStore) ListMembershipsByUser(ctx context.Context, userID string
 
 func (s *PostgresStore) ListMembershipsByTenant(ctx context.Context, tenantID string) ([]model.Membership, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, tenant_id, role, created_at
+		`SELECT id, user_id, tenant_id, role, status, created_at
 		   FROM memberships WHERE tenant_id = $1 ORDER BY created_at`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("listing memberships by tenant: %w", err)
@@ -501,7 +503,7 @@ func (s *PostgresStore) ListMembershipsByTenant(ctx context.Context, tenantID st
 	var out []model.Membership
 	for rows.Next() {
 		var m model.Membership
-		if err := rows.Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.Status, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning: %w", err)
 		}
 		out = append(out, m)
@@ -597,7 +599,7 @@ func (s *PostgresStore) MarkPasswordResetUsed(ctx context.Context, tokenHash []b
 
 func (s *PostgresStore) ListTenantMembers(ctx context.Context, tenantID string) ([]model.TenantMember, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT u.id, u.email, m.role, m.created_at
+		`SELECT u.id, u.email, m.role, m.status, m.created_at
 		   FROM memberships m
 		   JOIN users u ON u.id = m.user_id
 		  WHERE m.tenant_id = $1
@@ -609,10 +611,62 @@ func (s *PostgresStore) ListTenantMembers(ctx context.Context, tenantID string) 
 	var out []model.TenantMember
 	for rows.Next() {
 		var m model.TenantMember
-		if err := rows.Scan(&m.UserID, &m.Email, &m.Role, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.UserID, &m.Email, &m.Role, &m.Status, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning member: %w", err)
 		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpdateMembershipStatus(ctx context.Context, userID, tenantID, status string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE memberships SET status = $1 WHERE user_id = $2 AND tenant_id = $3`,
+		status, userID, tenantID)
+	if err != nil {
+		return fmt.Errorf("updating membership status: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListPendingInvitations(ctx context.Context, tenantID string) ([]model.PendingInvite, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, email, role, expires_at, created_at
+		   FROM invitations
+		  WHERE tenant_id = $1
+		    AND accepted_at IS NULL
+		    AND expires_at > NOW()
+		  ORDER BY created_at DESC`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing pending invitations: %w", err)
+	}
+	defer rows.Close()
+	var out []model.PendingInvite
+	for rows.Next() {
+		var p model.PendingInvite
+		if err := rows.Scan(&p.ID, &p.Email, &p.Role, &p.ExpiresAt, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning invitation: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// DeleteInvitation removes a pending invitation. Requires tenantID match
+// so an admin can only cancel invitations for their own tenant.
+func (s *PostgresStore) DeleteInvitation(ctx context.Context, id, tenantID string) error {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM invitations WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("deleting invitation: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }

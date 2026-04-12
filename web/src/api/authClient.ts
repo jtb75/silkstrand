@@ -51,6 +51,15 @@ export interface TenantMember {
   user_id: string;
   email: string;
   role: 'admin' | 'member';
+  status: 'active' | 'suspended';
+  created_at: string;
+}
+
+export interface PendingInvite {
+  id: string;
+  email: string;
+  role: 'admin' | 'member';
+  expires_at: string;
   created_at: string;
 }
 
@@ -89,4 +98,17 @@ export const authApi = {
 
   removeMember: (jwt: string, userId: string) =>
     del(`/api/v1/tenant-auth/members/${userId}`, jwt),
+
+  updateMemberStatus: (jwt: string, userId: string, status: 'active' | 'suspended') =>
+    fetch(`${BASE_URL}/api/v1/tenant-auth/members/${userId}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ status }),
+    }).then((res) => handle<void>(res)),
+
+  listInvitations: (jwt: string) =>
+    get<PendingInvite[]>('/api/v1/tenant-auth/invitations', jwt),
+
+  cancelInvitation: (jwt: string, id: string) =>
+    del(`/api/v1/tenant-auth/invitations/${id}`, jwt),
 };
