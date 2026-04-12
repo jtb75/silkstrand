@@ -19,28 +19,30 @@ const tenantClaimsKey contextKey = "tenant_claims"
 // with every DC API, which validates the token to scope requests to the
 // correct tenant.
 type TenantClaims struct {
-	Sub      string `json:"sub"`       // user UUID
-	Email    string `json:"email"`
-	TenantID string `json:"tenant_id"` // active tenant
-	DCID     string `json:"dc_id"`     // active tenant's DC
-	Role     string `json:"role"`      // "admin" or "member"
-	Iat      int64  `json:"iat"`
-	Exp      int64  `json:"exp"`
+	Sub         string `json:"sub"`           // user UUID
+	Email       string `json:"email"`
+	TenantID    string `json:"tenant_id"`     // DC-side tenant UUID — what the DC validates
+	BoTenantID  string `json:"bo_tenant_id"`  // Backoffice-side tenant UUID — for switch-org and UI routing
+	DCID        string `json:"dc_id"`         // active tenant's DC
+	Role        string `json:"role"`          // "admin" or "member"
+	Iat         int64  `json:"iat"`
+	Exp         int64  `json:"exp"`
 }
 
 // CreateTenantJWT issues a tenant-scoped token. Expiry is 1h by design; the
 // frontend calls /tenant-auth/switch-org or refreshes on expiry.
-func CreateTenantJWT(secret, userID, email, tenantID, dcID, role string, expiry time.Duration) (string, error) {
+func CreateTenantJWT(secret, userID, email, tenantID, boTenantID, dcID, role string, expiry time.Duration) (string, error) {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	now := time.Now()
 	claims := TenantClaims{
-		Sub:      userID,
-		Email:    email,
-		TenantID: tenantID,
-		DCID:     dcID,
-		Role:     role,
-		Iat:      now.Unix(),
-		Exp:      now.Add(expiry).Unix(),
+		Sub:        userID,
+		Email:      email,
+		TenantID:   tenantID,
+		BoTenantID: boTenantID,
+		DCID:       dcID,
+		Role:       role,
+		Iat:        now.Unix(),
+		Exp:        now.Add(expiry).Unix(),
 	}
 	body, err := json.Marshal(claims)
 	if err != nil {
