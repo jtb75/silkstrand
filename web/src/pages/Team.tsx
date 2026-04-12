@@ -29,16 +29,25 @@ export default function Team() {
       <h1>Team Settings</h1>
       <p className="muted">Invite users, manage roles, and configure your organization.</p>
       <div style={{ marginTop: '1.5rem' }}>
+        {/*
+          Hide the "Leave organization" row in Clerk's OrganizationProfile.
+          Tenant membership is managed by SilkStrand admins via the backoffice,
+          not by users leaving themselves out. Clerk renders a
+          data-localization-key attribute on each section's strings, so we use
+          :has() to hide the whole row that contains the leave-organization key.
+        */}
+        <style>{`
+          .cl-profileSection:has([data-localization-key*="leaveOrganization"]),
+          .cl-profileSectionContent:has([data-localization-key*="leaveOrganization"]),
+          .cl-profileSectionItem:has([data-localization-key*="leaveOrganization"]) {
+            display: none !important;
+          }
+        `}</style>
         <OrganizationProfile
           appearance={{
             elements: {
               rootBox: { width: '100%' },
               card: { width: '100%', boxShadow: 'none', border: '1px solid #e5e7eb' },
-              // Hide the "Leave organization" action — tenant membership is
-              // managed by SilkStrand admins via the backoffice, not by
-              // end users leaving themselves out.
-              profileSectionPrimaryButton__leaveOrganization: { display: 'none' },
-              profileSection__leaveOrganization: { display: 'none' },
             },
           }}
         />
