@@ -91,11 +91,14 @@ func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invite email is required")
 			return
 		}
-		if inv.Role != model.InviteRoleAdmin && inv.Role != model.InviteRoleBasic {
-			writeError(w, http.StatusBadRequest, "invite role must be 'admin' or 'basic'")
+		// Accept both legacy "basic" and canonical "member"; normalise to "member".
+		if inv.Role == "basic" {
+			req.Invites[i].Role = model.InviteRoleBasic
+		}
+		if req.Invites[i].Role != model.InviteRoleAdmin && req.Invites[i].Role != model.InviteRoleBasic {
+			writeError(w, http.StatusBadRequest, "invite role must be 'admin' or 'member'")
 			return
 		}
-		_ = i
 	}
 
 	// Look up the data center

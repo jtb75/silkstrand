@@ -121,7 +121,7 @@ export default function Tenants() {
 
   function addInvite() {
     if (invites.length >= 3) return;
-    setInvites([...invites, { email: '', role: 'basic' }]);
+    setInvites([...invites, { email: '', role: 'member' }]);
   }
 
   function updateInvite(idx: number, patch: Partial<TenantInvite>) {
@@ -234,7 +234,7 @@ export default function Tenants() {
                   style={{ flex: '0 0 140px' }}
                 >
                   <option value="admin">Admin</option>
-                  <option value="basic">Basic</option>
+                  <option value="member">Member</option>
                 </select>
                 <button
                   type="button"
