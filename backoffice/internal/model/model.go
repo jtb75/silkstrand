@@ -163,7 +163,7 @@ type CreateTenantRequest struct {
 // Invite role constants (simple UI-facing values; mapped to Clerk roles in handler).
 const (
 	InviteRoleAdmin = "admin"
-	InviteRoleBasic = "basic"
+	InviteRoleBasic = "member" // historical name kept for API compat; value is "member"
 )
 
 type TenantInvite struct {

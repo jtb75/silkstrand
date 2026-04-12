@@ -27,7 +27,7 @@ export interface Tenant {
   invite_results?: InviteResult[];
 }
 
-export type InviteRole = 'admin' | 'basic';
+export type InviteRole = 'admin' | 'member';
 
 export interface TenantInvite {
   email: string;
