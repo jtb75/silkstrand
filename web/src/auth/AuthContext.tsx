@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { authApi, type MeResponse } from '../api/authClient';
 import { getToken, setToken, clearToken, setDCApiURL } from '../api/client';
 import { AuthContext, type AuthState } from './context';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [state, setState] = useState<AuthState>({
     user: null,
     memberships: [],
@@ -55,16 +57,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     clearToken();
+    queryClient.clear();
     setState({ user: null, memberships: [], active: null, loading: false, error: null });
-  }, []);
+  }, [queryClient]);
 
   const switchOrg = useCallback(async (tenantId: string) => {
     const tok = getToken();
     if (!tok) throw new Error('not authenticated');
     const res = await authApi.switchOrg(tok, tenantId);
     setToken(res.token);
+    // Nuke all cached data — it was scoped to the previous tenant's JWT
+    // (targets, scans, team members, etc.). Components will refetch with
+    // the new token against the new DC.
+    queryClient.clear();
     await refresh();
-  }, [refresh]);
+  }, [refresh, queryClient]);
 
   return (
     <AuthContext.Provider value={{ ...state, login, acceptInvite, logout, switchOrg, refresh }}>
