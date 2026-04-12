@@ -166,19 +166,19 @@ jobs:
       - name: Health check API
         continue-on-error: true
         run: |
-          # Use the Terraform-managed v2 URL
-          API_URL="https://api-stage.silkstrand.io/healthz"
+          # /readyz is reachable externally; /healthz is intercepted by Cloud Run's probe routing.
+          API_URL="https://api-stage.silkstrand.io/readyz"
 
           echo "Checking: $API_URL"
           for i in 1 2 3 4 5 6; do
             status=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL")
             if [ "$status" = "200" ]; then
-              echo "API health check passed"
+              echo "API readiness check passed"
               exit 0
             fi
             echo "Attempt $i: got $status, retrying in 15s..."
             sleep 15
           done
 
-          echo "::warning::API health check failed — service may need domain mapping reconfiguration"
+          echo "::warning::API readiness check failed"
           exit 1
