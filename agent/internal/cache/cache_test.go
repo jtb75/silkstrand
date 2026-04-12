@@ -17,7 +17,7 @@ func TestGet_VersionedLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := New(tmpDir)
+	c := New(tmpDir, nil)
 	path, err := c.Get("my-bundle", "1.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -37,7 +37,7 @@ func TestGet_FlatLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := New(tmpDir)
+	c := New(tmpDir, nil)
 	path, err := c.Get("my-bundle", "1.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -49,7 +49,7 @@ func TestGet_FlatLayout(t *testing.T) {
 
 func TestGet_NotCached(t *testing.T) {
 	tmpDir := t.TempDir()
-	c := New(tmpDir)
+	c := New(tmpDir, nil)
 
 	_, err := c.Get("nonexistent", "1.0.0")
 	if !errors.Is(err, ErrNotCached) {
@@ -74,7 +74,7 @@ func TestGet_VersionedPreferredOverFlat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := New(tmpDir)
+	c := New(tmpDir, nil)
 	path, err := c.Get("my-bundle", "2.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

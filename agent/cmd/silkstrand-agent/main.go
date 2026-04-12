@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -37,8 +38,26 @@ func main() {
 		"bundle_dir", cfg.BundleDir,
 	)
 
+	// Load optional Ed25519 public key for bundle signature verification
+	var publicKey ed25519.PublicKey
+	if cfg.PublicKeyPath != "" {
+		keyData, err := os.ReadFile(cfg.PublicKeyPath)
+		if err != nil {
+			slog.Error("reading public key", "path", cfg.PublicKeyPath, "error", err)
+			os.Exit(1)
+		}
+		if len(keyData) != ed25519.PublicKeySize {
+			slog.Error("invalid public key size", "expected", ed25519.PublicKeySize, "got", len(keyData))
+			os.Exit(1)
+		}
+		publicKey = ed25519.PublicKey(keyData)
+		slog.Info("bundle signature verification enabled")
+	} else {
+		slog.Warn("bundle signature verification disabled (no SILKSTRAND_PUBLIC_KEY set)")
+	}
+
 	// Build components
-	bundleCache := cache.New(cfg.BundleDir)
+	bundleCache := cache.New(cfg.BundleDir, publicKey)
 	pythonRunner := runner.NewPythonRunner()
 	tun := tunnel.New(cfg.APIURL, cfg.AgentID, cfg.AgentKey)
 

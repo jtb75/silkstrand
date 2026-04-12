@@ -11,10 +11,25 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// AllowedOrigins configures which origins are permitted for WebSocket upgrades.
+// If empty, all origins are allowed (dev mode only).
+var AllowedOrigins []string
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true }, // TODO: restrict in production
+	CheckOrigin: func(r *http.Request) bool {
+		if len(AllowedOrigins) == 0 {
+			return true // dev mode
+		}
+		origin := r.Header.Get("Origin")
+		for _, allowed := range AllowedOrigins {
+			if origin == allowed {
+				return true
+			}
+		}
+		return false
+	},
 }
 
 const (

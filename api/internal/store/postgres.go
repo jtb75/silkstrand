@@ -273,9 +273,12 @@ func (s *PostgresStore) CreateScanResults(ctx context.Context, scanID string, re
 }
 
 func (s *PostgresStore) GetScanResults(ctx context.Context, scanID string) ([]model.ScanResult, error) {
+	tenantID := TenantID(ctx)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, scan_id, control_id, title, status, severity, evidence, remediation, created_at
-		 FROM scan_results WHERE scan_id = $1 ORDER BY control_id`, scanID)
+		`SELECT r.id, r.scan_id, r.control_id, r.title, r.status, r.severity, r.evidence, r.remediation, r.created_at
+		 FROM scan_results r JOIN scans s ON r.scan_id = s.id
+		 WHERE r.scan_id = $1 AND s.tenant_id = $2
+		 ORDER BY r.control_id`, scanID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("getting scan results: %w", err)
 	}

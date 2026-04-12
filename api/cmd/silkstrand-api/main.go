@@ -64,6 +64,7 @@ func run() error {
 	}
 
 	// WebSocket hub
+	websocket.AllowedOrigins = cfg.AllowedOrigins
 	hub := websocket.NewHub()
 
 	// Wire up agent message handling
@@ -111,7 +112,7 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/scans/{id}", scanH.Get)
 
 	// Apply auth + tenant middleware to API routes
-	authedAPI := middleware.Auth(cfg.JWTSecret, cfg.ClerkJWKSURL)(middleware.Tenant(pgStore)(apiMux))
+	authedAPI := middleware.Auth(cfg.JWTSecret, cfg.ClerkJWKSURL, cfg.ClerkIssuerURL)(middleware.Tenant(pgStore)(apiMux))
 	mux.Handle("/api/", authedAPI)
 
 	// Apply logging to all routes

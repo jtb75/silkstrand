@@ -20,11 +20,13 @@ import (
 // Auth validates JWT tokens from the Authorization header.
 // If clerkJWKSURL is set, it validates Clerk-issued JWTs using JWKS (RS256).
 // If clerkJWKSURL is empty, it falls back to HMAC-SHA256 signed JWTs (dev mode).
-func Auth(jwtSecret string, clerkJWKSURL string) func(http.Handler) http.Handler {
+func Auth(jwtSecret string, clerkJWKSURL string, clerkIssuerURL string) func(http.Handler) http.Handler {
 	var jwks *jwksCache
+	var issuerURL string
 	if clerkJWKSURL != "" {
 		jwks = newJWKSCache(clerkJWKSURL)
-		slog.Info("auth mode: Clerk JWKS", "jwks_url", clerkJWKSURL)
+		issuerURL = clerkIssuerURL
+		slog.Info("auth mode: Clerk JWKS", "jwks_url", clerkJWKSURL, "issuer", issuerURL)
 	} else {
 		slog.Info("auth mode: HMAC-SHA256 (dev)")
 	}
@@ -47,7 +49,7 @@ func Auth(jwtSecret string, clerkJWKSURL string) func(http.Handler) http.Handler
 			var err error
 
 			if jwks != nil {
-				claims, err = validateClerkJWT(parts[1], jwks)
+				claims, err = validateClerkJWT(parts[1], jwks, issuerURL)
 			} else {
 				claims, err = validateHMACJWT(parts[1], jwtSecret)
 			}
@@ -109,7 +111,7 @@ func validateHMACJWT(token, secret string) (*Claims, error) {
 }
 
 // validateClerkJWT validates a Clerk-issued JWT using JWKS (RS256).
-func validateClerkJWT(token string, cache *jwksCache) (*Claims, error) {
+func validateClerkJWT(token string, cache *jwksCache, expectedIssuer string) (*Claims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, errInvalidToken
@@ -160,8 +162,9 @@ func validateClerkJWT(token string, cache *jwksCache) (*Claims, error) {
 
 	// Clerk JWT claims structure
 	var rawClaims struct {
-		Sub      string `json:"sub"`
-		Exp      int64  `json:"exp"`
+		Sub string `json:"sub"`
+		Iss string `json:"iss"`
+		Exp int64  `json:"exp"`
 		Metadata *struct {
 			TenantID string `json:"tenant_id"`
 		} `json:"metadata"`
@@ -175,6 +178,11 @@ func validateClerkJWT(token string, cache *jwksCache) (*Claims, error) {
 
 	if rawClaims.Exp > 0 && time.Now().Unix() > rawClaims.Exp {
 		return nil, errTokenExpired
+	}
+
+	// Validate issuer if configured
+	if expectedIssuer != "" && rawClaims.Iss != expectedIssuer {
+		return nil, fmt.Errorf("invalid issuer: got %q, expected %q", rawClaims.Iss, expectedIssuer)
 	}
 
 	// Extract tenant_id from metadata or public_metadata

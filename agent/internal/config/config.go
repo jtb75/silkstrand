@@ -8,21 +8,23 @@ import (
 
 // Config holds the agent configuration loaded from environment variables.
 type Config struct {
-	APIURL    string // env: SILKSTRAND_API_URL, default "ws://localhost:8080"
-	AgentID   string // env: SILKSTRAND_AGENT_ID, required
-	AgentKey  string // env: SILKSTRAND_AGENT_KEY, required
-	BundleDir string // env: SILKSTRAND_BUNDLE_DIR, default "./bundles"
-	LogLevel  string // env: SILKSTRAND_LOG_LEVEL, default "info"
+	APIURL       string // env: SILKSTRAND_API_URL, default "ws://localhost:8080"
+	AgentID      string // env: SILKSTRAND_AGENT_ID, required
+	AgentKey     string // env: SILKSTRAND_AGENT_KEY, required
+	BundleDir    string // env: SILKSTRAND_BUNDLE_DIR, default "./bundles"
+	PublicKeyPath string // env: SILKSTRAND_PUBLIC_KEY, optional Ed25519 public key for bundle verification
+	LogLevel     string // env: SILKSTRAND_LOG_LEVEL, default "info"
 }
 
 // Load reads configuration from environment variables and validates required fields.
 func Load() (*Config, error) {
 	cfg := &Config{
-		APIURL:    envOrDefault("SILKSTRAND_API_URL", "ws://localhost:8080"),
-		AgentID:   os.Getenv("SILKSTRAND_AGENT_ID"),
-		AgentKey:  os.Getenv("SILKSTRAND_AGENT_KEY"),
-		BundleDir: envOrDefault("SILKSTRAND_BUNDLE_DIR", "./bundles"),
-		LogLevel:  envOrDefault("SILKSTRAND_LOG_LEVEL", "info"),
+		APIURL:        envOrDefault("SILKSTRAND_API_URL", "ws://localhost:8080"),
+		AgentID:       os.Getenv("SILKSTRAND_AGENT_ID"),
+		AgentKey:      os.Getenv("SILKSTRAND_AGENT_KEY"),
+		BundleDir:     envOrDefault("SILKSTRAND_BUNDLE_DIR", "./bundles"),
+		PublicKeyPath: os.Getenv("SILKSTRAND_PUBLIC_KEY"),
+		LogLevel:      envOrDefault("SILKSTRAND_LOG_LEVEL", "info"),
 	}
 
 	if cfg.AgentID == "" {
