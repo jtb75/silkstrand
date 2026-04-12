@@ -177,7 +177,7 @@ jobs:
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_PROD }}" \
-            -var="jwt_secret=${{ secrets.JWT_SECRET_PROD }}" \
+            -var="jwt_secret=${{ secrets.TENANT_JWT_SECRET }}" \
             -var="internal_api_key=${{ secrets.INTERNAL_API_KEY_PROD }}" \
             -var="backoffice_jwt_secret=${{ secrets.BACKOFFICE_JWT_SECRET }}" \
             -var="backoffice_encryption_key=${{ secrets.BACKOFFICE_ENCRYPTION_KEY }}" \
