@@ -129,6 +129,11 @@ output "database_user" {
   value = google_sql_user.main.name
 }
 
+output "database_password" {
+  value     = random_password.db_password.result
+  sensitive = true
+}
+
 output "database_url" {
   value     = "postgres://${google_sql_user.main.name}:${random_password.db_password.result}@${google_sql_database_instance.main.private_ip_address}:5432/${google_sql_database.main.name}?sslmode=disable"
   sensitive = true
