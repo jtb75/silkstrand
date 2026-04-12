@@ -179,26 +179,28 @@ export default function Tenants() {
         </form>
       )}
 
-      <div className="filter-bar">
-        <label htmlFor="filter-dc">Filter by Data Center:</label>
-        <select
-          id="filter-dc"
-          value={filterDc}
-          onChange={(e) => setFilterDc(e.target.value)}
-        >
-          <option value="">All</option>
-          {dataCenters?.map((dc) => (
-            <option key={dc.id} value={dc.id}>
-              {dc.name} ({dc.environment})
-            </option>
-          ))}
-        </select>
-      </div>
+      {!showForm && (
+        <div className="filter-bar">
+          <label htmlFor="filter-dc">Filter by Data Center:</label>
+          <select
+            id="filter-dc"
+            value={filterDc}
+            onChange={(e) => setFilterDc(e.target.value)}
+          >
+            <option value="">All</option>
+            {dataCenters?.map((dc) => (
+              <option key={dc.id} value={dc.id}>
+                {dc.name} ({dc.environment})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
-      {isLoading && <p>Loading...</p>}
-      {error && <p className="error">Failed to load tenants: {(error as Error).message}</p>}
-      {!isLoading && tenants && tenants.length === 0 && <p>No tenants found.</p>}
-      {tenants && tenants.length > 0 && (
+      {!showForm && isLoading && <p>Loading...</p>}
+      {!showForm && error && <p className="error">Failed to load tenants: {(error as Error).message}</p>}
+      {!showForm && !isLoading && tenants && tenants.length === 0 && <p>No tenants found.</p>}
+      {!showForm && tenants && tenants.length > 0 && (
         <table className="table">
           <thead>
             <tr>
