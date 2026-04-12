@@ -70,6 +70,22 @@ func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.Invites) > 3 {
+		writeError(w, http.StatusBadRequest, "at most 3 invites allowed")
+		return
+	}
+	for i, inv := range req.Invites {
+		if inv.Email == "" {
+			writeError(w, http.StatusBadRequest, "invite email is required")
+			return
+		}
+		if inv.Role != model.InviteRoleAdmin && inv.Role != model.InviteRoleBasic {
+			writeError(w, http.StatusBadRequest, "invite role must be 'admin' or 'basic'")
+			return
+		}
+		_ = i
+	}
+
 	// Look up the data center
 	dc, err := h.store.GetDataCenter(r.Context(), req.DataCenterID)
 	if err != nil {
@@ -104,6 +120,7 @@ func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 			}
 			// Return 202 to indicate local creation succeeded but DC provisioning failed
 			tenant.ProvisioningStatus = model.ProvisioningFailed
+			tenant.InviteResults = failAllInvites(req.Invites, "tenant provisioning failed")
 			writeJSON(w, http.StatusAccepted, tenant)
 			return
 		}
@@ -115,6 +132,7 @@ func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 				slog.Error("updating tenant provisioning to failed", "error", err)
 			}
 			tenant.ProvisioningStatus = model.ProvisioningFailed
+			tenant.InviteResults = failAllInvites(req.Invites, "tenant provisioning failed")
 			writeJSON(w, http.StatusAccepted, tenant)
 			return
 		}
@@ -135,9 +153,66 @@ func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 				tenant.ClerkOrgID = &orgID
 			}
 		}
+
+		// Phase 4: Send Clerk org invitations for requested users (best-effort).
+		tenant.InviteResults = h.sendInvites(tenant.ClerkOrgID, req.Invites)
+	} else if len(req.Invites) > 0 {
+		// No encryption key means we can't provision on DC, so no Clerk org either.
+		tenant.InviteResults = failAllInvites(req.Invites, "tenant not provisioned; invites skipped")
 	}
 
 	writeJSON(w, http.StatusCreated, tenant)
+}
+
+// sendInvites sends Clerk organization invitations for each invite. Each
+// result is returned (invited or failed) — failures never abort tenant creation.
+func (h *TenantHandler) sendInvites(orgID *string, invites []model.TenantInvite) []model.InviteResult {
+	if len(invites) == 0 {
+		return nil
+	}
+	if orgID == nil || *orgID == "" {
+		return failAllInvites(invites, "clerk org not created")
+	}
+	if h.clerk == nil || h.clerk.SecretKey == "" {
+		return failAllInvites(invites, "clerk disabled")
+	}
+
+	results := make([]model.InviteResult, 0, len(invites))
+	for _, inv := range invites {
+		clerkRole := "org:member"
+		if inv.Role == model.InviteRoleAdmin {
+			clerkRole = "org:admin"
+		}
+		if _, err := h.clerk.CreateOrganizationInvitation(*orgID, inv.Email, clerkRole); err != nil {
+			slog.Warn("creating Clerk invitation", "email", inv.Email, "error", err)
+			results = append(results, model.InviteResult{
+				Email:  inv.Email,
+				Role:   inv.Role,
+				Status: "failed",
+				Error:  err.Error(),
+			})
+			continue
+		}
+		results = append(results, model.InviteResult{
+			Email:  inv.Email,
+			Role:   inv.Role,
+			Status: "invited",
+		})
+	}
+	return results
+}
+
+func failAllInvites(invites []model.TenantInvite, reason string) []model.InviteResult {
+	results := make([]model.InviteResult, 0, len(invites))
+	for _, inv := range invites {
+		results = append(results, model.InviteResult{
+			Email:  inv.Email,
+			Role:   inv.Role,
+			Status: "failed",
+			Error:  reason,
+		})
+	}
+	return results
 }
 
 // createClerkOrg creates a Clerk organization for the tenant.

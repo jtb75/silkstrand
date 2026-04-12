@@ -63,6 +63,8 @@ type Tenant struct {
 	ClerkOrgID         *string         `json:"clerk_org_id,omitempty"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
+	// InviteResults is only populated on the Create response. Not persisted.
+	InviteResults []InviteResult `json:"invite_results,omitempty"`
 }
 
 type AdminUser struct {
@@ -96,6 +98,26 @@ type CreateTenantRequest struct {
 	DataCenterID string          `json:"data_center_id"`
 	Name         string          `json:"name"`
 	Config       json.RawMessage `json:"config,omitempty"`
+	Invites      []TenantInvite  `json:"invites,omitempty"`
+}
+
+// Invite role constants (simple UI-facing values; mapped to Clerk roles in handler).
+const (
+	InviteRoleAdmin = "admin"
+	InviteRoleBasic = "basic"
+)
+
+type TenantInvite struct {
+	Email string `json:"email"`
+	Role  string `json:"role"` // "admin" or "basic"
+}
+
+// InviteResult is returned in the Create response (not persisted).
+type InviteResult struct {
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+	Status string `json:"status"` // "invited" or "failed"
+	Error  string `json:"error,omitempty"`
 }
 
 type UpdateTenantRequest struct {
