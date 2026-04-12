@@ -40,9 +40,13 @@ func (r *PythonRunner) Run(ctx context.Context, req RunRequest) (json.RawMessage
 	runCtx, cancel := context.WithTimeout(ctx, pythonTimeout)
 	defer cancel()
 
-	entrypoint := filepath.Join(req.BundlePath, req.Manifest.Entrypoint)
+	bundlePath, err := filepath.Abs(req.BundlePath)
+	if err != nil {
+		return nil, fmt.Errorf("resolving bundle path: %w", err)
+	}
+	entrypoint := filepath.Join(bundlePath, req.Manifest.Entrypoint)
 	cmd := exec.CommandContext(runCtx, "python3", entrypoint)
-	cmd.Dir = req.BundlePath
+	cmd.Dir = bundlePath
 
 	env := os.Environ()
 	env = append(env, "SILKSTRAND_TARGET_CONFIG="+targetConfigPath)
