@@ -110,6 +110,58 @@ func (c *Client) DeleteOrganization(orgID string) error {
 	return nil
 }
 
+// Invitation is Clerk's organization invitation object (subset).
+type Invitation struct {
+	ID             string `json:"id"`
+	EmailAddress   string `json:"email_address"`
+	Role           string `json:"role"`
+	Status         string `json:"status"`
+	OrganizationID string `json:"organization_id"`
+}
+
+// CreateOrganizationInvitation invites an email address to a Clerk org with
+// the given role (e.g. "org:admin", "org:member"). Clerk sends the invite
+// email automatically.
+func (c *Client) CreateOrganizationInvitation(orgID, email, role string) (*Invitation, error) {
+	if c.SecretKey == "" {
+		return nil, ErrDisabled
+	}
+
+	payload := map[string]interface{}{
+		"email_address": email,
+		"role":          role,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling invite request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPost,
+		clerkAPIBase+"/organizations/"+orgID+"/invitations", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.SecretKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("clerk create invite: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return nil, fmt.Errorf("clerk create invite returned %d: %s", resp.StatusCode, string(b))
+	}
+
+	var inv Invitation
+	if err := json.NewDecoder(resp.Body).Decode(&inv); err != nil {
+		return nil, fmt.Errorf("decoding invite response: %w", err)
+	}
+	return &inv, nil
+}
+
 // Membership counts from the org memberships endpoint.
 type membershipsResponse struct {
 	Data       []membership `json:"data"`

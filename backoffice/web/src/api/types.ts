@@ -24,6 +24,21 @@ export interface Tenant {
   config?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  invite_results?: InviteResult[];
+}
+
+export type InviteRole = 'admin' | 'basic';
+
+export interface TenantInvite {
+  email: string;
+  role: InviteRole;
+}
+
+export interface InviteResult {
+  email: string;
+  role: InviteRole;
+  status: 'invited' | 'failed';
+  error?: string;
 }
 
 export interface AdminUser {
@@ -70,6 +85,7 @@ export interface UpdateDataCenterRequest {
 export interface CreateTenantRequest {
   data_center_id: string;
   name: string;
+  invites?: TenantInvite[];
 }
 
 export interface UpdateTenantRequest {

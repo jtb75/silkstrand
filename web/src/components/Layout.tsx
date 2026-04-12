@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { useOrganization } from '@clerk/clerk-react';
+import { useOrganization, OrganizationSwitcher } from '@clerk/clerk-react';
 import { hasDevToken, clearToken } from '../api/client';
 import './Layout.css';
 
@@ -22,6 +22,19 @@ export default function Layout() {
       <div className="main-area">
         <header className="topbar">
           <span>CIS Compliance Scanner</span>
+          {isClerkMode && (
+            <span style={{ marginLeft: 'auto' }}>
+              <OrganizationSwitcher
+                hidePersonal
+                appearance={{
+                  elements: {
+                    rootBox: { display: 'inline-flex' },
+                    organizationSwitcherTrigger: { padding: '4px 8px' },
+                  },
+                }}
+              />
+            </span>
+          )}
           {!isClerkMode && (
             <span className="topbar-token-status">
               {hasDevToken() ? (

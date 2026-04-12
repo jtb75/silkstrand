@@ -9,7 +9,14 @@ import {
   retryTenantProvisioning,
   deleteTenant,
 } from '../api/client';
-import type { Tenant, DataCenter, CreateTenantRequest, DCEnvironment } from '../api/types';
+import type {
+  Tenant,
+  DataCenter,
+  CreateTenantRequest,
+  DCEnvironment,
+  TenantInvite,
+  InviteRole,
+} from '../api/types';
 import { worldRegionForGCP, WORLD_REGIONS, type WorldRegion } from '../lib/regions';
 import StatusBadge from '../components/StatusBadge';
 
@@ -27,6 +34,11 @@ export default function Tenants() {
   const [formRegion, setFormRegion] = useState<RegionFilter>('all');
   const [formDc, setFormDc] = useState('');
 
+  // Invites (up to 3)
+  const [invites, setInvites] = useState<TenantInvite[]>([]);
+  // Last created tenant's invite results (shown after submit)
+  const [lastCreated, setLastCreated] = useState<Tenant | null>(null);
+
   // Delete confirmation modal
   const [deleteTarget, setDeleteTarget] = useState<Tenant | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -43,10 +55,12 @@ export default function Tenants() {
 
   const createMutation = useMutation({
     mutationFn: (req: CreateTenantRequest) => createTenant(req),
-    onSuccess: () => {
+    onSuccess: (tenant) => {
       queryClient.invalidateQueries({ queryKey: ['tenants'] });
       setShowForm(false);
       setFormDc('');
+      setInvites([]);
+      setLastCreated(tenant);
     },
   });
 
@@ -92,10 +106,30 @@ export default function Tenants() {
     e.preventDefault();
     if (!effectiveFormDc) return;
     const formData = new FormData(e.currentTarget);
+
+    // Only submit invites that have an email filled in; trim + lowercase.
+    const cleanedInvites = invites
+      .map((inv) => ({ email: inv.email.trim().toLowerCase(), role: inv.role }))
+      .filter((inv) => inv.email !== '');
+
     createMutation.mutate({
       data_center_id: effectiveFormDc,
       name: formData.get('name') as string,
+      invites: cleanedInvites.length > 0 ? cleanedInvites : undefined,
     });
+  }
+
+  function addInvite() {
+    if (invites.length >= 3) return;
+    setInvites([...invites, { email: '', role: 'basic' }]);
+  }
+
+  function updateInvite(idx: number, patch: Partial<TenantInvite>) {
+    setInvites(invites.map((inv, i) => (i === idx ? { ...inv, ...patch } : inv)));
+  }
+
+  function removeInvite(idx: number) {
+    setInvites(invites.filter((_, i) => i !== idx));
   }
 
   function handleToggleStatus(tenant: Tenant) {
@@ -180,6 +214,49 @@ export default function Tenants() {
             <input id="name" name="name" type="text" required placeholder="e.g. Acme Corp" />
           </div>
 
+          <div className="form-group">
+            <label>Invite users (optional, up to 3)</label>
+            {invites.map((inv, i) => (
+              <div
+                key={i}
+                style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}
+              >
+                <input
+                  type="email"
+                  placeholder="user@example.com"
+                  value={inv.email}
+                  onChange={(e) => updateInvite(i, { email: e.target.value })}
+                  style={{ flex: 1 }}
+                />
+                <select
+                  value={inv.role}
+                  onChange={(e) => updateInvite(i, { role: e.target.value as InviteRole })}
+                >
+                  <option value="admin">Admin</option>
+                  <option value="basic">Basic</option>
+                </select>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => removeInvite(i)}
+                  aria-label="Remove invite"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {invites.length < 3 && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={addInvite}
+                style={{ marginTop: 8 }}
+              >
+                + Add user
+              </button>
+            )}
+          </div>
+
           <button
             type="submit"
             className="btn btn-primary"
@@ -208,6 +285,28 @@ export default function Tenants() {
               </option>
             ))}
           </select>
+        </div>
+      )}
+
+      {!showForm && lastCreated && lastCreated.invite_results && lastCreated.invite_results.length > 0 && (
+        <div className="detail-card" style={{ marginBottom: 16 }}>
+          <strong>Invitation results for {lastCreated.name}:</strong>
+          <ul style={{ margin: '8px 0 0 20px' }}>
+            {lastCreated.invite_results.map((r, i) => (
+              <li key={i} style={{ color: r.status === 'invited' ? '#15803d' : '#b91c1c' }}>
+                {r.status === 'invited' ? '✓' : '✗'} {r.email} ({r.role})
+                {r.error && <span style={{ color: '#64748b' }}> — {r.error}</span>}
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ marginTop: 8 }}
+            onClick={() => setLastCreated(null)}
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
