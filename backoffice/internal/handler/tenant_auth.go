@@ -252,7 +252,7 @@ func (h *TenantAuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		"user":        user,
 		"memberships": memberships,
 		"active": map[string]string{
-			"tenant_id": claims.TenantID,
+			"tenant_id": claims.BoTenantID,
 			"dc_id":     claims.DCID,
 			"role":      claims.Role,
 		},
@@ -344,18 +344,25 @@ func (h *TenantAuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// issueJWTForTenant looks up the DC ID for the tenant, mints a JWT, and
-// writes the response.
+// issueJWTForTenant mints a JWT scoped to the given tenant and writes it.
+//
+// The tenant_id claim is the **DC's** tenant ID (tenants.dc_tenant_id),
+// not the backoffice's. The DC validates the JWT and looks up the tenant
+// by that ID in its own database — it has no knowledge of the backoffice's
+// primary keys. The backoffice's tenant UUID is kept out of the token.
 func (h *TenantAuthHandler) issueJWTForTenant(w http.ResponseWriter, r *http.Request, user *model.User, tenantID, role string) {
-	// Look up DC ID for the tenant so we can bake it into the token.
 	tenant, err := h.store.GetTenant(r.Context(), tenantID)
 	if err != nil || tenant == nil {
 		writeError(w, http.StatusInternalServerError, "tenant lookup failed")
 		return
 	}
+	if tenant.DCTenantID == nil || *tenant.DCTenantID == "" {
+		writeError(w, http.StatusFailedDependency, "tenant not provisioned on its data center")
+		return
+	}
 
 	token, err := middleware.CreateTenantJWT(
-		h.jwtSecret, user.ID, user.Email, tenantID, tenant.DataCenterID, role, tenantJWTExpiry)
+		h.jwtSecret, user.ID, user.Email, *tenant.DCTenantID, tenant.ID, tenant.DataCenterID, role, tenantJWTExpiry)
 	if err != nil {
 		slog.Error("creating tenant JWT", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to issue token")
@@ -368,7 +375,8 @@ func (h *TenantAuthHandler) issueJWTForTenant(w http.ResponseWriter, r *http.Req
 			"email": user.Email,
 		},
 		"active": map[string]string{
-			"tenant_id":      tenantID,
+			"tenant_id":      tenantID,       // Backoffice tenant UUID (for UI routing)
+			"dc_tenant_id":   *tenant.DCTenantID,
 			"data_center_id": tenant.DataCenterID,
 			"role":           role,
 		},
@@ -383,7 +391,7 @@ func (h *TenantAuthHandler) ListMembers(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	members, err := h.store.ListTenantMembers(r.Context(), claims.TenantID)
+	members, err := h.store.ListTenantMembers(r.Context(), claims.BoTenantID)
 	if err != nil {
 		slog.Error("listing tenant members", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list members")
@@ -425,7 +433,7 @@ func (h *TenantAuthHandler) CreateInvite(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	tenant, err := h.store.GetTenant(r.Context(), claims.TenantID)
+	tenant, err := h.store.GetTenant(r.Context(), claims.BoTenantID)
 	if err != nil || tenant == nil {
 		writeError(w, http.StatusInternalServerError, "tenant lookup failed")
 		return
@@ -437,7 +445,7 @@ func (h *TenantAuthHandler) CreateInvite(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	expiry := time.Now().Add(inviteExpiry)
-	if _, err := h.store.CreateInvitation(r.Context(), claims.TenantID, req.Email, req.Role, tokenHash, expiry, nil); err != nil {
+	if _, err := h.store.CreateInvitation(r.Context(), claims.BoTenantID, req.Email, req.Role, tokenHash, expiry, nil); err != nil {
 		slog.Error("creating invitation", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create invitation")
 		return
@@ -470,7 +478,7 @@ func (h *TenantAuthHandler) RemoveMember(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "cannot remove yourself")
 		return
 	}
-	if err := h.store.DeleteMembership(r.Context(), userID, claims.TenantID); err != nil {
+	if err := h.store.DeleteMembership(r.Context(), userID, claims.BoTenantID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "membership not found")
 			return
