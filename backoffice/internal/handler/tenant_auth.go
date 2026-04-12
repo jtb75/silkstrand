@@ -260,13 +260,25 @@ func (h *TenantAuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	if memberships == nil {
 		memberships = []model.MembershipSummary{}
 	}
+
+	// Find the active membership so we can include the DC API URL — the
+	// frontend needs it to call the right DC for scans/targets/etc.
+	var activeDCAPIURL string
+	for _, m := range memberships {
+		if m.TenantID == claims.BoTenantID {
+			activeDCAPIURL = m.DCAPIURL
+			break
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user":        user,
 		"memberships": memberships,
 		"active": map[string]string{
-			"tenant_id": claims.BoTenantID,
-			"dc_id":     claims.DCID,
-			"role":      claims.Role,
+			"tenant_id":  claims.BoTenantID,
+			"dc_id":      claims.DCID,
+			"dc_api_url": activeDCAPIURL,
+			"role":       claims.Role,
 		},
 	})
 }
@@ -372,6 +384,11 @@ func (h *TenantAuthHandler) issueJWTForTenant(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusFailedDependency, "tenant not provisioned on its data center")
 		return
 	}
+	dc, err := h.store.GetDataCenter(r.Context(), tenant.DataCenterID)
+	if err != nil || dc == nil {
+		writeError(w, http.StatusInternalServerError, "data center lookup failed")
+		return
+	}
 
 	token, err := middleware.CreateTenantJWT(
 		h.jwtSecret, user.ID, user.Email, *tenant.DCTenantID, tenant.ID, tenant.DataCenterID, role, tenantJWTExpiry)
@@ -387,9 +404,10 @@ func (h *TenantAuthHandler) issueJWTForTenant(w http.ResponseWriter, r *http.Req
 			"email": user.Email,
 		},
 		"active": map[string]string{
-			"tenant_id":      tenantID,       // Backoffice tenant UUID (for UI routing)
+			"tenant_id":      tenantID, // Backoffice tenant UUID (for UI routing)
 			"dc_tenant_id":   *tenant.DCTenantID,
 			"data_center_id": tenant.DataCenterID,
+			"dc_api_url":     dc.APIURL,
 			"role":           role,
 		},
 	})

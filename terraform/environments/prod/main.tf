@@ -217,6 +217,7 @@ module "cloud_run" {
   internal_api_key   = var.internal_api_key
   clerk_jwks_url     = var.clerk_jwks_url
   clerk_issuer_url   = var.clerk_issuer_url
+  allowed_origins    = var.tenant_web_url
   min_instances      = 0
   max_instances      = 5
 }

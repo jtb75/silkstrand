@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, type ReactNode } from 'react';
 import { authApi, type MeResponse } from '../api/authClient';
-import { getToken, setToken, clearToken } from '../api/client';
+import { getToken, setToken, clearToken, setDCApiURL } from '../api/client';
 import { AuthContext, type AuthState } from './context';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -13,6 +13,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const applyMe = useCallback((me: MeResponse) => {
+    setDCApiURL(me.active?.dc_api_url);
     setState({
       user: me.user,
       memberships: me.memberships,
