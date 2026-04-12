@@ -21,7 +21,14 @@ func NewTenantHandler(s store.Store, dc *dcclient.Client, encKey []byte) *Tenant
 }
 
 func (h *TenantHandler) List(w http.ResponseWriter, r *http.Request) {
-	tenants, err := h.store.ListTenants(r.Context())
+	dcID := r.URL.Query().Get("data_center_id")
+	var tenants []model.Tenant
+	var err error
+	if dcID != "" {
+		tenants, err = h.store.ListTenantsByDataCenter(r.Context(), dcID)
+	} else {
+		tenants, err = h.store.ListTenants(r.Context())
+	}
 	if err != nil {
 		slog.Error("listing tenants", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list tenants")
