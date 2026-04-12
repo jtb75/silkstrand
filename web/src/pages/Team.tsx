@@ -36,8 +36,11 @@ export default function Team() {
     }
   }
 
+  // Refetch whenever the active tenant (or admin status) changes.
+  // active.tenant_id captures the TenantSwitcher case where the user
+  // stays admin but the data source is different.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void refresh(); }, [isAdmin]);
+  useEffect(() => { void refresh(); }, [isAdmin, active?.tenant_id]);
 
   async function submitInvite(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
