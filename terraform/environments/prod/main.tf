@@ -1,6 +1,7 @@
 # SilkStrand — Prod Environment
 #
 # Applied manually via git tag (v*) trigger in GitHub Actions.
+# Backoffice services (API + web) run here alongside DC services.
 
 terraform {
   required_version = ">= 1.7"
