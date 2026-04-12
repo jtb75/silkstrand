@@ -28,10 +28,28 @@ func (h *DataCenterHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list data centers")
 		return
 	}
-	if dcs == nil {
-		dcs = []model.DataCenter{}
+
+	// Compute tenant counts per DC from the backoffice DB
+	tenants, err := h.store.ListTenants(r.Context())
+	if err != nil {
+		slog.Error("listing tenants for DC counts", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list tenants")
+		return
 	}
-	writeJSON(w, http.StatusOK, dcs)
+	counts := make(map[string]int)
+	for _, t := range tenants {
+		counts[t.DataCenterID]++
+	}
+
+	items := make([]model.DataCenterListItem, len(dcs))
+	for i, dc := range dcs {
+		items[i] = model.DataCenterListItem{
+			DataCenter:  dc,
+			TenantCount: counts[dc.ID],
+		}
+	}
+
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (h *DataCenterHandler) Get(w http.ResponseWriter, r *http.Request) {

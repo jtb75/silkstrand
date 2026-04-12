@@ -41,14 +41,22 @@ func (h *HealthHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenants, err := h.store.ListTenants(r.Context())
+	if err != nil {
+		slog.Error("listing tenants for dashboard", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list tenants")
+		return
+	}
+
+	// Fetch stats from each DC in parallel
 	var wg sync.WaitGroup
-	results := make([]model.DataCenterStats, len(dcs))
+	dcStats := make([]model.DataCenterWithStats, len(dcs))
 
 	for i, dc := range dcs {
 		wg.Add(1)
 		go func(idx int, dc model.DataCenter) {
 			defer wg.Done()
-			results[idx].DataCenter = dc
+			dcStats[idx].DataCenter = dc
 
 			if dc.Status != model.DCStatusActive || len(h.encKey) == 0 {
 				return
@@ -56,20 +64,39 @@ func (h *HealthHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 
 			conn, err := dcConnFromRecord(&dc, h.encKey)
 			if err != nil {
-				results[idx].Error = "failed to decrypt API key"
+				dcStats[idx].StatsError = "failed to decrypt API key"
 				return
 			}
 
 			stats, err := h.dc.GetStats(*conn)
 			if err != nil {
-				results[idx].Error = err.Error()
+				dcStats[idx].StatsError = err.Error()
 				return
 			}
-			results[idx].Stats = stats
+			dcStats[idx].TenantCount = stats.TenantCount
+			dcStats[idx].AgentCount = stats.AgentCount
+			dcStats[idx].ScanCount = stats.ScanCount
 		}(i, dc)
 	}
 
 	wg.Wait()
 
-	writeJSON(w, http.StatusOK, model.DashboardStats{DataCenters: results})
+	// Count tenants by status (from backoffice DB)
+	active, suspended := 0, 0
+	for _, t := range tenants {
+		switch t.Status {
+		case model.TenantStatusActive:
+			active++
+		case model.TenantStatusSuspended:
+			suspended++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, model.DashboardStats{
+		TotalDataCenters: len(dcs),
+		TotalTenants:     len(tenants),
+		ActiveTenants:    active,
+		SuspendedTenants: suspended,
+		DataCenters:      dcStats,
+	})
 }
