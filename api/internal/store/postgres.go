@@ -127,7 +127,7 @@ func (s *PostgresStore) UpdateTarget(ctx context.Context, id string, req model.U
 		existing.Config = req.Config
 	}
 	if req.Environment != nil {
-		existing.Environment = *req.Environment
+		existing.Environment = req.Environment
 	}
 	if req.AgentID != nil {
 		existing.AgentID = req.AgentID
@@ -297,18 +297,16 @@ func (s *PostgresStore) GetScanResults(ctx context.Context, scanID string) ([]mo
 func (s *PostgresStore) GetAgent(ctx context.Context, id string) (*model.Agent, error) {
 	tenantID := TenantID(ctx)
 	var a model.Agent
-	var version sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, tenant_id, name, status, last_heartbeat, version, created_at
 		 FROM agents WHERE id = $1 AND tenant_id = $2`, id, tenantID).
-		Scan(&a.ID, &a.TenantID, &a.Name, &a.Status, &a.LastHeartbeat, &version, &a.CreatedAt)
+		Scan(&a.ID, &a.TenantID, &a.Name, &a.Status, &a.LastHeartbeat, &a.Version, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting agent: %w", err)
 	}
-	a.Version = version.String
 	return &a, nil
 }
 
@@ -324,11 +322,11 @@ func (s *PostgresStore) UpdateAgentStatus(ctx context.Context, id string, status
 // GetAgentByID looks up an agent by ID without tenant scoping (for WSS auth).
 func (s *PostgresStore) GetAgentByID(ctx context.Context, id string) (*model.Agent, error) {
 	var a model.Agent
-	var version, keyHash sql.NullString
+	var keyHash sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, tenant_id, name, status, last_heartbeat, version, key_hash, next_key_hash, key_rotated_at, created_at
 		 FROM agents WHERE id = $1`, id).
-		Scan(&a.ID, &a.TenantID, &a.Name, &a.Status, &a.LastHeartbeat, &version,
+		Scan(&a.ID, &a.TenantID, &a.Name, &a.Status, &a.LastHeartbeat, &a.Version,
 			&keyHash, &a.NextKeyHash, &a.KeyRotatedAt, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -336,7 +334,6 @@ func (s *PostgresStore) GetAgentByID(ctx context.Context, id string) (*model.Age
 	if err != nil {
 		return nil, fmt.Errorf("getting agent by id: %w", err)
 	}
-	a.Version = version.String
 	a.KeyHash = keyHash.String
 	return &a, nil
 }

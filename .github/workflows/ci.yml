@@ -24,6 +24,8 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       terraform: ${{ steps.filter.outputs.terraform }}
       docker: ${{ steps.filter.outputs.docker }}
+      backoffice: ${{ steps.filter.outputs.backoffice }}
+      backoffice-web: ${{ steps.filter.outputs.backoffice-web }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -41,7 +43,13 @@ jobs:
               - 'agent/**'
               - 'api/**'
               - 'web/**'
+              - 'backoffice/**'
               - '**/Dockerfile'
+            backoffice:
+              - 'backoffice/**'
+              - '!backoffice/web/**'
+            backoffice-web:
+              - 'backoffice/web/**'
 
   go-lint-test:
     name: Go Lint & Test
@@ -97,6 +105,50 @@ jobs:
       - name: Test
         run: cd web && npm run test
 
+  backoffice-go:
+    name: Backoffice Go Lint & Test
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.backoffice == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          working-directory: backoffice
+
+      - name: Test
+        run: cd backoffice && go test ./... -v -race
+
+  backoffice-web:
+    name: Backoffice Web Lint & Test
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.backoffice-web == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: cd backoffice/web && npm ci
+
+      - name: Lint
+        run: cd backoffice/web && npm run lint
+
+      - name: Type check
+        run: cd backoffice/web && npm run typecheck
+
+      - name: Test
+        run: cd backoffice/web && npm run test
+
   build-images:
     name: Build Container Images (verify)
     runs-on: ubuntu-latest
@@ -111,6 +163,14 @@ jobs:
       - name: Build Web image
         if: hashFiles('web/Dockerfile') != ''
         run: docker build -t silkstrand-web:test -f web/Dockerfile web/
+
+      - name: Build Backoffice API image
+        if: needs.changes.outputs.backoffice == 'true'
+        run: docker build -t backoffice-api:verify -f backoffice/Dockerfile backoffice/
+
+      - name: Build Backoffice Web image
+        if: needs.changes.outputs.backoffice-web == 'true'
+        run: docker build -t backoffice-web:verify -f backoffice/web/Dockerfile backoffice/web/
 
   terraform-plan-stage:
     name: Terraform Plan (Stage)

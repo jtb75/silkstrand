@@ -41,7 +41,7 @@ type Agent struct {
 	Name          string     `json:"name"`
 	Status        string     `json:"status"`
 	LastHeartbeat *time.Time `json:"last_heartbeat,omitempty"`
-	Version       string     `json:"version,omitempty"`
+	Version       *string    `json:"version,omitempty"`
 	KeyHash       string     `json:"-"`
 	NextKeyHash   *string    `json:"-"`
 	KeyRotatedAt  *time.Time `json:"key_rotated_at,omitempty"`
@@ -61,8 +61,8 @@ type Bundle struct {
 	Version    string     `json:"version"`
 	Framework  string     `json:"framework"`
 	TargetType string     `json:"target_type"`
-	GCSPath    string     `json:"gcs_path,omitempty"`
-	Signature  string     `json:"signature,omitempty"`
+	GCSPath    *string    `json:"gcs_path,omitempty"`
+	Signature  *string    `json:"signature,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
@@ -73,7 +73,7 @@ type Target struct {
 	Type        string          `json:"type"`
 	Identifier  string          `json:"identifier"`
 	Config      json.RawMessage `json:"config"`
-	Environment string          `json:"environment,omitempty"`
+	Environment *string         `json:"environment,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 }
