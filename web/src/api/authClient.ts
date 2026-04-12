@@ -78,6 +78,14 @@ export const authApi = {
   acceptInvite: (token: string, password: string) =>
     post<LoginResponse>('/api/v1/tenant-auth/accept-invite', { token, password }),
 
+  previewInvitation: (token: string) =>
+    get<{
+      email: string;
+      role: 'admin' | 'member';
+      tenant_name: string;
+      existing_user: boolean;
+    }>(`/api/v1/tenant-auth/invitation-preview?token=${encodeURIComponent(token)}`),
+
   forgotPassword: (email: string) =>
     post<void>('/api/v1/tenant-auth/forgot-password', { email }),
 
