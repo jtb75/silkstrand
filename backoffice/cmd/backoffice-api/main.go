@@ -21,6 +21,7 @@ import (
 	"github.com/jtb75/silkstrand/backoffice/internal/crypto"
 	"github.com/jtb75/silkstrand/backoffice/internal/dcclient"
 	"github.com/jtb75/silkstrand/backoffice/internal/handler"
+	"github.com/jtb75/silkstrand/backoffice/internal/mailer"
 	"github.com/jtb75/silkstrand/backoffice/internal/middleware"
 	"github.com/jtb75/silkstrand/backoffice/internal/model"
 	"github.com/jtb75/silkstrand/backoffice/internal/store"
@@ -69,11 +70,22 @@ func run() error {
 		slog.Info("Clerk integration disabled (no CLERK_SECRET_KEY)")
 	}
 
+	// Email sender for tenant invites and password resets.
+	var tenantMailer mailer.Mailer
+	if cfg.ResendAPIKey != "" {
+		tenantMailer = mailer.NewResend(cfg.ResendAPIKey, cfg.FromEmail)
+		slog.Info("mailer: Resend enabled", "from", cfg.FromEmail)
+	} else {
+		tenantMailer = mailer.Noop{}
+		slog.Info("mailer: noop (no RESEND_API_KEY set; emails will be logged only)")
+	}
+
 	// Handlers
 	healthH := handler.NewHealthHandler(pgStore, dcClient, cfg.EncryptionKey)
 	dcH := handler.NewDataCenterHandler(pgStore, dcClient, cfg.EncryptionKey)
 	tenantH := handler.NewTenantHandler(pgStore, dcClient, clerkClient, cfg.EncryptionKey)
 	authH := handler.NewAuthHandler(pgStore, cfg.JWTSecret)
+	tenantAuthH := handler.NewTenantAuthHandler(pgStore, tenantMailer, cfg.TenantJWTSecret, cfg.TenantWebURL)
 
 	// Router
 	mux := http.NewServeMux()
@@ -82,6 +94,19 @@ func run() error {
 	mux.HandleFunc("GET /healthz", healthH.Healthz)
 	mux.HandleFunc("GET /readyz", healthH.Readyz)
 	mux.HandleFunc("POST /api/v1/auth/login", authH.Login)
+
+	// Tenant end-user auth routes (public).
+	mux.HandleFunc("POST /api/v1/tenant-auth/login", tenantAuthH.Login)
+	mux.HandleFunc("POST /api/v1/tenant-auth/accept-invite", tenantAuthH.AcceptInvite)
+	mux.HandleFunc("POST /api/v1/tenant-auth/forgot-password", tenantAuthH.ForgotPassword)
+	mux.HandleFunc("POST /api/v1/tenant-auth/reset-password", tenantAuthH.ResetPassword)
+
+	// Tenant end-user auth routes (authenticated with tenant JWT).
+	tenantAuthed := middleware.TenantAuth(cfg.TenantJWTSecret)
+	mux.Handle("GET /api/v1/tenant-auth/me",
+		tenantAuthed(http.HandlerFunc(tenantAuthH.Me)))
+	mux.Handle("POST /api/v1/tenant-auth/switch-org",
+		tenantAuthed(http.HandlerFunc(tenantAuthH.SwitchOrg)))
 
 	// Authenticated API routes
 	apiMux := http.NewServeMux()

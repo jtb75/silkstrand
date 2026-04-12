@@ -138,6 +138,31 @@ variable "clerk_issuer_url" {
   default     = ""
 }
 
+variable "tenant_jwt_secret" {
+  description = "HS256 secret for tenant end-user JWTs (shared between backoffice and every DC API)"
+  type        = string
+  sensitive   = true
+}
+
+variable "resend_api_key" {
+  description = "Resend API key for sending transactional emails (invites, password resets)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "from_email" {
+  description = "From address for transactional email"
+  type        = string
+  default     = "SilkStrand <noreply@silkstrand.io>"
+}
+
+variable "tenant_web_url" {
+  description = "Public base URL of the tenant frontend, used to build invite / reset links"
+  type        = string
+  default     = ""
+}
+
 variable "image" {
   description = "Container image for the API (passed from CI on deploy)"
   type        = string
@@ -305,6 +330,26 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
       env {
         name  = "CLERK_SECRET_KEY"
         value = var.clerk_secret_key
+      }
+
+      env {
+        name  = "TENANT_JWT_SECRET"
+        value = var.tenant_jwt_secret
+      }
+
+      env {
+        name  = "RESEND_API_KEY"
+        value = var.resend_api_key
+      }
+
+      env {
+        name  = "FROM_EMAIL"
+        value = var.from_email
+      }
+
+      env {
+        name  = "TENANT_WEB_URL"
+        value = var.tenant_web_url != "" ? var.tenant_web_url : google_cloud_run_v2_service.web.uri
       }
 
       resources {
