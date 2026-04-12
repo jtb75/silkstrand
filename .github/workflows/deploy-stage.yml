@@ -3,6 +3,7 @@ name: Deploy to Stage
 on:
   push:
     branches: [main]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -23,16 +24,17 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
-      api: ${{ steps.filter.outputs.api }}
-      web: ${{ steps.filter.outputs.web }}
-      terraform: ${{ steps.filter.outputs.terraform }}
-      backoffice: ${{ steps.filter.outputs.backoffice }}
-      backoffice-web: ${{ steps.filter.outputs.backoffice-web }}
+      api: ${{ steps.set.outputs.api }}
+      web: ${{ steps.set.outputs.web }}
+      terraform: ${{ steps.set.outputs.terraform }}
+      backoffice: ${{ steps.set.outputs.backoffice }}
+      backoffice-web: ${{ steps.set.outputs.backoffice-web }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
       - uses: dorny/paths-filter@v3
+        if: github.event_name == 'push'
         id: filter
         with:
           base: ${{ github.event.before }}
@@ -48,6 +50,23 @@ jobs:
               - '!backoffice/web/**'
             backoffice-web:
               - 'backoffice/web/**'
+      - name: Set outputs
+        id: set
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual trigger: deploy everything
+            echo "api=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "terraform=true" >> "$GITHUB_OUTPUT"
+            echo "backoffice=true" >> "$GITHUB_OUTPUT"
+            echo "backoffice-web=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "api=${{ steps.filter.outputs.api }}" >> "$GITHUB_OUTPUT"
+            echo "web=${{ steps.filter.outputs.web }}" >> "$GITHUB_OUTPUT"
+            echo "terraform=${{ steps.filter.outputs.terraform }}" >> "$GITHUB_OUTPUT"
+            echo "backoffice=${{ steps.filter.outputs.backoffice }}" >> "$GITHUB_OUTPUT"
+            echo "backoffice-web=${{ steps.filter.outputs.backoffice-web }}" >> "$GITHUB_OUTPUT"
+          fi
 
   build-push-api:
     name: Build & Push API Image
