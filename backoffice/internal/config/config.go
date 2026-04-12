@@ -13,7 +13,6 @@ type Config struct {
 	EncryptionKey          []byte // 32 bytes for AES-256-GCM
 	BootstrapAdminEmail    string // If set with password, create admin on first startup
 	BootstrapAdminPassword string
-	ClerkSecretKey         string // If set, backoffice auto-creates Clerk orgs for tenants
 
 	// Tenant auth (in-house, replacing Clerk).
 	TenantJWTSecret string // HS256 secret shared with all DC APIs
@@ -42,7 +41,6 @@ func Load() (*Config, error) {
 		EncryptionKey:          encKey,
 		BootstrapAdminEmail:    getEnv("BOOTSTRAP_ADMIN_EMAIL", ""),
 		BootstrapAdminPassword: getEnv("BOOTSTRAP_ADMIN_PASSWORD", ""),
-		ClerkSecretKey:         getEnv("CLERK_SECRET_KEY", ""),
 		TenantJWTSecret:        getEnv("TENANT_JWT_SECRET", "dev-secret-change-in-production"),
 		ResendAPIKey:           getEnv("RESEND_API_KEY", ""),
 		FromEmail:              getEnv("FROM_EMAIL", "SilkStrand <noreply@silkstrand.io>"),

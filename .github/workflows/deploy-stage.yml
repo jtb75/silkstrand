@@ -175,8 +175,6 @@ jobs:
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_STAGE }}" \
             -var="jwt_secret=${{ secrets.JWT_SECRET_STAGE }}" \
             -var="internal_api_key=${{ secrets.INTERNAL_API_KEY_STAGE }}" \
-            -var="clerk_jwks_url=${{ vars.CLERK_JWKS_URL }}" \
-            -var="clerk_issuer_url=${{ vars.CLERK_ISSUER_URL }}" \
             -var="tenant_web_url=https://silkstrand-web-baglom43cq-uc.a.run.app"
 
   smoke-test:
