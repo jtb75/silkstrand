@@ -34,6 +34,11 @@ export default function Team() {
             elements: {
               rootBox: { width: '100%' },
               card: { width: '100%', boxShadow: 'none', border: '1px solid #e5e7eb' },
+              // Hide the "Leave organization" action — tenant membership is
+              // managed by SilkStrand admins via the backoffice, not by
+              // end users leaving themselves out.
+              profileSectionPrimaryButton__leaveOrganization: { display: 'none' },
+              profileSection__leaveOrganization: { display: 'none' },
             },
           }}
         />
