@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS admin_users;
+DROP TABLE IF EXISTS tenants;
+DROP TABLE IF EXISTS data_centers;

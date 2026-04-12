@@ -73,7 +73,8 @@ func run() error {
 	healthH := handler.NewHealthHandler(pgStore, redisPingFunc(ps))
 	targetH := handler.NewTargetHandler(pgStore)
 	scanH := handler.NewScanHandler(pgStore, ps, hub)
-	agentH := handler.NewAgentHandler(hub, pgStore, ps)
+	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey)
+	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 
 	// Router
 	mux := http.NewServeMux()
@@ -84,6 +85,19 @@ func run() error {
 
 	// Agent WebSocket (agent auth — key-based, separate from user auth)
 	mux.HandleFunc("GET /ws/agent", agentH.Connect)
+
+	// Internal API routes (backoffice access via API key)
+	internalMux := http.NewServeMux()
+	internalMux.HandleFunc("POST /internal/v1/tenants", internalH.CreateTenant)
+	internalMux.HandleFunc("GET /internal/v1/tenants", internalH.ListTenants)
+	internalMux.HandleFunc("GET /internal/v1/tenants/{id}", internalH.GetTenant)
+	internalMux.HandleFunc("PUT /internal/v1/tenants/{id}", internalH.UpdateTenant)
+	internalMux.HandleFunc("DELETE /internal/v1/tenants/{id}", internalH.DeleteTenant)
+	internalMux.HandleFunc("GET /internal/v1/agents", internalH.ListAgents)
+	internalMux.HandleFunc("GET /internal/v1/stats", internalH.GetStats)
+	internalMux.HandleFunc("POST /internal/v1/credentials", internalH.CreateCredential)
+	authedInternal := middleware.InternalAuth(cfg.InternalAPIKey)(internalMux)
+	mux.Handle("/internal/", authedInternal)
 
 	// Authenticated API routes
 	apiMux := http.NewServeMux()
@@ -97,7 +111,7 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/scans/{id}", scanH.Get)
 
 	// Apply auth + tenant middleware to API routes
-	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(apiMux))
+	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))
 	mux.Handle("/api/", authedAPI)
 
 	// Apply logging to all routes

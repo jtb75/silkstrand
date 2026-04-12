@@ -6,9 +6,33 @@ import (
 )
 
 type Tenant struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Status    string          `json:"status"`
+	Config    json.RawMessage `json:"config"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+const (
+	TenantStatusActive    = "active"
+	TenantStatusSuspended = "suspended"
+	TenantStatusInactive  = "inactive"
+)
+
+type DCStats struct {
+	TenantCount int `json:"tenant_count"`
+	AgentCount  int `json:"agent_count"`
+	ScanCount   int `json:"scan_count"`
+}
+
+type CreateTenantRequest struct {
+	Name string `json:"name"`
+}
+
+type UpdateTenantRequest struct {
+	Name   *string         `json:"name,omitempty"`
+	Status *string         `json:"status,omitempty"`
+	Config json.RawMessage `json:"config,omitempty"`
 }
 
 type Agent struct {

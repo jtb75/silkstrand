@@ -31,6 +31,22 @@ lint:
 docker:
 	docker build -t silkstrand-api:local -f api/Dockerfile api/
 
+# --- Backoffice ---
+
+run-backoffice:
+	cd backoffice && go run ./cmd/backoffice-api/
+
+build-backoffice:
+	cd backoffice && CGO_ENABLED=0 go build -ldflags="-s -w" -o ../bin/backoffice-api ./cmd/backoffice-api/
+
+test-backoffice:
+	cd backoffice && go test ./... -v -race
+
+lint-backoffice:
+	cd backoffice && golangci-lint run ./...
+
+# --- Infrastructure ---
+
 # Stop local dependencies
 down:
 	docker compose down
