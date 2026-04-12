@@ -55,3 +55,4 @@ __pycache__/
 coverage/
 *.coverprofile
 api/silkstrand-api
+.claude/

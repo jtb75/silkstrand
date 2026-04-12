@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(rm -f /Users/joebuhr/repo/silkstrand/.git/index.lock)",
-      "Bash(git checkout:*)",
-      "Bash(git pull:*)"
-    ]
-  }
-}
