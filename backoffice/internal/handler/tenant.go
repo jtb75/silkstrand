@@ -2,9 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
+	"github.com/jtb75/silkstrand/backoffice/internal/clerkclient"
 	"github.com/jtb75/silkstrand/backoffice/internal/dcclient"
 	"github.com/jtb75/silkstrand/backoffice/internal/model"
 	"github.com/jtb75/silkstrand/backoffice/internal/store"
@@ -13,11 +15,12 @@ import (
 type TenantHandler struct {
 	store  store.Store
 	dc     *dcclient.Client
+	clerk  *clerkclient.Client
 	encKey []byte
 }
 
-func NewTenantHandler(s store.Store, dc *dcclient.Client, encKey []byte) *TenantHandler {
-	return &TenantHandler{store: s, dc: dc, encKey: encKey}
+func NewTenantHandler(s store.Store, dc *dcclient.Client, clerk *clerkclient.Client, encKey []byte) *TenantHandler {
+	return &TenantHandler{store: s, dc: dc, clerk: clerk, encKey: encKey}
 }
 
 func (h *TenantHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -121,9 +124,52 @@ func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		tenant.ProvisioningStatus = model.ProvisioningProvisioned
 		tenant.DCTenantID = &dcTenant.ID
+
+		// Phase 3: Create Clerk organization for the tenant (best-effort).
+		// If this fails, the tenant is still usable — just without a Clerk org.
+		// Admin can retry or manually link later.
+		if orgID := h.createClerkOrg(tenant); orgID != "" {
+			if err := h.store.UpdateTenantClerkOrg(r.Context(), tenant.ID, &orgID); err != nil {
+				slog.Error("updating tenant clerk_org_id", "error", err)
+			} else {
+				tenant.ClerkOrgID = &orgID
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, tenant)
+}
+
+// createClerkOrg creates a Clerk organization for the tenant.
+// Returns the org ID on success, or empty string if Clerk is disabled or the
+// call fails (errors are logged but not fatal).
+func (h *TenantHandler) createClerkOrg(tenant *model.Tenant) string {
+	if h.clerk == nil || h.clerk.SecretKey == "" {
+		return ""
+	}
+
+	// Clerk requires created_by (a user ID) to set the initial admin.
+	// Until we wire this to the authenticated admin user's Clerk ID, we rely
+	// on Clerk's self-service signup flow — members join via invitation.
+	// For now we create the org without created_by, which requires Clerk
+	// "allow_orgs_without_admin" or similar setting (varies by plan).
+	org, err := h.clerk.CreateOrganization(clerkclient.CreateOrganizationRequest{
+		Name: tenant.Name,
+		PublicMetadata: map[string]interface{}{
+			"tenant_id":      tenant.ID,
+			"dc_tenant_id":   tenant.DCTenantID,
+			"data_center_id": tenant.DataCenterID,
+		},
+	})
+	if err != nil {
+		if errors.Is(err, clerkclient.ErrDisabled) {
+			return ""
+		}
+		slog.Warn("creating Clerk organization failed", "tenant_id", tenant.ID, "error", err)
+		return ""
+	}
+	slog.Info("created Clerk organization", "tenant_id", tenant.ID, "clerk_org_id", org.ID)
+	return org.ID
 }
 
 func (h *TenantHandler) Update(w http.ResponseWriter, r *http.Request) {

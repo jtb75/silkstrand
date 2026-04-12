@@ -113,6 +113,25 @@ variable "bootstrap_admin_password" {
   default     = ""
 }
 
+variable "clerk_secret_key" {
+  description = "Clerk Backend API secret key (sk_test_... or sk_live_...). Enables auto-creation of Clerk orgs on tenant provisioning."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "clerk_jwks_url" {
+  description = "Clerk JWKS endpoint URL for DC API to validate tenant user JWTs"
+  type        = string
+  default     = ""
+}
+
+variable "clerk_issuer_url" {
+  description = "Expected issuer (iss) claim for Clerk JWTs"
+  type        = string
+  default     = ""
+}
+
 variable "image" {
   description = "Container image for the API (passed from CI on deploy)"
   type        = string
@@ -165,6 +184,8 @@ module "cloud_run" {
   redis_url          = var.redis_url
   jwt_secret         = var.jwt_secret
   internal_api_key   = var.internal_api_key
+  clerk_jwks_url     = var.clerk_jwks_url
+  clerk_issuer_url   = var.clerk_issuer_url
   min_instances      = 0
   max_instances      = 5
 }
@@ -273,6 +294,11 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
       env {
         name  = "BOOTSTRAP_ADMIN_PASSWORD"
         value = var.bootstrap_admin_password
+      }
+
+      env {
+        name  = "CLERK_SECRET_KEY"
+        value = var.clerk_secret_key
       }
 
       resources {

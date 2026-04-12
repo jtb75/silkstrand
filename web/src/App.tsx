@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Targets from './pages/Targets';
 import Scans from './pages/Scans';
 import ScanResults from './pages/ScanResults';
+import Team from './pages/Team';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="/targets" element={<Targets />} />
             <Route path="/scans" element={<Scans />} />
             <Route path="/scans/:id" element={<ScanResults />} />
+            <Route path="/team" element={<Team />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -60,6 +60,7 @@ type Tenant struct {
 	Status             string          `json:"status"`
 	Config             json.RawMessage `json:"config"`
 	ProvisioningStatus string          `json:"provisioning_status"`
+	ClerkOrgID         *string         `json:"clerk_org_id,omitempty"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
 }

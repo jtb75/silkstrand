@@ -118,7 +118,11 @@ jobs:
         if: hashFiles('web/Dockerfile') != ''
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          docker build -t ${{ env.GAR_REGISTRY }}/web:sha-${SHORT_SHA} -t ${{ env.GAR_REGISTRY }}/web:latest -f web/Dockerfile web/
+          docker build \
+            --build-arg VITE_CLERK_PUBLISHABLE_KEY="${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}" \
+            -t ${{ env.GAR_REGISTRY }}/web:sha-${SHORT_SHA} \
+            -t ${{ env.GAR_REGISTRY }}/web:latest \
+            -f web/Dockerfile web/
           docker push ${{ env.GAR_REGISTRY }}/web:sha-${SHORT_SHA}
           docker push ${{ env.GAR_REGISTRY }}/web:latest
 
@@ -172,6 +176,8 @@ jobs:
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_STAGE }}" \
             -var="jwt_secret=${{ secrets.JWT_SECRET_STAGE }}" \
             -var="internal_api_key=${{ secrets.INTERNAL_API_KEY_STAGE }}" \
+            -var="clerk_jwks_url=${{ vars.CLERK_JWKS_URL }}" \
+            -var="clerk_issuer_url=${{ vars.CLERK_ISSUER_URL }}" \
             ${EXTRA_VARS}
 
   smoke-test:
