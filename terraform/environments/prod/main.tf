@@ -100,6 +100,12 @@ variable "backoffice_web_image" {
   default     = "gcr.io/cloudrun/hello"
 }
 
+variable "image" {
+  description = "Container image for the API (passed from CI on deploy)"
+  type        = string
+  default     = "gcr.io/cloudrun/hello"
+}
+
 # --- Networking ---
 module "networking" {
   source = "../../modules/networking"
@@ -140,6 +146,7 @@ module "cloud_run" {
   project_id         = var.project_id
   region             = var.region
   environment        = "prod"
+  image              = var.image
   vpc_connector_name = module.networking.vpc_connector_name
   database_url       = module.database.database_url
   redis_url          = var.redis_url
