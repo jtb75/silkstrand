@@ -236,7 +236,7 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
 
       env {
         name  = "DATABASE_URL"
-        value = "postgres://${module.database.database_user}@${module.database.private_ip}:5432/silkstrand_backoffice?sslmode=disable"
+        value = "postgres://${module.database.database_user}:${module.database.database_password}@${module.database.private_ip}:5432/silkstrand_backoffice?sslmode=disable"
       }
 
       env {
