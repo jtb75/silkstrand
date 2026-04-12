@@ -291,3 +291,25 @@ func (s *PostgresStore) GetAdminByEmail(ctx context.Context, email string) (*mod
 	}
 	return &a, nil
 }
+
+func (s *PostgresStore) CreateAdmin(ctx context.Context, email, passwordHash, role string) (*model.AdminUser, error) {
+	var a model.AdminUser
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO admin_users (email, password_hash, role) VALUES ($1, $2, $3)
+		 RETURNING id, email, password_hash, role, created_at`,
+		email, passwordHash, role).
+		Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Role, &a.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("creating admin: %w", err)
+	}
+	return &a, nil
+}
+
+func (s *PostgresStore) CountAdmins(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM admin_users`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting admins: %w", err)
+	}
+	return count, nil
+}

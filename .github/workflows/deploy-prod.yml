@@ -179,7 +179,9 @@ jobs:
             -var="backoffice_encryption_key=${{ secrets.BACKOFFICE_ENCRYPTION_KEY }}" \
             -var="image=${{ env.GAR_REGISTRY }}/api:sha-${SHA}" \
             -var="backoffice_api_image=${{ env.GAR_REGISTRY }}/backoffice-api:sha-${SHA}" \
-            -var="backoffice_web_image=${{ env.GAR_REGISTRY }}/backoffice-web:sha-${SHA}"
+            -var="backoffice_web_image=${{ env.GAR_REGISTRY }}/backoffice-web:sha-${SHA}" \
+            -var="bootstrap_admin_email=${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}" \
+            -var="bootstrap_admin_password=${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}"
 
   smoke-test:
     name: Smoke Test (Prod)
