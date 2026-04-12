@@ -1,7 +1,10 @@
+export type DCEnvironment = 'stage' | 'prod';
+
 export interface DataCenter {
   id: string;
   name: string;
   region: string;
+  environment: DCEnvironment;
   api_url: string;
   status: 'healthy' | 'degraded' | 'offline';
   tenant_count: number;
@@ -49,6 +52,7 @@ export interface LoginResponse {
 export interface CreateDataCenterRequest {
   name: string;
   region: string;
+  environment: DCEnvironment;
   api_url: string;
   api_key: string;
 }
@@ -56,6 +60,7 @@ export interface CreateDataCenterRequest {
 export interface UpdateDataCenterRequest {
   name?: string;
   region?: string;
+  environment?: DCEnvironment;
   api_url?: string;
   api_key?: string;
 }

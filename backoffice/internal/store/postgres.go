@@ -48,7 +48,7 @@ func (s *PostgresStore) Ping(ctx context.Context) error {
 
 func (s *PostgresStore) ListDataCenters(ctx context.Context) ([]model.DataCenter, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, region, api_url, api_key_encrypted, status, last_health_check, last_health_status, created_at, updated_at
+		`SELECT id, name, region, environment, api_url, api_key_encrypted, status, last_health_check, last_health_status, created_at, updated_at
 		 FROM data_centers ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing data centers: %w", err)
@@ -58,7 +58,7 @@ func (s *PostgresStore) ListDataCenters(ctx context.Context) ([]model.DataCenter
 	var dcs []model.DataCenter
 	for rows.Next() {
 		var dc model.DataCenter
-		if err := rows.Scan(&dc.ID, &dc.Name, &dc.Region, &dc.APIURL, &dc.APIKeyEncrypted,
+		if err := rows.Scan(&dc.ID, &dc.Name, &dc.Region, &dc.Environment, &dc.APIURL, &dc.APIKeyEncrypted,
 			&dc.Status, &dc.LastHealthCheck, &dc.LastHealthStatus, &dc.CreatedAt, &dc.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning data center: %w", err)
 		}
@@ -70,9 +70,9 @@ func (s *PostgresStore) ListDataCenters(ctx context.Context) ([]model.DataCenter
 func (s *PostgresStore) GetDataCenter(ctx context.Context, id string) (*model.DataCenter, error) {
 	var dc model.DataCenter
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, region, api_url, api_key_encrypted, status, last_health_check, last_health_status, created_at, updated_at
+		`SELECT id, name, region, environment, api_url, api_key_encrypted, status, last_health_check, last_health_status, created_at, updated_at
 		 FROM data_centers WHERE id = $1`, id).
-		Scan(&dc.ID, &dc.Name, &dc.Region, &dc.APIURL, &dc.APIKeyEncrypted,
+		Scan(&dc.ID, &dc.Name, &dc.Region, &dc.Environment, &dc.APIURL, &dc.APIKeyEncrypted,
 			&dc.Status, &dc.LastHealthCheck, &dc.LastHealthStatus, &dc.CreatedAt, &dc.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -84,13 +84,17 @@ func (s *PostgresStore) GetDataCenter(ctx context.Context, id string) (*model.Da
 }
 
 func (s *PostgresStore) CreateDataCenter(ctx context.Context, dc model.DataCenter) (*model.DataCenter, error) {
+	env := dc.Environment
+	if env == "" {
+		env = model.DCEnvStage
+	}
 	var created model.DataCenter
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO data_centers (name, region, api_url, api_key_encrypted, status)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, name, region, api_url, api_key_encrypted, status, last_health_check, last_health_status, created_at, updated_at`,
-		dc.Name, dc.Region, dc.APIURL, dc.APIKeyEncrypted, model.DCStatusActive).
-		Scan(&created.ID, &created.Name, &created.Region, &created.APIURL, &created.APIKeyEncrypted,
+		`INSERT INTO data_centers (name, region, environment, api_url, api_key_encrypted, status)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, name, region, environment, api_url, api_key_encrypted, status, last_health_check, last_health_status, created_at, updated_at`,
+		dc.Name, dc.Region, env, dc.APIURL, dc.APIKeyEncrypted, model.DCStatusActive).
+		Scan(&created.ID, &created.Name, &created.Region, &created.Environment, &created.APIURL, &created.APIKeyEncrypted,
 			&created.Status, &created.LastHealthCheck, &created.LastHealthStatus, &created.CreatedAt, &created.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("creating data center: %w", err)
@@ -101,11 +105,11 @@ func (s *PostgresStore) CreateDataCenter(ctx context.Context, dc model.DataCente
 func (s *PostgresStore) UpdateDataCenter(ctx context.Context, id string, dc model.DataCenter) (*model.DataCenter, error) {
 	var updated model.DataCenter
 	err := s.db.QueryRowContext(ctx,
-		`UPDATE data_centers SET name = $1, region = $2, api_url = $3, api_key_encrypted = $4, status = $5, updated_at = NOW()
-		 WHERE id = $6
-		 RETURNING id, name, region, api_url, api_key_encrypted, status, last_health_check, last_health_status, created_at, updated_at`,
-		dc.Name, dc.Region, dc.APIURL, dc.APIKeyEncrypted, dc.Status, id).
-		Scan(&updated.ID, &updated.Name, &updated.Region, &updated.APIURL, &updated.APIKeyEncrypted,
+		`UPDATE data_centers SET name = $1, region = $2, environment = $3, api_url = $4, api_key_encrypted = $5, status = $6, updated_at = NOW()
+		 WHERE id = $7
+		 RETURNING id, name, region, environment, api_url, api_key_encrypted, status, last_health_check, last_health_status, created_at, updated_at`,
+		dc.Name, dc.Region, dc.Environment, dc.APIURL, dc.APIKeyEncrypted, dc.Status, id).
+		Scan(&updated.ID, &updated.Name, &updated.Region, &updated.Environment, &updated.APIURL, &updated.APIKeyEncrypted,
 			&updated.Status, &updated.LastHealthCheck, &updated.LastHealthStatus, &updated.CreatedAt, &updated.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil

@@ -18,6 +18,12 @@ const (
 	DCStatusInactive = "inactive"
 )
 
+// Environment constants for data centers.
+const (
+	DCEnvStage = "stage"
+	DCEnvProd  = "prod"
+)
+
 // Provisioning status constants.
 const (
 	ProvisioningPending     = "pending"
@@ -36,6 +42,7 @@ type DataCenter struct {
 	ID                string     `json:"id"`
 	Name              string     `json:"name"`
 	Region            string     `json:"region"`
+	Environment       string     `json:"environment"` // "stage" or "prod"
 	APIURL            string     `json:"api_url"`
 	APIKeyEncrypted   []byte     `json:"-"`
 	Status            string     `json:"status"`
@@ -68,18 +75,20 @@ type AdminUser struct {
 // Request types
 
 type CreateDataCenterRequest struct {
-	Name   string `json:"name"`
-	Region string `json:"region"`
-	APIURL string `json:"api_url"`
-	APIKey string `json:"api_key"`
+	Name        string `json:"name"`
+	Region      string `json:"region"`
+	Environment string `json:"environment"` // "stage" or "prod"
+	APIURL      string `json:"api_url"`
+	APIKey      string `json:"api_key"`
 }
 
 type UpdateDataCenterRequest struct {
-	Name   *string `json:"name,omitempty"`
-	Region *string `json:"region,omitempty"`
-	APIURL *string `json:"api_url,omitempty"`
-	APIKey *string `json:"api_key,omitempty"`
-	Status *string `json:"status,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Region      *string `json:"region,omitempty"`
+	Environment *string `json:"environment,omitempty"`
+	APIURL      *string `json:"api_url,omitempty"`
+	APIKey      *string `json:"api_key,omitempty"`
+	Status      *string `json:"status,omitempty"`
 }
 
 type CreateTenantRequest struct {

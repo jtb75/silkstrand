@@ -40,6 +40,10 @@ export default function DataCenterDetail() {
               <span>{dc.region}</span>
             </div>
             <div className="detail-row">
+              <span className="detail-label">Environment</span>
+              <span className={`env-badge env-${dc.environment}`}>{dc.environment}</span>
+            </div>
+            <div className="detail-row">
               <span className="detail-label">API URL</span>
               <span>{dc.api_url}</span>
             </div>
