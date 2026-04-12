@@ -41,6 +41,10 @@ build/
 *.key
 credentials.json
 
+# Python
+__pycache__/
+*.pyc
+
 # Bundles (local cache)
 .bundle-cache/
 

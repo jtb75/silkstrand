@@ -6,15 +6,19 @@ import (
 	"net/http"
 
 	"github.com/jtb75/silkstrand/api/internal/model"
+	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/store"
+	"github.com/jtb75/silkstrand/api/internal/websocket"
 )
 
 type ScanHandler struct {
 	store store.Store
+	ps    *pubsub.PubSub
+	hub   *websocket.Hub
 }
 
-func NewScanHandler(s store.Store) *ScanHandler {
-	return &ScanHandler{store: s}
+func NewScanHandler(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub) *ScanHandler {
+	return &ScanHandler{store: s, ps: ps, hub: hub}
 }
 
 func (h *ScanHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +96,23 @@ func (h *ScanHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: publish directive to agent via Redis pub/sub
+	// Publish directive to agent
+	if scan.AgentID != nil && h.ps != nil {
+		agentID := *scan.AgentID
+
+		if !h.hub.IsConnected(agentID) {
+			slog.Warn("agent not connected, scan will wait for agent", "agent_id", agentID, "scan_id", scan.ID)
+		}
+
+		directive := pubsub.Directive{
+			ScanID:   scan.ID,
+			BundleID: scan.BundleID,
+			TargetID: scan.TargetID,
+		}
+		if err := h.ps.PublishDirective(r.Context(), agentID, directive); err != nil {
+			slog.Error("publishing directive", "agent_id", agentID, "scan_id", scan.ID, "error", err)
+		}
+	}
 
 	writeJSON(w, http.StatusCreated, scan)
 }

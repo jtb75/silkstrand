@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -314,4 +317,144 @@ func (s *PostgresStore) UpdateAgentStatus(ctx context.Context, id string, status
 		return fmt.Errorf("updating agent status: %w", err)
 	}
 	return nil
+}
+
+// GetAgentByID looks up an agent by ID without tenant scoping (for WSS auth).
+func (s *PostgresStore) GetAgentByID(ctx context.Context, id string) (*model.Agent, error) {
+	var a model.Agent
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, name, status, last_heartbeat, version, key_hash, next_key_hash, key_rotated_at, created_at
+		 FROM agents WHERE id = $1`, id).
+		Scan(&a.ID, &a.TenantID, &a.Name, &a.Status, &a.LastHeartbeat, &a.Version,
+			&a.KeyHash, &a.NextKeyHash, &a.KeyRotatedAt, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting agent by id: %w", err)
+	}
+	return &a, nil
+}
+
+func generateAgentKey() (raw string, hash string, err error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return "", "", fmt.Errorf("generating random key: %w", err)
+	}
+	rawKey := hex.EncodeToString(key)
+	h := sha256.Sum256([]byte(rawKey))
+	return rawKey, hex.EncodeToString(h[:]), nil
+}
+
+func hashKey(key string) string {
+	h := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(h[:])
+}
+
+// CreateAgent creates a new agent record and returns the agent + raw API key (shown once).
+func (s *PostgresStore) CreateAgent(ctx context.Context, req model.CreateAgentRequest) (*model.Agent, string, error) {
+	rawKey, keyHash, err := generateAgentKey()
+	if err != nil {
+		return nil, "", err
+	}
+
+	var a model.Agent
+	err = s.db.QueryRowContext(ctx,
+		`INSERT INTO agents (tenant_id, name, version, key_hash)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, tenant_id, name, status, last_heartbeat, version, key_hash, next_key_hash, key_rotated_at, created_at`,
+		req.TenantID, req.Name, req.Version, keyHash).
+		Scan(&a.ID, &a.TenantID, &a.Name, &a.Status, &a.LastHeartbeat, &a.Version,
+			&a.KeyHash, &a.NextKeyHash, &a.KeyRotatedAt, &a.CreatedAt)
+	if err != nil {
+		return nil, "", fmt.Errorf("creating agent: %w", err)
+	}
+	return &a, rawKey, nil
+}
+
+// RotateAgentKey generates a new key and stores its hash in next_key_hash.
+// Both the old key_hash and new next_key_hash are accepted until PromoteAgentKey is called.
+func (s *PostgresStore) RotateAgentKey(ctx context.Context, id string) (string, error) {
+	rawKey, keyHash, err := generateAgentKey()
+	if err != nil {
+		return "", err
+	}
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET next_key_hash = $1 WHERE id = $2`, keyHash, id)
+	if err != nil {
+		return "", fmt.Errorf("rotating agent key: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return "", fmt.Errorf("agent not found")
+	}
+	return rawKey, nil
+}
+
+// PromoteAgentKey moves next_key_hash to key_hash and clears next_key_hash.
+func (s *PostgresStore) PromoteAgentKey(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET key_hash = next_key_hash, next_key_hash = NULL, key_rotated_at = NOW()
+		 WHERE id = $1 AND next_key_hash IS NOT NULL`, id)
+	if err != nil {
+		return fmt.Errorf("promoting agent key: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("agent not found or no pending key rotation")
+	}
+	return nil
+}
+
+// --- Targets (non-tenant-scoped) ---
+
+// GetTargetByID looks up a target by ID without tenant scoping (for directive enrichment).
+func (s *PostgresStore) GetTargetByID(ctx context.Context, id string) (*model.Target, error) {
+	var t model.Target
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, agent_id, type, identifier, config, environment, created_at, updated_at
+		 FROM targets WHERE id = $1`, id).
+		Scan(&t.ID, &t.TenantID, &t.AgentID, &t.Type, &t.Identifier, &t.Config, &t.Environment, &t.CreatedAt, &t.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting target by id: %w", err)
+	}
+	return &t, nil
+}
+
+// --- Bundles ---
+
+func (s *PostgresStore) GetBundle(ctx context.Context, id string) (*model.Bundle, error) {
+	var b model.Bundle
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, name, version, framework, target_type, gcs_path, signature, created_at
+		 FROM bundles WHERE id = $1`, id).
+		Scan(&b.ID, &b.TenantID, &b.Name, &b.Version, &b.Framework, &b.TargetType,
+			&b.GCSPath, &b.Signature, &b.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting bundle: %w", err)
+	}
+	return &b, nil
+}
+
+// --- Credentials ---
+
+func (s *PostgresStore) GetCredentialsByTarget(ctx context.Context, targetID string) (json.RawMessage, error) {
+	var data []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT encrypted_data FROM credentials WHERE target_id = $1 LIMIT 1`, targetID).
+		Scan(&data)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting credentials: %w", err)
+	}
+	return json.RawMessage(data), nil
 }

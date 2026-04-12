@@ -1,0 +1,12 @@
+name: test-bundle
+version: 1.0.0
+framework: python
+runtime_version: ">=3.11"
+target_type: database
+entrypoint: content/checks.py
+benchmark:
+  name: "Test Benchmark"
+  version: "1.0.0"
+  cis_id: "CIS_TEST"
+outputs:
+  format: silkstrand-v1

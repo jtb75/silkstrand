@@ -1,0 +1,3 @@
+ALTER TABLE agents DROP COLUMN IF EXISTS key_hash;
+ALTER TABLE agents DROP COLUMN IF EXISTS next_key_hash;
+ALTER TABLE agents DROP COLUMN IF EXISTS key_rotated_at;
