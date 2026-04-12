@@ -148,22 +148,28 @@ silkstrand/
 
 - **Data Center API** — Full Go API server with:
   - User-facing routes: targets CRUD, scans, scan results (JWT + tenant middleware)
+  - Dual-mode auth: Clerk JWKS (RS256, production) + HMAC-SHA256 (dev). Stdlib-only crypto.
   - Agent WebSocket endpoint with per-agent API key auth (SHA-256, dual-key rotation)
   - Internal API routes (`/internal/v1/`) for backoffice access (API key auth)
   - Tenant status enforcement (active/suspended/inactive with 5s TTL cache)
-  - Scan lifecycle: create → directive via Redis → agent executes → results via WSS → stored in Postgres
+  - Scan lifecycle: create → directive via Upstash Redis → agent executes → results via WSS → stored in Postgres
   - Credential encryption at rest (AES-256-GCM), decrypted before forwarding to agents
   - Stuck scan cleanup: running scans fail automatically on agent disconnect
-- **Edge Agent** — Go binary with WSS tunnel (exponential backoff reconnect), Python runner, bundle cache, heartbeat
-- **CIS PostgreSQL Bundle** — 8 CIS Benchmark controls (log_connections, ssl, password_encryption, pg_hba.conf, log_statement, pgaudit, superuser roles)
-- **Tenant Frontend** — React + TypeScript SPA: dashboard, targets CRUD, scan triggering, results viewer with summary bar
+  - Dockerfile: multi-stage (golang:1.24-alpine → distroless)
+- **Edge Agent** — Go binary with WSS tunnel (exponential backoff reconnect), Python runner, bundle cache, heartbeat. Cross-compiled for 6 platforms on release.
+- **CIS PostgreSQL Bundle** — 8 CIS Benchmark controls (log_connections, ssl, password_encryption, pg_hba.conf, log_statement, pgaudit, superuser roles). End-to-end tested locally.
+- **Tenant Frontend** — React + TypeScript SPA: dashboard, targets CRUD, scan triggering, results viewer with summary bar. Clerk integration (production) + dev token flow (local). Dockerfile with nginx.
 - **Backoffice Manager** — Separate Go module + React frontend:
-  - Data center registration with encrypted API key storage
-  - Two-phase tenant provisioning (backoffice DB → DC API call)
+  - Data center registration with AES-256-GCM encrypted API key storage
+  - Two-phase tenant provisioning (backoffice DB → DC API call, retry on failure)
   - Tenant suspend/activate with DC sync
   - Health poller (60s) monitors all registered data centers
-  - Admin JWT auth with role-based access (viewer/admin/super_admin)
+  - Admin JWT auth with role-based access (viewer/admin/super_admin) + bcrypt login
   - Dashboard with DC health cards, cross-DC tenant management
+  - Dockerfile: multi-stage (golang → distroless for API, node → nginx for web)
+- **CI/CD** — GitHub Actions with path-based filtering for all components (DC API, agent, tenant web, backoffice API, backoffice web, Terraform). Docker image verify builds. Smoke test with fallback.
+- **Seed Tooling** — SQL seeds for DC + backoffice databases, runner script, JWT generator, bcrypt hash helper. `make seed`, `make jwt`.
+- **Terraform** — Backoffice services (API + web Cloud Run, second database) defined in prod environment alongside DC services. Shared Cloud SQL instance.
 
 ### What's Deployed (Stage)
 
@@ -174,15 +180,21 @@ silkstrand/
 - **VPC** — private services access, serverless VPC connector
 - **DNS** — `api-stage.silkstrand.io`, `agent-stage.silkstrand.io`
 
+### What's Not Deployed Yet
+
+- Prod deployment (Terraform defined but not applied — needs `tofu apply` with secrets)
+- Backoffice Cloud Run services (Terraform in prod/main.tf, images not yet pushed)
+- Stage Cloud Run service crashes on startup (needs DB migration investigation in GCP console)
+
 ### What's Not Built Yet
 
-- Prod deployment (infra defined, not applied)
-- Backoffice deployment (needs own GCP project + Terraform)
-- Clerk auth integration (tenant frontend uses dev JWT)
-- GCS bundle pull (agent reads local filesystem only)
-- Bundle upload API
-- Additional compliance bundles
-- Vault/CyberArk credential integrations (post-MVP)
+- GCS bundle pull (agent reads local filesystem only — production needs GCS download)
+- Bundle upload API (bundles registered in DB but no upload endpoint)
+- Additional compliance bundles (only CIS PostgreSQL 16 exists)
+- Vault/CyberArk credential integrations (post-MVP — currently AES-256-GCM at rest)
+- Tenant-configurable credential sources (each tenant will need pluggable integrations)
+- Frontend pagination for list endpoints
+- Agent WebSocket CORS restriction for production
 
 ## DC API Routes
 
@@ -306,9 +318,10 @@ Server sends WebSocket pings every 30s; agent responds with pong (60s timeout).
 
 - **Per-agent API keys**: Each agent gets a unique 256-bit key (SHA-256 hashed in DB). Dual-key rotation via `key_hash` + `next_key_hash`. Constant-time comparison.
 - **Tenant status enforcement**: Middleware checks tenant status with 5s TTL cache. Suspended tenants get 403 on all API routes and agent WSS connections.
-- **Backoffice as separate deployment**: Own API, DB, frontend. Talks to DCs over HTTPS (`/internal/v1/`). Never accesses DC databases directly. Designed for N data centers.
-- **Two-phase tenant provisioning**: Create in backoffice DB first (provisioning_status=pending), then call DC API. On failure, mark as failed with retry option.
-- **Credential encryption at rest**: AES-256-GCM with `CREDENTIAL_ENCRYPTION_KEY` env var. DC API decrypts before sending to agent. No encryption key = passthrough (dev only).
+- **Backoffice in prod project**: Runs as additional Cloud Run services in `silkstrand-prod` — not a separate GCP project. Uses second database on the same Cloud SQL instance ($0 extra). One backoffice manages all DCs (stage, prod, future regions).
+- **Two-phase tenant provisioning**: Create in backoffice DB first (provisioning_status=pending), then call DC API. On failure, mark as failed with retry option. Returns 202 (not 201) on DC provisioning failure.
+- **Credential encryption at rest**: AES-256-GCM with `CREDENTIAL_ENCRYPTION_KEY` env var. DC API decrypts before sending to agent. No encryption key = passthrough (dev only). Post-MVP: tenant-configurable credential sources (Vault, CyberArk, etc.).
+- **Dual-mode auth**: DC API supports both Clerk JWKS (RS256, production) and HMAC-SHA256 (dev). Controlled by `CLERK_JWKS_URL` env var — empty = dev mode. All JWKS crypto is stdlib-only (no external JWT libraries).
 - **Stuck scan cleanup**: Running/pending scans automatically fail when agent disconnects.
 - **Upstash Redis over self-hosted Redis**: Eliminates idle cost. See `docs/adr/001-upstash-over-redis.md`.
 - **Artifact Registry over GHCR**: Cloud Run compatibility. Images at `us-central1-docker.pkg.dev/silkstrand-{env}/silkstrand/`.
@@ -338,28 +351,59 @@ Server sends WebSocket pings every 30s; agent responds with pong (60s timeout).
 ## Local Development
 
 ```bash
-# Data Center API + dependencies
-make dev              # Start Postgres (15432) + Redis (16379) + Backoffice Postgres (15433), run DC API
+# 1. Start dependencies
+make dev-deps         # Start Postgres (15432) + Redis (16379) + Backoffice Postgres (15433)
+
+# 2. Seed test data (idempotent, safe to run multiple times)
+make seed             # Creates: test tenant, agent (key: test-agent-key), target, bundle, admin user
+
+# 3. Run services
+make run              # DC API on port 8080
+make run-backoffice   # Backoffice API on port 8081
+
+# 4. Run agent
+cd agent && SILKSTRAND_AGENT_ID=00000000-0000-0000-0000-000000000010 \
+  SILKSTRAND_AGENT_KEY=test-agent-key \
+  SILKSTRAND_BUNDLE_DIR=../bundles \
+  go run ./cmd/silkstrand-agent/
+
+# 5. Run frontends
+cd web && npm run dev              # Tenant UI on port 5173 (proxies to localhost:8080)
+cd backoffice/web && npm run dev   # Backoffice UI on port 5174 (proxies to localhost:8081)
+
+# 6. Generate a dev JWT for API testing
+make jwt              # Prints a valid JWT token for curl
+# Usage: curl -H "Authorization: Bearer $(make jwt)" localhost:8080/api/v1/targets
+
+# Build & test
 make build            # Build DC API binary
 make test             # Run DC API tests
 make lint             # Run golangci-lint on DC API
-
-# Backoffice
-make run-backoffice   # Run backoffice API (port 8081)
 make build-backoffice # Build backoffice binary
 make test-backoffice  # Run backoffice tests
-make lint-backoffice  # Lint backoffice
 
-# Agent
-cd agent && SILKSTRAND_AGENT_ID=<uuid> SILKSTRAND_AGENT_KEY=<key> SILKSTRAND_BUNDLE_DIR=../bundles go run ./cmd/silkstrand-agent/
+# Docker (full stack)
+docker compose up --build   # Builds and runs all services (API, backoffice, frontends, DBs, Redis)
 
-# Frontends
-cd web && npm run dev              # Tenant UI (proxies to localhost:8080)
-cd backoffice/web && npm run dev   # Backoffice UI (proxies to localhost:8081)
-
-# Infrastructure
+# Cleanup
 make down             # Stop containers
 make clean            # Stop containers + delete volumes
+```
+
+### Quick E2E Test
+
+```bash
+make dev-deps && make seed
+# Terminal 1: make run
+# Terminal 2: cd agent && SILKSTRAND_AGENT_ID=00000000-0000-0000-0000-000000000010 SILKSTRAND_AGENT_KEY=test-agent-key SILKSTRAND_BUNDLE_DIR=../bundles go run ./cmd/silkstrand-agent/
+# Terminal 3:
+TOKEN=$(make jwt)
+curl -s -X POST localhost:8080/api/v1/scans \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"target_id":"00000000-0000-0000-0000-000000000020","bundle_id":"00000000-0000-0000-0000-000000000030"}'
+# Wait 1-2 seconds, then:
+curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
 ```
 
 ### Ports
@@ -384,6 +428,7 @@ make clean            # Stop containers + delete volumes
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT signing key |
 | `INTERNAL_API_KEY` | (none) | API key for backoffice access |
 | `CREDENTIAL_ENCRYPTION_KEY` | (none) | 64 hex chars (32 bytes) for AES-256-GCM |
+| `CLERK_JWKS_URL` | (none) | Clerk JWKS endpoint for production auth (empty = dev HMAC mode) |
 
 ### Backoffice API
 
@@ -408,13 +453,19 @@ make clean            # Stop containers + delete volumes
 
 ### Secrets
 - `CLOUDFLARE_API_TOKEN` — DNS management for silkstrand.io
-- `UPSTASH_REDIS_URL_STAGE` / `UPSTASH_REDIS_URL_PROD` — Redis connection URLs
-- `JWT_SECRET_STAGE` / `JWT_SECRET_PROD` — API JWT signing keys
+- `UPSTASH_REDIS_URL_STAGE` / `UPSTASH_REDIS_URL_PROD` — Upstash Redis connection URLs (DC API only)
+- `JWT_SECRET_STAGE` / `JWT_SECRET_PROD` — DC API JWT signing keys
+- `INTERNAL_API_KEY_PROD` — API key for backoffice → DC internal API access
+- `BACKOFFICE_JWT_SECRET` — Backoffice admin JWT signing key
+- `BACKOFFICE_ENCRYPTION_KEY` — AES-256 key for DC API key encryption in backoffice DB (64 hex chars)
+- `CREDENTIAL_ENCRYPTION_KEY_STAGE` / `CREDENTIAL_ENCRYPTION_KEY_PROD` — AES-256 key for credential encryption
 
 ### Variables
 - `WIF_PROVIDER_STAGE` / `WIF_PROVIDER_PROD` — Workload Identity Federation provider names
 - `WIF_SA_STAGE` / `WIF_SA_PROD` — GitHub Actions service account emails
 - `CLOUDFLARE_ZONE_ID` — Zone ID for silkstrand.io
+- `CLERK_JWKS_URL` — Clerk JWKS endpoint (set when Clerk is configured)
+- `VITE_CLERK_PUBLISHABLE_KEY` — Clerk publishable key for tenant frontend build
 
 ## Database Migrations
 

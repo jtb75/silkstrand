@@ -332,10 +332,44 @@ scan_results (id, scan_id, control_id, title, status, severity, evidence, remedi
 5. Results flow back over WSS, API publishes to `scan:{scan_id}:progress`
 6. Web frontend subscribes to progress channel via SSE or polling
 
+## Backoffice Manager
+
+The backoffice is a separate API + frontend that manages data centers and tenants across regions. It runs in the `silkstrand-prod` GCP project alongside the prod DC services, using a second database on the same Cloud SQL instance.
+
+Key driver: **data residency** — EU customers need their data in EU data centers. The backoffice provides cross-datacenter visibility without accessing DC databases directly.
+
+```
+Backoffice Manager (prod project)
+  ├── registers DC: silkstrand-stage (us-central1)
+  ├── registers DC: silkstrand-prod  (us-central1)
+  ├── registers DC: silkstrand-eu    (eu-west1, future)
+  └── manages tenants across all DCs via /internal/v1/ API
+```
+
+### Tenant Provisioning Flow
+
+1. Admin creates tenant in backoffice (selects target DC)
+2. Backoffice creates record in own DB (provisioning_status: pending)
+3. Backoffice calls DC `/internal/v1/tenants` to provision
+4. DC creates tenant in its Postgres, returns tenant ID
+5. Backoffice updates: dc_tenant_id, provisioning_status: provisioned
+6. On failure: provisioning_status: failed, admin can retry
+
+### Tenant Suspension Flow
+
+1. Admin toggles tenant to suspended in backoffice
+2. Backoffice calls DC `/internal/v1/tenants/{id}` with status: suspended
+3. DC updates tenant status
+4. DC middleware rejects all API requests for that tenant (5s cache TTL)
+5. DC agent handler rejects new WSS connections for that tenant's agents
+
 ## Local Development
 
-- `docker-compose.yml` for local Postgres and Redis (standard Redis for dev)
-- Agent runs locally, connects to local API
-- API serves both REST and WSS endpoints
-- Web dev server proxies API requests
+- `docker-compose.yml` for local Postgres (15432), Redis (16379), and backoffice Postgres (15433)
+- `make seed` creates test tenant, agent, target, bundle, and backoffice admin
+- Agent runs locally, connects to local API with `SILKSTRAND_AGENT_KEY=test-agent-key`
+- API serves REST, WSS, and internal endpoints
+- Web dev servers proxy API requests (tenant on 5173, backoffice on 5174)
 - Bundles stored on local filesystem instead of GCS
+- `make jwt` generates a valid dev JWT for curl testing
+- Full e2e tested: scan create → directive → agent execute → results stored
