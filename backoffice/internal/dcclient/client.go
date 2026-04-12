@@ -56,6 +56,10 @@ func (c *Client) do(method, url string, body any, conn DCConn) (*http.Response, 
 // Uses /readyz instead of /healthz because Cloud Run intercepts /healthz
 // (it's configured as the probe path) — external requests to /healthz
 // return a Google-served 404 without reaching the container.
+//
+// Parses the JSON response and requires status=="ok" so a Cloud Run service
+// serving the default placeholder ("Congratulations" HTML) is not reported
+// as healthy.
 func (c *Client) HealthCheck(conn DCConn) error {
 	resp, err := c.http.Get(conn.APIURL + "/readyz")
 	if err != nil {
@@ -65,6 +69,16 @@ func (c *Client) HealthCheck(conn DCConn) error {
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check returned status %d", resp.StatusCode)
+	}
+
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&body); err != nil {
+		return fmt.Errorf("health check response not JSON (likely Cloud Run placeholder): %w", err)
+	}
+	if body.Status != "ok" {
+		return fmt.Errorf("health check status=%q (want \"ok\")", body.Status)
 	}
 	return nil
 }
