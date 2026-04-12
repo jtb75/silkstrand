@@ -95,13 +95,59 @@ jobs:
           docker push ${{ env.GAR_REGISTRY }}/web:sha-${SHA}
           docker push ${{ env.GAR_REGISTRY }}/web:latest
 
+  build-push-backoffice-api:
+    name: Build & Push Backoffice API Image
+    runs-on: ubuntu-latest
+    needs: [validate-tag]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER_PROD }}
+          service_account: ${{ vars.WIF_SA_PROD }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build and push
+        run: |
+          SHA=${{ needs.validate-tag.outputs.sha }}
+          docker build -t ${{ env.GAR_REGISTRY }}/backoffice-api:sha-${SHA} -t ${{ env.GAR_REGISTRY }}/backoffice-api:latest -f backoffice/Dockerfile backoffice/
+          docker push ${{ env.GAR_REGISTRY }}/backoffice-api:sha-${SHA}
+          docker push ${{ env.GAR_REGISTRY }}/backoffice-api:latest
+
+  build-push-backoffice-web:
+    name: Build & Push Backoffice Web Image
+    runs-on: ubuntu-latest
+    needs: [validate-tag]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER_PROD }}
+          service_account: ${{ vars.WIF_SA_PROD }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build and push
+        run: |
+          SHA=${{ needs.validate-tag.outputs.sha }}
+          docker build -t ${{ env.GAR_REGISTRY }}/backoffice-web:sha-${SHA} -t ${{ env.GAR_REGISTRY }}/backoffice-web:latest -f backoffice/web/Dockerfile backoffice/web/
+          docker push ${{ env.GAR_REGISTRY }}/backoffice-web:sha-${SHA}
+          docker push ${{ env.GAR_REGISTRY }}/backoffice-web:latest
+
   # Deploy via Terraform — same pattern as stage.
   # Do NOT use gcloud run deploy — it creates v1 API revisions that conflict
   # with the Terraform-managed v2 services.
   deploy:
     name: Deploy to Prod (Terraform)
     runs-on: ubuntu-latest
-    needs: [validate-tag, build-push-api, build-push-web]
+    needs: [validate-tag, build-push-api, build-push-web, build-push-backoffice-api, build-push-backoffice-web]
     env:
       TF_WORKING_DIR: terraform/environments/prod
     steps:
@@ -131,7 +177,9 @@ jobs:
             -var="internal_api_key=${{ secrets.INTERNAL_API_KEY_PROD }}" \
             -var="backoffice_jwt_secret=${{ secrets.BACKOFFICE_JWT_SECRET }}" \
             -var="backoffice_encryption_key=${{ secrets.BACKOFFICE_ENCRYPTION_KEY }}" \
-            -var="image=${{ env.GAR_REGISTRY }}/api:sha-${SHA}"
+            -var="image=${{ env.GAR_REGISTRY }}/api:sha-${SHA}" \
+            -var="backoffice_api_image=${{ env.GAR_REGISTRY }}/backoffice-api:sha-${SHA}" \
+            -var="backoffice_web_image=${{ env.GAR_REGISTRY }}/backoffice-web:sha-${SHA}"
 
   smoke-test:
     name: Smoke Test (Prod)
