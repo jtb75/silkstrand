@@ -1,18 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { authApi, type TenantMember } from '../api/authClient';
+import { authApi, type TenantMember, type PendingInvite } from '../api/authClient';
 import { getToken } from '../api/client';
 import { useAuth } from '../auth/useAuth';
 
-/**
- * Custom Team page — replaces Clerk's OrganizationProfile. Admins can
- * invite users (email + role), see existing members, and remove them.
- * Members see a read-only list.
- */
 export default function Team() {
   const { active, user } = useAuth();
   const isAdmin = active?.role === 'admin';
 
   const [members, setMembers] = useState<TenantMember[]>([]);
+  const [invites, setInvites] = useState<PendingInvite[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -26,8 +22,12 @@ export default function Team() {
     if (!token) return;
     setLoading(true);
     try {
-      const m = await authApi.listMembers(token);
+      const [m, i] = await Promise.all([
+        authApi.listMembers(token),
+        isAdmin ? authApi.listInvitations(token) : Promise.resolve([] as PendingInvite[]),
+      ]);
       setMembers(m);
+      setInvites(i);
       setErr(null);
     } catch (e) {
       setErr((e as Error).message);
@@ -36,7 +36,8 @@ export default function Team() {
     }
   }
 
-  useEffect(() => { void refresh(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void refresh(); }, [isAdmin]);
 
   async function submitInvite(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -48,6 +49,7 @@ export default function Team() {
       await authApi.invite(token, inviteEmail.trim().toLowerCase(), inviteRole);
       setInviteMsg(`Invitation sent to ${inviteEmail}.`);
       setInviteEmail('');
+      await refresh();
     } catch (e) {
       setInviteMsg((e as Error).message);
     } finally {
@@ -56,11 +58,35 @@ export default function Team() {
   }
 
   async function remove(userId: string, email: string) {
-    if (!confirm(`Remove ${email} from this tenant?`)) return;
+    if (!confirm(`Remove ${email} from this tenant? They'll lose access immediately.`)) return;
     const token = getToken();
     if (!token) return;
     try {
       await authApi.removeMember(token, userId);
+      await refresh();
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  async function toggleStatus(m: TenantMember) {
+    const token = getToken();
+    if (!token) return;
+    const next: 'active' | 'suspended' = m.status === 'active' ? 'suspended' : 'active';
+    try {
+      await authApi.updateMemberStatus(token, m.user_id, next);
+      await refresh();
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  async function cancelInvite(id: string, email: string) {
+    if (!confirm(`Cancel the pending invitation to ${email}?`)) return;
+    const token = getToken();
+    if (!token) return;
+    try {
+      await authApi.cancelInvitation(token, id);
       await refresh();
     } catch (e) {
       alert((e as Error).message);
@@ -93,6 +119,38 @@ export default function Team() {
         </section>
       )}
 
+      {isAdmin && invites.length > 0 && (
+        <section style={{ marginTop: 32 }}>
+          <h2>Pending invitations</h2>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Sent</th>
+                <th>Expires</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {invites.map((i) => (
+                <tr key={i.id}>
+                  <td>{i.email}</td>
+                  <td>{i.role}</td>
+                  <td>{new Date(i.created_at).toLocaleDateString()}</td>
+                  <td>{new Date(i.expires_at).toLocaleDateString()}</td>
+                  <td>
+                    <button className="btn btn-sm" onClick={() => cancelInvite(i.id, i.email)}>
+                      Cancel
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       <section style={{ marginTop: 32 }}>
         <h2>Members</h2>
         {loading && <p>Loading…</p>}
@@ -103,6 +161,7 @@ export default function Team() {
               <tr>
                 <th>Email</th>
                 <th>Role</th>
+                <th>Status</th>
                 <th>Joined</th>
                 {isAdmin && <th></th>}
               </tr>
@@ -112,13 +171,31 @@ export default function Team() {
                 <tr key={m.user_id}>
                   <td>{m.email}{user?.id === m.user_id && <span className="muted"> (you)</span>}</td>
                   <td>{m.role}</td>
+                  <td>
+                    <span style={{
+                      color: m.status === 'active' ? '#065f46' : '#b91c1c',
+                      fontWeight: 500,
+                    }}>{m.status}</span>
+                  </td>
                   <td>{new Date(m.created_at).toLocaleDateString()}</td>
                   {isAdmin && (
                     <td>
                       {user?.id !== m.user_id && (
-                        <button className="btn btn-sm btn-danger" onClick={() => remove(m.user_id, m.email)}>
-                          Remove
-                        </button>
+                        <>
+                          <button
+                            className="btn btn-sm"
+                            style={{ marginRight: 6 }}
+                            onClick={() => toggleStatus(m)}
+                          >
+                            {m.status === 'active' ? 'Suspend' : 'Reactivate'}
+                          </button>
+                          <button
+                            className="btn btn-sm btn-danger"
+                            onClick={() => remove(m.user_id, m.email)}
+                          >
+                            Remove
+                          </button>
+                        </>
                       )}
                     </td>
                   )}

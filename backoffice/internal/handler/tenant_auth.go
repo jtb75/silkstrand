@@ -217,6 +217,10 @@ func (h *TenantAuthHandler) SwitchOrg(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not a member of this tenant")
 		return
 	}
+	if membership.Status != model.MembershipStatusActive {
+		writeError(w, http.StatusForbidden, "your access to this tenant has been suspended")
+		return
+	}
 
 	user, err := h.store.GetUserByID(r.Context(), claims.Sub)
 	if err != nil || user == nil {
@@ -485,6 +489,94 @@ func (h *TenantAuthHandler) RemoveMember(w http.ResponseWriter, r *http.Request)
 		}
 		slog.Error("removing member", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to remove member")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /api/v1/tenant-auth/invitations (authenticated, admin-only)
+// Lists pending invitations for the caller's active tenant.
+func (h *TenantAuthHandler) ListInvitations(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if claims.Role != model.MembershipRoleAdmin {
+		writeError(w, http.StatusForbidden, "admin role required")
+		return
+	}
+	invites, err := h.store.ListPendingInvitations(r.Context(), claims.BoTenantID)
+	if err != nil {
+		slog.Error("listing pending invitations", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list invitations")
+		return
+	}
+	if invites == nil {
+		invites = []model.PendingInvite{}
+	}
+	writeJSON(w, http.StatusOK, invites)
+}
+
+// DELETE /api/v1/tenant-auth/invitations/{id} (authenticated, admin-only)
+func (h *TenantAuthHandler) CancelInvitation(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if claims.Role != model.MembershipRoleAdmin {
+		writeError(w, http.StatusForbidden, "admin role required")
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.store.DeleteInvitation(r.Context(), id, claims.BoTenantID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "invitation not found")
+			return
+		}
+		slog.Error("deleting invitation", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to cancel invitation")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PUT /api/v1/tenant-auth/members/{user_id}/status (authenticated, admin-only)
+// Body: {status: "active" | "suspended"}
+func (h *TenantAuthHandler) UpdateMemberStatus(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if claims.Role != model.MembershipRoleAdmin {
+		writeError(w, http.StatusForbidden, "admin role required")
+		return
+	}
+	userID := r.PathValue("user_id")
+	if userID == claims.Sub {
+		writeError(w, http.StatusBadRequest, "cannot suspend yourself")
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Status != model.MembershipStatusActive && req.Status != model.MembershipStatusSuspended {
+		writeError(w, http.StatusBadRequest, "status must be 'active' or 'suspended'")
+		return
+	}
+	if err := h.store.UpdateMembershipStatus(r.Context(), userID, claims.BoTenantID, req.Status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "membership not found")
+			return
+		}
+		slog.Error("updating membership status", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to update membership status")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

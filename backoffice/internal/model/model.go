@@ -60,11 +60,18 @@ type User struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
+// Membership statuses.
+const (
+	MembershipStatusActive    = "active"
+	MembershipStatusSuspended = "suspended"
+)
+
 type Membership struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
 	TenantID  string    `json:"tenant_id"`
 	Role      string    `json:"role"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -73,6 +80,17 @@ type TenantMember struct {
 	UserID    string    `json:"user_id"`
 	Email     string    `json:"email"`
 	Role      string    `json:"role"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PendingInvite is an unaccepted invitation row, returned to tenant admins
+// so they can see who's been invited but hasn't joined yet.
+type PendingInvite struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
