@@ -94,6 +94,14 @@ resource "google_cloud_run_v2_service" "api" {
   template {
     service_account = google_service_account.api.email
 
+    annotations = {
+      "run.googleapis.com/vpc-access-connector" = "projects/${var.project_id}/locations/${var.region}/connectors/${var.vpc_connector_name}"
+      "run.googleapis.com/vpc-access-egress"    = "private-ranges-only"
+      "run.googleapis.com/cpu-throttling"       = "true"
+      "run.googleapis.com/startup-cpu-boost"    = "true"
+      "client.knative.dev/user-agent"           = "silkstrand-terraform"
+    }
+
     scaling {
       min_instance_count = var.min_instances
       max_instance_count = var.max_instances
@@ -132,7 +140,7 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       resources {
-        cpu_idle = true  # Throttle CPU when no requests (required for scale-to-zero)
+        cpu_idle = true
         limits = {
           cpu    = "1"
           memory = "256Mi"
@@ -140,26 +148,31 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       startup_probe {
+        initial_delay_seconds = 10
+        timeout_seconds       = 5
+        period_seconds        = 10
+        failure_threshold     = 3
         http_get {
           path = "/healthz"
+          port = 8080
         }
-        initial_delay_seconds = 5
-        period_seconds        = 3
-        failure_threshold     = 10
       }
 
       liveness_probe {
+        timeout_seconds   = 5
+        period_seconds    = 30
+        failure_threshold = 3
         http_get {
           path = "/healthz"
+          port = 8080
         }
-        period_seconds = 30
       }
     }
   }
 
   lifecycle {
     ignore_changes = [
-      template[0].containers[0].image, # Image updated by CI/CD, not Terraform
+      template[0].containers[0].image,
     ]
   }
 }
