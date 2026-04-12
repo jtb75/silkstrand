@@ -40,6 +40,13 @@ variable "jwt_secret" {
   sensitive = true
 }
 
+variable "internal_api_key" {
+  description = "Shared secret for the backoffice to call /internal/v1/ routes"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "image" {
   description = "Container image to deploy. Use a placeholder for initial creation."
   type        = string
@@ -137,6 +144,11 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "JWT_SECRET"
         value = var.jwt_secret
+      }
+
+      env {
+        name  = "INTERNAL_API_KEY"
+        value = var.internal_api_key
       }
 
       resources {

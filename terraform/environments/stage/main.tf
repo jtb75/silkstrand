@@ -70,6 +70,13 @@ variable "jwt_secret" {
   sensitive   = true
 }
 
+variable "internal_api_key" {
+  description = "Shared secret for the backoffice to call /internal/v1/ routes"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "image" {
   description = "Container image for the API (passed from CI on deploy)"
   type        = string
@@ -118,6 +125,7 @@ module "cloud_run" {
   database_url       = module.database.database_url
   redis_url          = var.redis_url
   jwt_secret         = var.jwt_secret
+  internal_api_key   = var.internal_api_key
   min_instances      = 0
   max_instances      = 2
 }
