@@ -151,6 +151,8 @@ module "cloud_run" {
   database_url       = module.database.database_url
   redis_url          = var.redis_url
   jwt_secret         = var.jwt_secret
+  internal_api_key   = var.internal_api_key
+  credential_encryption_key = var.backoffice_encryption_key # Using backoffice_encryption_key for consistency in DC credential encryption
   min_instances      = 0
   max_instances      = 5
 }
