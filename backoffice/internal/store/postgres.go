@@ -342,3 +342,255 @@ func (s *PostgresStore) CountAdmins(ctx context.Context) (int, error) {
 	}
 	return count, nil
 }
+
+// --- Tenant Users ---
+
+func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
+	var u model.User
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, email, COALESCE(password_hash, ''), email_verified_at, last_login_at, created_at, updated_at
+		   FROM users WHERE email = $1`, email).
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting user by email: %w", err)
+	}
+	return &u, nil
+}
+
+func (s *PostgresStore) GetUserByID(ctx context.Context, id string) (*model.User, error) {
+	var u model.User
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, email, COALESCE(password_hash, ''), email_verified_at, last_login_at, created_at, updated_at
+		   FROM users WHERE id = $1`, id).
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting user by id: %w", err)
+	}
+	return &u, nil
+}
+
+func (s *PostgresStore) CreateUser(ctx context.Context, email, passwordHash string) (*model.User, error) {
+	var u model.User
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO users (email, password_hash)
+		 VALUES ($1, $2)
+		 RETURNING id, email, COALESCE(password_hash, ''), email_verified_at, last_login_at, created_at, updated_at`,
+		email, passwordHash).
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("creating user: %w", err)
+	}
+	return &u, nil
+}
+
+func (s *PostgresStore) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+		passwordHash, userID)
+	if err != nil {
+		return fmt.Errorf("updating user password: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) TouchUserLogin(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET last_login_at = NOW() WHERE id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("touching user login: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) MarkUserEmailVerified(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET email_verified_at = NOW(), updated_at = NOW() WHERE id = $1 AND email_verified_at IS NULL`,
+		userID)
+	if err != nil {
+		return fmt.Errorf("marking email verified: %w", err)
+	}
+	return nil
+}
+
+// --- Memberships ---
+
+func (s *PostgresStore) CreateMembership(ctx context.Context, userID, tenantID, role string) (*model.Membership, error) {
+	var m model.Membership
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO memberships (user_id, tenant_id, role)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (user_id, tenant_id) DO UPDATE SET role = EXCLUDED.role
+		 RETURNING id, user_id, tenant_id, role, created_at`,
+		userID, tenantID, role).
+		Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("creating membership: %w", err)
+	}
+	return &m, nil
+}
+
+func (s *PostgresStore) DeleteMembership(ctx context.Context, userID, tenantID string) error {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM memberships WHERE user_id = $1 AND tenant_id = $2`, userID, tenantID)
+	if err != nil {
+		return fmt.Errorf("deleting membership: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *PostgresStore) GetMembership(ctx context.Context, userID, tenantID string) (*model.Membership, error) {
+	var m model.Membership
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, user_id, tenant_id, role, created_at
+		   FROM memberships WHERE user_id = $1 AND tenant_id = $2`,
+		userID, tenantID).
+		Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting membership: %w", err)
+	}
+	return &m, nil
+}
+
+func (s *PostgresStore) ListMembershipsByUser(ctx context.Context, userID string) ([]model.MembershipSummary, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.tenant_id, t.name, t.data_center_id, dc.api_url, m.role
+		   FROM memberships m
+		   JOIN tenants t ON t.id = m.tenant_id
+		   JOIN data_centers dc ON dc.id = t.data_center_id
+		  WHERE m.user_id = $1
+		    AND t.status = 'active'
+		    AND dc.status = 'active'
+		  ORDER BY t.name`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("listing memberships: %w", err)
+	}
+	defer rows.Close()
+
+	var out []model.MembershipSummary
+	for rows.Next() {
+		var m model.MembershipSummary
+		if err := rows.Scan(&m.TenantID, &m.TenantName, &m.DCID, &m.DCAPIURL, &m.Role); err != nil {
+			return nil, fmt.Errorf("scanning membership: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListMembershipsByTenant(ctx context.Context, tenantID string) ([]model.Membership, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, user_id, tenant_id, role, created_at
+		   FROM memberships WHERE tenant_id = $1 ORDER BY created_at`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing memberships by tenant: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Membership
+	for rows.Next() {
+		var m model.Membership
+		if err := rows.Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) CountMembershipsByUser(ctx context.Context, userID string) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memberships WHERE user_id = $1`, userID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting memberships: %w", err)
+	}
+	return n, nil
+}
+
+// --- Invitations ---
+
+func (s *PostgresStore) CreateInvitation(ctx context.Context, tenantID, email, role string, tokenHash []byte, expiresAt time.Time, invitedByAdmin *string) (*model.Invitation, error) {
+	var inv model.Invitation
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO invitations (tenant_id, email, role, token_hash, expires_at, invited_by_admin)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, tenant_id, email, role, expires_at, accepted_at, invited_by_admin, created_at`,
+		tenantID, email, role, tokenHash, expiresAt, invitedByAdmin).
+		Scan(&inv.ID, &inv.TenantID, &inv.Email, &inv.Role, &inv.ExpiresAt, &inv.AcceptedAt, &inv.InvitedByAdmin, &inv.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("creating invitation: %w", err)
+	}
+	return &inv, nil
+}
+
+func (s *PostgresStore) GetInvitationByTokenHash(ctx context.Context, tokenHash []byte) (*model.Invitation, error) {
+	var inv model.Invitation
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, email, role, expires_at, accepted_at, invited_by_admin, created_at
+		   FROM invitations WHERE token_hash = $1`, tokenHash).
+		Scan(&inv.ID, &inv.TenantID, &inv.Email, &inv.Role, &inv.ExpiresAt, &inv.AcceptedAt, &inv.InvitedByAdmin, &inv.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting invitation: %w", err)
+	}
+	return &inv, nil
+}
+
+func (s *PostgresStore) MarkInvitationAccepted(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE invitations SET accepted_at = NOW() WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("marking invitation accepted: %w", err)
+	}
+	return nil
+}
+
+// --- Password Resets ---
+
+func (s *PostgresStore) CreatePasswordReset(ctx context.Context, userID string, tokenHash []byte, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
+		tokenHash, userID, expiresAt)
+	if err != nil {
+		return fmt.Errorf("creating password reset: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) GetPasswordResetByTokenHash(ctx context.Context, tokenHash []byte) (string, time.Time, *time.Time, error) {
+	var userID string
+	var expiresAt time.Time
+	var usedAt *time.Time
+	err := s.db.QueryRowContext(ctx,
+		`SELECT user_id, expires_at, used_at FROM password_resets WHERE token_hash = $1`, tokenHash).
+		Scan(&userID, &expiresAt, &usedAt)
+	if err == sql.ErrNoRows {
+		return "", time.Time{}, nil, sql.ErrNoRows
+	}
+	if err != nil {
+		return "", time.Time{}, nil, fmt.Errorf("getting password reset: %w", err)
+	}
+	return userID, expiresAt, usedAt, nil
+}
+
+func (s *PostgresStore) MarkPasswordResetUsed(ctx context.Context, tokenHash []byte) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE password_resets SET used_at = NOW() WHERE token_hash = $1`, tokenHash)
+	if err != nil {
+		return fmt.Errorf("marking password reset used: %w", err)
+	}
+	return nil
+}
