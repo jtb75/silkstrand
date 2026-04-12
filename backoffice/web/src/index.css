@@ -512,3 +512,14 @@ a:hover {
   color: #ffffff;
   font-weight: 600;
 }
+
+/* Monospaced inline UUIDs / IDs */
+
+.detail-card code {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 12px;
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #374151;
+}
