@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listDataCenters, createDataCenter, deleteDataCenter } from '../api/client';
-import type { DataCenter, CreateDataCenterRequest } from '../api/types';
+import type { DataCenter, CreateDataCenterRequest, DCEnvironment } from '../api/types';
 import StatusBadge from '../components/StatusBadge';
 
 export default function DataCenters() {
@@ -38,6 +38,7 @@ export default function DataCenters() {
     createMutation.mutate({
       name: formData.get('name') as string,
       region: formData.get('region') as string,
+      environment: formData.get('environment') as DCEnvironment,
       api_url: formData.get('api_url') as string,
       api_key: formData.get('api_key') as string,
     });
@@ -67,6 +68,13 @@ export default function DataCenters() {
           <div className="form-group">
             <label htmlFor="region">Region</label>
             <input id="region" name="region" type="text" required placeholder="e.g. us-central1" />
+          </div>
+          <div className="form-group">
+            <label htmlFor="environment">Environment</label>
+            <select id="environment" name="environment" required defaultValue="stage">
+              <option value="stage">Stage</option>
+              <option value="prod">Prod</option>
+            </select>
           </div>
           <div className="form-group">
             <label htmlFor="api_url">API URL</label>
@@ -100,6 +108,7 @@ export default function DataCenters() {
             <tr>
               <th>Name</th>
               <th>Region</th>
+              <th>Environment</th>
               <th>Status</th>
               <th>Tenants</th>
               <th>Created</th>
@@ -115,6 +124,9 @@ export default function DataCenters() {
               >
                 <td>{dc.name}</td>
                 <td>{dc.region}</td>
+                <td>
+                  <span className={`env-badge env-${dc.environment}`}>{dc.environment}</span>
+                </td>
                 <td>
                   <StatusBadge status={dc.status} />
                 </td>

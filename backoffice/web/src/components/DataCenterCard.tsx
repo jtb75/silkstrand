@@ -12,7 +12,9 @@ export default function DataCenterCard({ dc }: DataCenterCardProps) {
   return (
     <div className="dc-card" onClick={() => navigate(`/data-centers/${dc.id}`)}>
       <div className="dc-card-header">
-        <span className="dc-card-name">{dc.name}</span>
+        <span className="dc-card-name">
+          {dc.name} <span className={`env-badge env-${dc.environment}`}>{dc.environment}</span>
+        </span>
         <StatusBadge status={dc.status} />
       </div>
       <div className="dc-card-meta">

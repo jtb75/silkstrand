@@ -81,6 +81,15 @@ func (h *DataCenterHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	env := req.Environment
+	if env == "" {
+		env = model.DCEnvStage
+	}
+	if env != model.DCEnvStage && env != model.DCEnvProd {
+		writeError(w, http.StatusBadRequest, "environment must be 'stage' or 'prod'")
+		return
+	}
+
 	if len(h.encKey) == 0 {
 		writeError(w, http.StatusInternalServerError, "encryption key not configured")
 		return
@@ -96,6 +105,7 @@ func (h *DataCenterHandler) Create(w http.ResponseWriter, r *http.Request) {
 	dc, err := h.store.CreateDataCenter(r.Context(), model.DataCenter{
 		Name:            req.Name,
 		Region:          req.Region,
+		Environment:     env,
 		APIURL:          req.APIURL,
 		APIKeyEncrypted: encrypted,
 	})
@@ -133,6 +143,13 @@ func (h *DataCenterHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Region != nil {
 		existing.Region = *req.Region
+	}
+	if req.Environment != nil {
+		if *req.Environment != model.DCEnvStage && *req.Environment != model.DCEnvProd {
+			writeError(w, http.StatusBadRequest, "environment must be 'stage' or 'prod'")
+			return
+		}
+		existing.Environment = *req.Environment
 	}
 	if req.APIURL != nil {
 		existing.APIURL = *req.APIURL
