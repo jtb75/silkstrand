@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jtb75/silkstrand/backoffice/internal/audit"
 	"github.com/jtb75/silkstrand/backoffice/internal/crypto"
 	"github.com/jtb75/silkstrand/backoffice/internal/dcclient"
 	"github.com/jtb75/silkstrand/backoffice/internal/mailer"
@@ -161,6 +162,17 @@ func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 		tenant.InviteResults = failAllInvites(req.Invites, "tenant not provisioned; invites skipped")
 	}
 
+	audit.Log(r.Context(), h.store, r, audit.Entry{
+		Action:     audit.ActionTenantCreate,
+		TargetType: "tenant",
+		TargetID:   tenant.ID,
+		TenantID:   tenant.ID,
+		Metadata: map[string]any{
+			"name":           tenant.Name,
+			"data_center_id": tenant.DataCenterID,
+			"invites":        len(req.Invites),
+		},
+	})
 	writeJSON(w, http.StatusCreated, tenant)
 }
 
@@ -299,6 +311,13 @@ func (h *TenantHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenant.Status = req.Status
+	action := audit.ActionTenantActivate
+	if req.Status == model.TenantStatusSuspended {
+		action = audit.ActionTenantSuspend
+	}
+	audit.Log(r.Context(), h.store, r, audit.Entry{
+		Action: action, TargetType: "tenant", TargetID: id, TenantID: id,
+	})
 	writeJSON(w, http.StatusOK, tenant)
 }
 
@@ -336,6 +355,11 @@ func (h *TenantHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Log(r.Context(), h.store, r, audit.Entry{
+		Action:     audit.ActionTenantDelete,
+		TargetType: "tenant", TargetID: id, TenantID: id,
+		Metadata: map[string]any{"name": tenant.Name},
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

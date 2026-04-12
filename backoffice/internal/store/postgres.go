@@ -821,3 +821,70 @@ func (s *PostgresStore) UpdateUserDisplayName(ctx context.Context, userID, displ
 	}
 	return nil
 }
+
+// --- Audit Log ---
+
+func (s *PostgresStore) LogAudit(ctx context.Context, e model.AuditEntry) error {
+	metadata := e.Metadata
+	if len(metadata) == 0 {
+		metadata = json.RawMessage("{}")
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO audit_log
+		   (actor_type, actor_id, actor_email, action, target_type, target_id, tenant_id, ip, metadata)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		e.ActorType, e.ActorID, e.ActorEmail, e.Action,
+		e.TargetType, e.TargetID, e.TenantID, e.IP, string(metadata))
+	if err != nil {
+		return fmt.Errorf("writing audit log: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListAuditLog(ctx context.Context, f AuditFilter) ([]model.AuditEntry, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	q := `SELECT id, occurred_at, actor_type, actor_id, actor_email, action,
+	             target_type, target_id, tenant_id, ip, metadata
+	        FROM audit_log
+	       WHERE 1=1`
+	args := []any{}
+	i := 1
+	if f.TenantID != nil {
+		q += fmt.Sprintf(" AND tenant_id = $%d", i)
+		args = append(args, *f.TenantID)
+		i++
+	}
+	if f.ActorID != nil {
+		q += fmt.Sprintf(" AND actor_id = $%d", i)
+		args = append(args, *f.ActorID)
+		i++
+	}
+	if f.Action != nil {
+		q += fmt.Sprintf(" AND action = $%d", i)
+		args = append(args, *f.Action)
+		i++
+	}
+	q += fmt.Sprintf(" ORDER BY occurred_at DESC LIMIT $%d", i)
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing audit log: %w", err)
+	}
+	defer rows.Close()
+	var out []model.AuditEntry
+	for rows.Next() {
+		var e model.AuditEntry
+		var metadata []byte
+		if err := rows.Scan(&e.ID, &e.OccurredAt, &e.ActorType, &e.ActorID, &e.ActorEmail, &e.Action,
+			&e.TargetType, &e.TargetID, &e.TenantID, &e.IP, &metadata); err != nil {
+			return nil, fmt.Errorf("scanning audit entry: %w", err)
+		}
+		e.Metadata = metadata
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

@@ -70,6 +70,18 @@ type Store interface {
 	GetPasswordResetByTokenHash(ctx context.Context, tokenHash []byte) (userID string, expiresAt time.Time, usedAt *time.Time, err error)
 	MarkPasswordResetUsed(ctx context.Context, tokenHash []byte) error
 
+	// Audit log
+	LogAudit(ctx context.Context, entry model.AuditEntry) error
+	ListAuditLog(ctx context.Context, filter AuditFilter) ([]model.AuditEntry, error)
+
 	// Health
 	Ping(ctx context.Context) error
+}
+
+// AuditFilter constrains which audit entries are returned. All fields optional.
+type AuditFilter struct {
+	TenantID *string
+	ActorID  *string
+	Action   *string
+	Limit    int
 }
