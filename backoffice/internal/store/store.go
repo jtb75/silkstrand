@@ -37,6 +37,7 @@ type Store interface {
 	GetUserByID(ctx context.Context, id string) (*model.User, error)
 	CreateUser(ctx context.Context, email, passwordHash string) (*model.User, error)
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
+	UpdateUserDisplayName(ctx context.Context, userID, displayName string) error
 	TouchUserLogin(ctx context.Context, userID string) error
 	MarkUserEmailVerified(ctx context.Context, userID string) error
 	ListAllUsers(ctx context.Context) ([]model.UserListItem, error)

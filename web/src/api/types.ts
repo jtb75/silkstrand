@@ -73,6 +73,7 @@ export interface Bundle {
 export interface User {
   id: string;
   email: string;
+  display_name: string;
   last_login_at?: string;
   created_at: string;
   updated_at: string;

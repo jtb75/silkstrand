@@ -1,10 +1,33 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { authApi } from '../api/authClient';
 import { getToken } from '../api/client';
 import { useAuth } from '../auth/useAuth';
 
 export default function Settings() {
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
+
+  const [name, setName] = useState(user?.display_name ?? '');
+  const [nameMsg, setNameMsg] = useState<string | null>(null);
+  const [nameBusy, setNameBusy] = useState(false);
+
+  useEffect(() => { setName(user?.display_name ?? ''); }, [user?.display_name]);
+
+  async function submitName(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const token = getToken();
+    if (!token) return;
+    setNameBusy(true);
+    setNameMsg(null);
+    try {
+      await authApi.updateProfile(token, name.trim());
+      await refresh();
+      setNameMsg('Profile updated.');
+    } catch (e) {
+      setNameMsg((e as Error).message);
+    } finally {
+      setNameBusy(false);
+    }
+  }
 
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -37,6 +60,23 @@ export default function Settings() {
     <div>
       <h1>Settings</h1>
       <p className="muted">Signed in as <strong>{user?.email}</strong>.</p>
+
+      <section style={{ marginTop: 24, maxWidth: 420 }}>
+        <h2>Profile</h2>
+        <form onSubmit={submitName}>
+          <label>Display name
+            <input
+              type="text" maxLength={120}
+              value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="Shown in members lists and emails"
+            />
+          </label>
+          {nameMsg && <p style={{ color: nameMsg.includes('updated') ? '#065f46' : '#b91c1c' }}>{nameMsg}</p>}
+          <button className="btn btn-primary" disabled={nameBusy}>
+            {nameBusy ? 'Saving…' : 'Save'}
+          </button>
+        </form>
+      </section>
 
       <section style={{ marginTop: 24, maxWidth: 420 }}>
         <h2>Change password</h2>

@@ -335,9 +335,9 @@ func (s *PostgresStore) CountAdmins(ctx context.Context) (int, error) {
 func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
 	var u model.User
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, email, COALESCE(password_hash, ''), status, email_verified_at, last_login_at, created_at, updated_at
+		`SELECT id, email, COALESCE(password_hash, ''), COALESCE(display_name, ''), status, email_verified_at, last_login_at, created_at, updated_at
 		   FROM users WHERE email = $1`, email).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Status, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Status, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -350,9 +350,9 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*mode
 func (s *PostgresStore) GetUserByID(ctx context.Context, id string) (*model.User, error) {
 	var u model.User
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, email, COALESCE(password_hash, ''), status, email_verified_at, last_login_at, created_at, updated_at
+		`SELECT id, email, COALESCE(password_hash, ''), COALESCE(display_name, ''), status, email_verified_at, last_login_at, created_at, updated_at
 		   FROM users WHERE id = $1`, id).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Status, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Status, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -367,9 +367,9 @@ func (s *PostgresStore) CreateUser(ctx context.Context, email, passwordHash stri
 	err := s.db.QueryRowContext(ctx,
 		`INSERT INTO users (email, password_hash)
 		 VALUES ($1, $2)
-		 RETURNING id, email, COALESCE(password_hash, ''), status, email_verified_at, last_login_at, created_at, updated_at`,
+		 RETURNING id, email, COALESCE(password_hash, ''), COALESCE(display_name, ''), status, email_verified_at, last_login_at, created_at, updated_at`,
 		email, passwordHash).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Status, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Status, &u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("creating user: %w", err)
 	}
@@ -660,7 +660,7 @@ func (s *PostgresStore) DeleteInvitation(ctx context.Context, id, tenantID strin
 
 func (s *PostgresStore) ListAllUsers(ctx context.Context) ([]model.UserListItem, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT u.id, u.email, u.status, u.email_verified_at, u.last_login_at, u.created_at, u.updated_at,
+		`SELECT u.id, u.email, COALESCE(u.display_name, ''), u.status, u.email_verified_at, u.last_login_at, u.created_at, u.updated_at,
 		        COALESCE((SELECT COUNT(*) FROM memberships m WHERE m.user_id = u.id), 0) AS tenant_count
 		   FROM users u
 		  ORDER BY u.email`)
@@ -671,7 +671,7 @@ func (s *PostgresStore) ListAllUsers(ctx context.Context) ([]model.UserListItem,
 	var out []model.UserListItem
 	for rows.Next() {
 		var it model.UserListItem
-		if err := rows.Scan(&it.ID, &it.Email, &it.Status,
+		if err := rows.Scan(&it.ID, &it.Email, &it.DisplayName, &it.Status,
 			&it.EmailVerifiedAt, &it.LastLoginAt, &it.CreatedAt, &it.UpdatedAt,
 			&it.TenantCount); err != nil {
 			return nil, fmt.Errorf("scanning user: %w", err)
@@ -808,6 +808,16 @@ func (s *PostgresStore) UpdateInvitationToken(ctx context.Context, id string, to
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
 		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdateUserDisplayName(ctx context.Context, userID, displayName string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET display_name = $1, updated_at = NOW() WHERE id = $2`,
+		displayName, userID)
+	if err != nil {
+		return fmt.Errorf("updating display name: %w", err)
 	}
 	return nil
 }

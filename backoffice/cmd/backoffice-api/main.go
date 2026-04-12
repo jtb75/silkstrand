@@ -89,11 +89,20 @@ func run() error {
 	mux.HandleFunc("POST /api/v1/auth/login", authH.Login)
 
 	// Tenant end-user auth routes (public).
-	mux.HandleFunc("POST /api/v1/tenant-auth/login", tenantAuthH.Login)
-	mux.HandleFunc("GET /api/v1/tenant-auth/invitation-preview", tenantAuthH.PreviewInvitation)
-	mux.HandleFunc("POST /api/v1/tenant-auth/accept-invite", tenantAuthH.AcceptInvite)
-	mux.HandleFunc("POST /api/v1/tenant-auth/forgot-password", tenantAuthH.ForgotPassword)
-	mux.HandleFunc("POST /api/v1/tenant-auth/reset-password", tenantAuthH.ResetPassword)
+	// Public tenant-auth endpoints — rate-limited per client IP to slow
+	// brute-force + email-enumeration abuse. 10 requests per IP per minute
+	// across these endpoints (burst of 10, refill 1 every 6s).
+	publicRL := middleware.RateLimit(10, 6*time.Second)
+	mux.Handle("POST /api/v1/tenant-auth/login",
+		publicRL(http.HandlerFunc(tenantAuthH.Login)))
+	mux.Handle("GET /api/v1/tenant-auth/invitation-preview",
+		publicRL(http.HandlerFunc(tenantAuthH.PreviewInvitation)))
+	mux.Handle("POST /api/v1/tenant-auth/accept-invite",
+		publicRL(http.HandlerFunc(tenantAuthH.AcceptInvite)))
+	mux.Handle("POST /api/v1/tenant-auth/forgot-password",
+		publicRL(http.HandlerFunc(tenantAuthH.ForgotPassword)))
+	mux.Handle("POST /api/v1/tenant-auth/reset-password",
+		publicRL(http.HandlerFunc(tenantAuthH.ResetPassword)))
 
 	// Tenant end-user auth routes (authenticated with tenant JWT).
 	tenantAuthed := middleware.TenantAuth(cfg.TenantJWTSecret)
@@ -119,6 +128,8 @@ func run() error {
 		tenantAuthed(http.HandlerFunc(tenantAuthH.UpdateMemberRole)))
 	mux.Handle("PUT /api/v1/tenant-auth/me/password",
 		tenantAuthed(http.HandlerFunc(tenantAuthH.ChangePassword)))
+	mux.Handle("PUT /api/v1/tenant-auth/me",
+		tenantAuthed(http.HandlerFunc(tenantAuthH.UpdateMe)))
 
 	// Authenticated API routes
 	apiMux := http.NewServeMux()

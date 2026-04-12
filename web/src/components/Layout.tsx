@@ -26,7 +26,9 @@ export default function Layout() {
             <TenantSwitcher />
             {user && (
               <>
-                <span className="muted" style={{ marginLeft: 12 }}>{user.email}</span>
+                <span className="muted" style={{ marginLeft: 12 }}>
+                  {user.display_name ? `${user.display_name} (${user.email})` : user.email}
+                </span>
                 <button className="btn btn-sm" style={{ marginLeft: 8 }} onClick={logout}>
                   Log out
                 </button>
