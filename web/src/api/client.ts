@@ -8,12 +8,36 @@ import type {
 const BASE_URL = import.meta.env.VITE_API_URL || '';
 const TOKEN_KEY = 'silkstrand_dev_token';
 
-function getToken(): string | null {
+// Module-level token getter that can be overridden by Clerk auth
+let clerkTokenGetter: (() => Promise<string | null>) | null = null;
+
+/** Register a Clerk token getter function. Called by ClerkAuthProvider. */
+export function setClerkTokenGetter(getter: () => Promise<string | null>): void {
+  clerkTokenGetter = getter;
+}
+
+/** Clear the Clerk token getter (e.g. on sign-out). */
+export function clearClerkTokenGetter(): void {
+  clerkTokenGetter = null;
+}
+
+async function getToken(): Promise<string | null> {
+  // Prefer Clerk token if a getter is registered
+  if (clerkTokenGetter) {
+    const token = await clerkTokenGetter();
+    if (token) return token;
+  }
+  // Fall back to dev token from localStorage
   return localStorage.getItem(TOKEN_KEY);
 }
 
+export function hasDevToken(): boolean {
+  return localStorage.getItem(TOKEN_KEY) !== null;
+}
+
+// Keep hasToken as alias for backward compatibility with dev flow
 export function hasToken(): boolean {
-  return getToken() !== null;
+  return hasDevToken();
 }
 
 export function setToken(token: string): void {
@@ -25,7 +49,7 @@ export function clearToken(): void {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
+  const token = await getToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(init?.headers as Record<string, string> | undefined),

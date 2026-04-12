@@ -1,4 +1,4 @@
-.PHONY: dev dev-deps build test lint docker run migrate-up migrate-down clean
+.PHONY: dev dev-deps build test lint docker run migrate-up migrate-down clean seed jwt hash-password
 
 # Start local dependencies (Postgres + Redis)
 dev-deps:
@@ -44,6 +44,20 @@ test-backoffice:
 
 lint-backoffice:
 	cd backoffice && golangci-lint run ./...
+
+# --- Seed & Dev Helpers ---
+
+# Seed local databases with test data (requires docker compose up)
+seed:
+	bash scripts/seed.sh
+
+# Generate a dev JWT token for the default test tenant
+jwt:
+	python3 scripts/gen-jwt.py
+
+# Generate a bcrypt hash (usage: make hash-password PASS=mysecret)
+hash-password:
+	cd backoffice && go run ../scripts/hash-password.go $(or $(PASS),admin123)
 
 # --- Infrastructure ---
 

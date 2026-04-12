@@ -41,6 +41,50 @@ services:
       timeout: 5s
       retries: 5
 
+  api:
+    build:
+      context: ./api
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://silkstrand:localdev@postgres:5432/silkstrand?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret-change-in-production
+      INTERNAL_API_KEY: dev-internal-key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  backoffice-api:
+    build:
+      context: ./backoffice
+    ports:
+      - "8081:8081"
+    environment:
+      DATABASE_URL: postgres://silkstrand:localdev@postgres-backoffice:5432/silkstrand_backoffice?sslmode=disable
+      JWT_SECRET: dev-secret-change-in-production
+    depends_on:
+      postgres-backoffice:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./web
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+  backoffice-web:
+    build:
+      context: ./backoffice/web
+    ports:
+      - "3001:80"
+    depends_on:
+      - backoffice-api
+
 volumes:
   pgdata:
   pgdata-backoffice:

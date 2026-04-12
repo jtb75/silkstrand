@@ -11,6 +11,7 @@ type Config struct {
 	DatabaseURL             string
 	RedisURL                string
 	JWTSecret               string
+	ClerkJWKSURL            string // If set, validates Clerk JWTs via JWKS; if empty, uses HMAC-SHA256
 	InternalAPIKey          string
 	CredentialEncryptionKey []byte // 32 bytes for AES-256-GCM
 }
@@ -33,6 +34,7 @@ func Load() (*Config, error) {
 		DatabaseURL:             getEnv("DATABASE_URL", "postgres://silkstrand:localdev@localhost:5432/silkstrand?sslmode=disable"),
 		RedisURL:                getEnv("REDIS_URL", "redis://localhost:6379"),
 		JWTSecret:               getEnv("JWT_SECRET", "dev-secret-change-in-production"),
+		ClerkJWKSURL:            getEnv("CLERK_JWKS_URL", ""),
 		InternalAPIKey:          getEnv("INTERNAL_API_KEY", ""),
 		CredentialEncryptionKey: credKey,
 	}
