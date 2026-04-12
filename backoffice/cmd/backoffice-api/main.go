@@ -14,6 +14,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/jtb75/silkstrand/backoffice/internal/config"
 	"github.com/jtb75/silkstrand/backoffice/internal/crypto"
@@ -51,6 +52,11 @@ func run() error {
 	// Run migrations
 	if err := runMigrations(pgStore.DB()); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
+	}
+
+	// Bootstrap admin user if configured and no admins exist
+	if err := bootstrapAdmin(context.Background(), pgStore, cfg); err != nil {
+		return fmt.Errorf("bootstrapping admin: %w", err)
 	}
 
 	// DC client
@@ -188,6 +194,39 @@ func pollDataCenters(ctx context.Context, s store.Store, dc *dcclient.Client, en
 
 func decryptAPIKey(encrypted []byte, key []byte) ([]byte, error) {
 	return crypto.Decrypt(encrypted, key)
+}
+
+// bootstrapAdmin creates an initial super_admin user on first startup.
+// Only runs when BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD are set
+// AND no admin users exist yet. After the first admin is created, subsequent
+// runs are no-ops even if the env vars are still set.
+func bootstrapAdmin(ctx context.Context, s store.Store, cfg *config.Config) error {
+	if cfg.BootstrapAdminEmail == "" || cfg.BootstrapAdminPassword == "" {
+		return nil
+	}
+
+	count, err := s.CountAdmins(ctx)
+	if err != nil {
+		return fmt.Errorf("counting admins: %w", err)
+	}
+	if count > 0 {
+		slog.Info("bootstrap admin skipped (admin users already exist)", "count", count)
+		return nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(cfg.BootstrapAdminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hashing bootstrap password: %w", err)
+	}
+
+	admin, err := s.CreateAdmin(ctx, cfg.BootstrapAdminEmail, string(hash), "super_admin")
+	if err != nil {
+		return fmt.Errorf("creating bootstrap admin: %w", err)
+	}
+
+	slog.Warn("bootstrap admin created — REMOVE BOOTSTRAP_ADMIN_* env vars now and change the password",
+		"email", admin.Email, "role", admin.Role)
+	return nil
 }
 
 func runMigrations(db *sql.DB) error {

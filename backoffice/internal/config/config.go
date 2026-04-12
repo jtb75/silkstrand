@@ -7,10 +7,12 @@ import (
 )
 
 type Config struct {
-	Port          string
-	DatabaseURL   string
-	JWTSecret     string
-	EncryptionKey []byte // 32 bytes for AES-256-GCM
+	Port                   string
+	DatabaseURL            string
+	JWTSecret              string
+	EncryptionKey          []byte // 32 bytes for AES-256-GCM
+	BootstrapAdminEmail    string // If set with password, create admin on first startup
+	BootstrapAdminPassword string
 }
 
 func Load() (*Config, error) {
@@ -27,10 +29,12 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Port:          getEnv("PORT", "8081"),
-		DatabaseURL:   getEnv("DATABASE_URL", "postgres://silkstrand:localdev@localhost:15433/silkstrand_backoffice?sslmode=disable"),
-		JWTSecret:     getEnv("JWT_SECRET", "dev-secret-change-in-production"),
-		EncryptionKey: encKey,
+		Port:                   getEnv("PORT", "8081"),
+		DatabaseURL:            getEnv("DATABASE_URL", "postgres://silkstrand:localdev@localhost:15433/silkstrand_backoffice?sslmode=disable"),
+		JWTSecret:              getEnv("JWT_SECRET", "dev-secret-change-in-production"),
+		EncryptionKey:          encKey,
+		BootstrapAdminEmail:    getEnv("BOOTSTRAP_ADMIN_EMAIL", ""),
+		BootstrapAdminPassword: getEnv("BOOTSTRAP_ADMIN_PASSWORD", ""),
 	}
 
 	if getEnv("ENV", "dev") == "production" {

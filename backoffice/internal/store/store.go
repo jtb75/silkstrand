@@ -27,6 +27,8 @@ type Store interface {
 
 	// Admin Users
 	GetAdminByEmail(ctx context.Context, email string) (*model.AdminUser, error)
+	CreateAdmin(ctx context.Context, email, passwordHash, role string) (*model.AdminUser, error)
+	CountAdmins(ctx context.Context) (int, error)
 
 	// Health
 	Ping(ctx context.Context) error

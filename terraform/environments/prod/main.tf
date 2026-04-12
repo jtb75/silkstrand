@@ -100,6 +100,19 @@ variable "backoffice_web_image" {
   default     = "gcr.io/cloudrun/hello"
 }
 
+variable "bootstrap_admin_email" {
+  description = "Email for the bootstrap admin user (only used on first startup when no admins exist)"
+  type        = string
+  default     = ""
+}
+
+variable "bootstrap_admin_password" {
+  description = "Password for the bootstrap admin user"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "image" {
   description = "Container image for the API (passed from CI on deploy)"
   type        = string
@@ -247,6 +260,18 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
       env {
         name  = "ENCRYPTION_KEY"
         value = var.backoffice_encryption_key
+      }
+
+      # Bootstrap admin on first startup. After the first admin exists,
+      # these are ignored. Leave blank/unset to disable bootstrap.
+      env {
+        name  = "BOOTSTRAP_ADMIN_EMAIL"
+        value = var.bootstrap_admin_email
+      }
+
+      env {
+        name  = "BOOTSTRAP_ADMIN_PASSWORD"
+        value = var.bootstrap_admin_password
       }
 
       resources {
