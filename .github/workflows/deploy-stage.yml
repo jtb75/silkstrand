@@ -147,7 +147,7 @@ jobs:
           if [ -n "${{ steps.image.outputs.api_image }}" ]; then
             EXTRA_VARS="-var=image=${{ steps.image.outputs.api_image }}"
           fi
-          terraform -chdir=${{ env.TF_WORKING_DIR }} apply -auto-approve \
+          terraform -chdir=${{ env.TF_WORKING_DIR }} apply -auto-approve -lock-timeout=5m \
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_STAGE }}" \

@@ -201,7 +201,7 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
-          terraform -chdir=${{ env.TF_WORKING_DIR }} plan -no-color \
+          terraform -chdir=${{ env.TF_WORKING_DIR }} plan -no-color -lock-timeout=5m \
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_STAGE }}" \
@@ -269,7 +269,7 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
-          terraform -chdir=${{ env.TF_WORKING_DIR }} plan -no-color \
+          terraform -chdir=${{ env.TF_WORKING_DIR }} plan -no-color -lock-timeout=5m \
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_PROD }}" \
