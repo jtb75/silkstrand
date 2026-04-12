@@ -94,6 +94,12 @@ variable "backoffice_api_image" {
   default     = "gcr.io/cloudrun/hello"
 }
 
+variable "web_image" {
+  description = "Tenant web frontend container image"
+  type        = string
+  default     = "gcr.io/cloudrun/hello"
+}
+
 variable "backoffice_web_image" {
   description = "Backoffice web frontend container image"
   type        = string
@@ -412,6 +418,75 @@ resource "google_cloud_run_v2_service_iam_member" "backoffice_web_public" {
   member   = "allUsers"
 }
 
+# Tenant Web Frontend (silkstrand-web) — public UI served at the tenant URL.
+# Uses the same nginx+envsubst pattern as backoffice-web.
+resource "google_service_account" "web" {
+  project      = var.project_id
+  account_id   = "silkstrand-web"
+  display_name = "SilkStrand Tenant Web"
+}
+
+resource "google_cloud_run_v2_service" "web" {
+  project  = var.project_id
+  name     = "silkstrand-web"
+  location = var.region
+  ingress  = "INGRESS_TRAFFIC_ALL"
+
+  template {
+    service_account = google_service_account.web.email
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 2
+    }
+
+    containers {
+      image = var.web_image
+
+      ports {
+        container_port = 80
+      }
+
+      env {
+        name  = "SILKSTRAND_API_URL"
+        value = module.cloud_run.service_url
+      }
+
+      resources {
+        cpu_idle = true
+        limits = {
+          cpu    = "1"
+          memory = "256Mi"
+        }
+      }
+
+      startup_probe {
+        http_get { path = "/" }
+        initial_delay_seconds = 5
+        period_seconds        = 3
+        failure_threshold     = 10
+      }
+
+      liveness_probe {
+        http_get { path = "/" }
+        period_seconds = 30
+      }
+    }
+  }
+
+  lifecycle {
+    # Image updated via Terraform -var from CI deploys
+  }
+}
+
+resource "google_cloud_run_v2_service_iam_member" "web_public" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.web.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
 # --- Backoffice Outputs ---
 output "backoffice_api_url" {
   value = google_cloud_run_v2_service.backoffice_api.uri
@@ -419,4 +494,8 @@ output "backoffice_api_url" {
 
 output "backoffice_web_url" {
   value = google_cloud_run_v2_service.backoffice_web.uri
+}
+
+output "web_url" {
+  value = google_cloud_run_v2_service.web.uri
 }
