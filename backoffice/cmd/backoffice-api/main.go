@@ -86,6 +86,7 @@ func run() error {
 	tenantH := handler.NewTenantHandler(pgStore, dcClient, clerkClient, tenantMailer, cfg.TenantWebURL, cfg.EncryptionKey)
 	authH := handler.NewAuthHandler(pgStore, cfg.JWTSecret)
 	tenantAuthH := handler.NewTenantAuthHandler(pgStore, tenantMailer, cfg.TenantJWTSecret, cfg.TenantWebURL)
+	userH := handler.NewUserHandler(pgStore)
 
 	// Router
 	mux := http.NewServeMux()
@@ -137,6 +138,13 @@ func run() error {
 	apiMux.HandleFunc("PUT /api/v1/tenants/{id}/status", tenantH.UpdateStatus)
 	apiMux.HandleFunc("POST /api/v1/tenants/{id}/retry", tenantH.Retry)
 	apiMux.HandleFunc("DELETE /api/v1/tenants/{id}", tenantH.Delete)
+
+	apiMux.HandleFunc("GET /api/v1/users", userH.List)
+	apiMux.HandleFunc("GET /api/v1/users/{id}", userH.Get)
+	apiMux.HandleFunc("PUT /api/v1/users/{id}/status", userH.UpdateStatus)
+	apiMux.HandleFunc("DELETE /api/v1/users/{id}", userH.Delete)
+	apiMux.HandleFunc("PUT /api/v1/users/{id}/memberships/{tenant_id}/status", userH.UpdateMembershipStatus)
+	apiMux.HandleFunc("DELETE /api/v1/users/{id}/memberships/{tenant_id}", userH.DeleteMembership)
 
 	// Apply auth middleware to API routes
 	authedAPI := middleware.Auth(cfg.JWTSecret)(apiMux)

@@ -172,6 +172,10 @@ func (h *TenantAuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid email or password")
 		return
 	}
+	if user.Status == model.UserStatusSuspended {
+		writeError(w, http.StatusForbidden, "account suspended — contact your administrator")
+		return
+	}
 
 	memberships, err := h.store.ListMembershipsByUser(r.Context(), user.ID)
 	if err != nil {
@@ -241,6 +245,10 @@ func (h *TenantAuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	user, err := h.store.GetUserByID(r.Context(), claims.Sub)
 	if err != nil || user == nil {
 		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if user.Status == model.UserStatusSuspended {
+		writeError(w, http.StatusForbidden, "account suspended")
 		return
 	}
 	memberships, err := h.store.ListMembershipsByUser(r.Context(), user.ID)
