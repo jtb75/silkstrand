@@ -96,6 +96,30 @@ export default function Team() {
     }
   }
 
+  async function resendInvite(id: string, email: string) {
+    const token = getToken();
+    if (!token) return;
+    try {
+      await authApi.resendInvitation(token, id);
+      alert(`New invitation sent to ${email}.`);
+      await refresh();
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  async function changeRole(m: TenantMember, newRole: 'admin' | 'member') {
+    const token = getToken();
+    if (!token) return;
+    if (newRole === m.role) return;
+    try {
+      await authApi.updateMemberRole(token, m.user_id, newRole);
+      await refresh();
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
   return (
     <div>
       <h1>Team</h1>
@@ -143,6 +167,13 @@ export default function Team() {
                   <td>{new Date(i.created_at).toLocaleDateString()}</td>
                   <td>{new Date(i.expires_at).toLocaleDateString()}</td>
                   <td>
+                    <button
+                      className="btn btn-sm"
+                      style={{ marginRight: 6 }}
+                      onClick={() => resendInvite(i.id, i.email)}
+                    >
+                      Resend
+                    </button>
                     <button className="btn btn-sm" onClick={() => cancelInvite(i.id, i.email)}>
                       Cancel
                     </button>
@@ -173,7 +204,17 @@ export default function Team() {
               {members.map((m) => (
                 <tr key={m.user_id}>
                   <td>{m.email}{user?.id === m.user_id && <span className="muted"> (you)</span>}</td>
-                  <td>{m.role}</td>
+                  <td>
+                    {isAdmin && user?.id !== m.user_id ? (
+                      <select
+                        value={m.role}
+                        onChange={(e) => changeRole(m, e.target.value as 'admin' | 'member')}
+                      >
+                        <option value="member">member</option>
+                        <option value="admin">admin</option>
+                      </select>
+                    ) : m.role}
+                  </td>
                   <td>
                     <span style={{
                       color: m.status === 'active' ? '#065f46' : '#b91c1c',

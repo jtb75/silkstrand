@@ -764,3 +764,50 @@ func (s *PostgresStore) DeleteUser(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (s *PostgresStore) UpdateMembershipRole(ctx context.Context, userID, tenantID, role string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE memberships SET role = $1 WHERE user_id = $2 AND tenant_id = $3`,
+		role, userID, tenantID)
+	if err != nil {
+		return fmt.Errorf("updating membership role: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// CountActiveAdmins returns the number of active admin memberships in a tenant.
+// Used to prevent removing/suspending/demoting the last admin and locking the
+// tenant out.
+func (s *PostgresStore) CountActiveAdmins(ctx context.Context, tenantID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memberships
+		  WHERE tenant_id = $1 AND role = 'admin' AND status = 'active'`,
+		tenantID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting admins: %w", err)
+	}
+	return n, nil
+}
+
+// UpdateInvitationToken rotates the token on an existing, still-pending
+// invitation row (used by the resend flow).
+func (s *PostgresStore) UpdateInvitationToken(ctx context.Context, id string, tokenHash []byte, expiresAt time.Time) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE invitations
+		   SET token_hash = $1, expires_at = $2
+		 WHERE id = $3 AND accepted_at IS NULL`,
+		tokenHash, expiresAt, id)
+	if err != nil {
+		return fmt.Errorf("rotating invitation token: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}

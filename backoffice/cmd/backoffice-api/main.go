@@ -113,6 +113,12 @@ func run() error {
 		tenantAuthed(http.HandlerFunc(tenantAuthH.ListInvitations)))
 	mux.Handle("DELETE /api/v1/tenant-auth/invitations/{id}",
 		tenantAuthed(http.HandlerFunc(tenantAuthH.CancelInvitation)))
+	mux.Handle("POST /api/v1/tenant-auth/invitations/{id}/resend",
+		tenantAuthed(http.HandlerFunc(tenantAuthH.ResendInvitation)))
+	mux.Handle("PUT /api/v1/tenant-auth/members/{user_id}/role",
+		tenantAuthed(http.HandlerFunc(tenantAuthH.UpdateMemberRole)))
+	mux.Handle("PUT /api/v1/tenant-auth/me/password",
+		tenantAuthed(http.HandlerFunc(tenantAuthH.ChangePassword)))
 
 	// Authenticated API routes
 	apiMux := http.NewServeMux()
