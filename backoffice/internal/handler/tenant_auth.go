@@ -834,3 +834,26 @@ func (h *TenantAuthHandler) ChangePassword(w http.ResponseWriter, r *http.Reques
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// PUT /api/v1/tenant-auth/me (authenticated)
+// Body: {display_name}
+func (h *TenantAuthHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.store.UpdateUserDisplayName(r.Context(), claims.Sub, req.DisplayName); err != nil {
+		slog.Error("updating display name", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to update profile")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

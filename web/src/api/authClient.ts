@@ -130,6 +130,13 @@ export const authApi = {
       body: JSON.stringify({ role }),
     }).then((res) => handle<void>(res)),
 
+  updateProfile: (jwt: string, displayName: string) =>
+    fetch(`${BASE_URL}/api/v1/tenant-auth/me`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ display_name: displayName }),
+    }).then((res) => handle<void>(res)),
+
   changePassword: (jwt: string, currentPassword: string, newPassword: string) =>
     fetch(`${BASE_URL}/api/v1/tenant-auth/me/password`, {
       method: 'PUT',

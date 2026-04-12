@@ -59,6 +59,7 @@ const (
 type User struct {
 	ID              string     `json:"id"`
 	Email           string     `json:"email"`
+	DisplayName     string     `json:"display_name"`
 	PasswordHash    string     `json:"-"`
 	Status          string     `json:"status"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
