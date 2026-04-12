@@ -8,6 +8,7 @@ import Targets from './pages/Targets';
 import Scans from './pages/Scans';
 import ScanResults from './pages/ScanResults';
 import Team from './pages/Team';
+import Settings from './pages/Settings';
 import Login from './pages/Login';
 import AcceptInvite from './pages/AcceptInvite';
 import ForgotPassword from './pages/ForgotPassword';
@@ -38,6 +39,7 @@ export default function App() {
               <Route path="/scans" element={<Scans />} />
               <Route path="/scans/:id" element={<ScanResults />} />
               <Route path="/team" element={<Team />} />
+              <Route path="/settings" element={<Settings />} />
             </Route>
           </Routes>
         </AuthProvider>

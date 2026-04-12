@@ -16,6 +16,7 @@ export default function Layout() {
           <NavLink to="/targets">Targets</NavLink>
           <NavLink to="/scans">Scans</NavLink>
           {isAdmin && <NavLink to="/team">Team</NavLink>}
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
       </aside>
       <div className="main-area">

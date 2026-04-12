@@ -119,4 +119,21 @@ export const authApi = {
 
   cancelInvitation: (jwt: string, id: string) =>
     del(`/api/v1/tenant-auth/invitations/${id}`, jwt),
+
+  resendInvitation: (jwt: string, id: string) =>
+    post<void>(`/api/v1/tenant-auth/invitations/${id}/resend`, {}, jwt),
+
+  updateMemberRole: (jwt: string, userId: string, role: 'admin' | 'member') =>
+    fetch(`${BASE_URL}/api/v1/tenant-auth/members/${userId}/role`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ role }),
+    }).then((res) => handle<void>(res)),
+
+  changePassword: (jwt: string, currentPassword: string, newPassword: string) =>
+    fetch(`${BASE_URL}/api/v1/tenant-auth/me/password`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }).then((res) => handle<void>(res)),
 };

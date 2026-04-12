@@ -561,6 +561,13 @@ func (h *TenantAuthHandler) RemoveMember(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "cannot remove yourself")
 		return
 	}
+	if existing, _ := h.store.GetMembership(r.Context(), userID, claims.BoTenantID); existing != nil &&
+		existing.Role == model.MembershipRoleAdmin && existing.Status == model.MembershipStatusActive {
+		if count, _ := h.store.CountActiveAdmins(r.Context(), claims.BoTenantID); count <= 1 {
+			writeError(w, http.StatusConflict, "cannot remove the last admin in this tenant")
+			return
+		}
+	}
 	if err := h.store.DeleteMembership(r.Context(), userID, claims.BoTenantID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "membership not found")
@@ -649,6 +656,16 @@ func (h *TenantAuthHandler) UpdateMemberStatus(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "status must be 'active' or 'suspended'")
 		return
 	}
+	// Last-admin protection: blocks suspending the lone remaining admin.
+	if req.Status == model.MembershipStatusSuspended {
+		if existing, _ := h.store.GetMembership(r.Context(), userID, claims.BoTenantID); existing != nil &&
+			existing.Role == model.MembershipRoleAdmin && existing.Status == model.MembershipStatusActive {
+			if count, _ := h.store.CountActiveAdmins(r.Context(), claims.BoTenantID); count <= 1 {
+				writeError(w, http.StatusConflict, "cannot suspend the last admin in this tenant")
+				return
+			}
+		}
+	}
 	if err := h.store.UpdateMembershipStatus(r.Context(), userID, claims.BoTenantID, req.Status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "membership not found")
@@ -656,6 +673,163 @@ func (h *TenantAuthHandler) UpdateMemberStatus(w http.ResponseWriter, r *http.Re
 		}
 		slog.Error("updating membership status", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update membership status")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PUT /api/v1/tenant-auth/members/{user_id}/role (admin-only)
+// Body: {role: "admin" | "member"}
+func (h *TenantAuthHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if claims.Role != model.MembershipRoleAdmin {
+		writeError(w, http.StatusForbidden, "admin role required")
+		return
+	}
+	userID := r.PathValue("user_id")
+	var req struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Role != model.MembershipRoleAdmin && req.Role != model.MembershipRoleMember {
+		writeError(w, http.StatusBadRequest, "role must be 'admin' or 'member'")
+		return
+	}
+
+	// Last-admin protection: if demoting an admin to member, require
+	// there be another active admin remaining.
+	if req.Role == model.MembershipRoleMember {
+		existing, err := h.store.GetMembership(r.Context(), userID, claims.BoTenantID)
+		if err != nil || existing == nil {
+			writeError(w, http.StatusNotFound, "membership not found")
+			return
+		}
+		if existing.Role == model.MembershipRoleAdmin && existing.Status == model.MembershipStatusActive {
+			if count, err := h.store.CountActiveAdmins(r.Context(), claims.BoTenantID); err == nil && count <= 1 {
+				writeError(w, http.StatusConflict, "cannot demote the last admin in this tenant")
+				return
+			}
+		}
+	}
+
+	if err := h.store.UpdateMembershipRole(r.Context(), userID, claims.BoTenantID, req.Role); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "membership not found")
+			return
+		}
+		slog.Error("updating membership role", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to update role")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /api/v1/tenant-auth/invitations/{id}/resend (admin-only)
+// Rotates the token + expiry on a pending invitation and re-sends the email.
+func (h *TenantAuthHandler) ResendInvitation(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if claims.Role != model.MembershipRoleAdmin {
+		writeError(w, http.StatusForbidden, "admin role required")
+		return
+	}
+	id := r.PathValue("id")
+
+	// Look up the full list for this tenant so we can pick up the one
+	// matching the id (simpler than adding a GetInvitationByID method).
+	invites, err := h.store.ListPendingInvitations(r.Context(), claims.BoTenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to look up invitation")
+		return
+	}
+	var match *model.PendingInvite
+	for i := range invites {
+		if invites[i].ID == id {
+			match = &invites[i]
+			break
+		}
+	}
+	if match == nil {
+		writeError(w, http.StatusNotFound, "invitation not found")
+		return
+	}
+
+	tenant, err := h.store.GetTenant(r.Context(), claims.BoTenantID)
+	if err != nil || tenant == nil {
+		writeError(w, http.StatusInternalServerError, "tenant lookup failed")
+		return
+	}
+
+	plaintext, tokenHash, err := crypto.NewURLToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "token generation failed")
+		return
+	}
+	expiry := time.Now().Add(inviteExpiry)
+	if err := h.store.UpdateInvitationToken(r.Context(), id, tokenHash, expiry); err != nil {
+		slog.Error("rotating invitation token", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to regenerate invitation")
+		return
+	}
+	inviteURL := h.tenantWebURL + "/accept-invite?token=" + plaintext
+	if err := h.mailer.SendInvite(match.Email, inviteURL, tenant.Name); err != nil {
+		slog.Warn("resending invitation email", "error", err)
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"status": "regenerated_but_email_failed",
+			"error":  err.Error(),
+		})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PUT /api/v1/tenant-auth/me/password (authenticated)
+// Body: {current_password, new_password}
+func (h *TenantAuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "current_password and new_password are required")
+		return
+	}
+	user, err := h.store.GetUserByID(r.Context(), claims.Sub)
+	if err != nil || user == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if err := crypto.CheckPassword(user.PasswordHash, req.CurrentPassword); err != nil {
+		writeError(w, http.StatusUnauthorized, "current password is incorrect")
+		return
+	}
+	hash, err := crypto.HashPassword(req.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.store.UpdateUserPassword(r.Context(), user.ID, hash); err != nil {
+		slog.Error("updating password", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to update password")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
