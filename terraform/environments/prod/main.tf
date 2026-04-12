@@ -276,9 +276,7 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
   }
 
   lifecycle {
-    ignore_changes = [
-      template[0].containers[0].image,
-    ]
+    # Image updated via Terraform -var from CI deploys
   }
 }
 
@@ -345,9 +343,7 @@ resource "google_cloud_run_v2_service" "backoffice_web" {
   }
 
   lifecycle {
-    ignore_changes = [
-      template[0].containers[0].image,
-    ]
+    # Image updated via Terraform -var from CI deploys
   }
 }
 
