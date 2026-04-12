@@ -79,6 +79,7 @@ func run() error {
 	authH := handler.NewAuthHandler(pgStore, cfg.JWTSecret)
 	tenantAuthH := handler.NewTenantAuthHandler(pgStore, tenantMailer, cfg.TenantJWTSecret, cfg.TenantWebURL)
 	userH := handler.NewUserHandler(pgStore)
+	auditH := handler.NewAuditHandler(pgStore)
 
 	// Router
 	mux := http.NewServeMux()
@@ -155,6 +156,8 @@ func run() error {
 	apiMux.HandleFunc("DELETE /api/v1/users/{id}", userH.Delete)
 	apiMux.HandleFunc("PUT /api/v1/users/{id}/memberships/{tenant_id}/status", userH.UpdateMembershipStatus)
 	apiMux.HandleFunc("DELETE /api/v1/users/{id}/memberships/{tenant_id}", userH.DeleteMembership)
+
+	apiMux.HandleFunc("GET /api/v1/audit", auditH.List)
 
 	// Apply auth middleware to API routes
 	authedAPI := middleware.Auth(cfg.JWTSecret)(apiMux)

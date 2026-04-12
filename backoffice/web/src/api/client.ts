@@ -193,3 +193,16 @@ export function updateUserMembershipStatus(
 export function removeUserMembership(userId: string, tenantId: string): Promise<void> {
   return request(`/api/v1/users/${userId}/memberships/${tenantId}`, { method: 'DELETE' });
 }
+
+// Audit log
+export function listAuditLog(
+  filter: { tenant_id?: string; actor_id?: string; action?: string; limit?: number } = {},
+): Promise<import('./types').AuditEntry[]> {
+  const p = new URLSearchParams();
+  if (filter.tenant_id) p.set('tenant_id', filter.tenant_id);
+  if (filter.actor_id) p.set('actor_id', filter.actor_id);
+  if (filter.action) p.set('action', filter.action);
+  if (filter.limit) p.set('limit', String(filter.limit));
+  const q = p.toString();
+  return request(`/api/v1/audit${q ? `?${q}` : ''}`);
+}

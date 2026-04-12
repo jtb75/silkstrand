@@ -119,6 +119,28 @@ type TenantMember struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// AuditEntry records one security-relevant event.
+type AuditEntry struct {
+	ID          string          `json:"id"`
+	OccurredAt  time.Time       `json:"occurred_at"`
+	ActorType   string          `json:"actor_type"` // admin | tenant_user | system
+	ActorID     *string         `json:"actor_id,omitempty"`
+	ActorEmail  *string         `json:"actor_email,omitempty"`
+	Action      string          `json:"action"`
+	TargetType  *string         `json:"target_type,omitempty"`
+	TargetID    *string         `json:"target_id,omitempty"`
+	TenantID    *string         `json:"tenant_id,omitempty"`
+	IP          *string         `json:"ip,omitempty"`
+	Metadata    json.RawMessage `json:"metadata,omitempty"`
+}
+
+// Actor types.
+const (
+	ActorTypeAdmin      = "admin"
+	ActorTypeTenantUser = "tenant_user"
+	ActorTypeSystem     = "system"
+)
+
 // PendingInvite is an unaccepted invitation row, returned to tenant admins
 // so they can see who's been invited but hasn't joined yet.
 type PendingInvite struct {

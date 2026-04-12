@@ -9,6 +9,7 @@ import DataCenterDetail from './pages/DataCenterDetail';
 import Tenants from './pages/Tenants';
 import TenantDetail from './pages/TenantDetail';
 import Users from './pages/Users';
+import AuditLog from './pages/AuditLog';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="/tenants" element={<Tenants />} />
             <Route path="/tenants/:id" element={<TenantDetail />} />
             <Route path="/users" element={<Users />} />
+            <Route path="/audit" element={<AuditLog />} />
           </Route>
         </Routes>
       </BrowserRouter>

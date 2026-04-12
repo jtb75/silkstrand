@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jtb75/silkstrand/backoffice/internal/audit"
 	"github.com/jtb75/silkstrand/backoffice/internal/crypto"
 	"github.com/jtb75/silkstrand/backoffice/internal/mailer"
 	"github.com/jtb75/silkstrand/backoffice/internal/middleware"
@@ -243,6 +244,10 @@ func (h *TenantAuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	_ = h.store.TouchUserLogin(r.Context(), user.ID)
 
 	m := memberships[0]
+	audit.Log(r.Context(), h.store, r, audit.Entry{
+		Action:     audit.ActionLogin,
+		TargetType: "user", TargetID: user.ID, TenantID: m.TenantID,
+	})
 	h.issueJWTForTenant(w, r, user, m.TenantID, m.Role)
 }
 
@@ -542,6 +547,12 @@ func (h *TenantAuthHandler) CreateInvite(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
+	audit.Log(r.Context(), h.store, r, audit.Entry{
+		Action:     audit.ActionMemberInvite,
+		TargetType: "invitation",
+		TenantID:   claims.BoTenantID,
+		Metadata:   map[string]any{"email": req.Email, "role": req.Role},
+	})
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "invited"})
 }
 

@@ -132,3 +132,17 @@ export interface UserDetail extends User {
   memberships: UserMembership[];
   pending_invites: UserPendingInvite[];
 }
+
+export interface AuditEntry {
+  id: string;
+  occurred_at: string;
+  actor_type: 'admin' | 'tenant_user' | 'system';
+  actor_id?: string;
+  actor_email?: string;
+  action: string;
+  target_type?: string;
+  target_id?: string;
+  tenant_id?: string;
+  ip?: string;
+  metadata?: Record<string, unknown>;
+}
