@@ -38,6 +38,50 @@ func NewTenantAuthHandler(s store.Store, m mailer.Mailer, jwtSecret, tenantWebUR
 	}
 }
 
+// GET /api/v1/tenant-auth/invitation-preview?token=...
+// Public endpoint that lets the frontend render the right form (set-password
+// vs sign-in) before the user submits. Returns 404 if token is invalid or
+// already accepted.
+func (h *TenantAuthHandler) PreviewInvitation(w http.ResponseWriter, r *http.Request) {
+	tok := r.URL.Query().Get("token")
+	if tok == "" {
+		writeError(w, http.StatusBadRequest, "token is required")
+		return
+	}
+	inv, err := h.store.GetInvitationByTokenHash(r.Context(), crypto.HashToken(tok))
+	if err != nil {
+		slog.Error("preview invitation", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to look up invitation")
+		return
+	}
+	if inv == nil || inv.AcceptedAt != nil || time.Now().After(inv.ExpiresAt) {
+		writeError(w, http.StatusNotFound, "invitation not found, expired, or already accepted")
+		return
+	}
+
+	// Is there already an account with this email?
+	user, err := h.store.GetUserByEmail(r.Context(), inv.Email)
+	if err != nil {
+		slog.Error("preview invitation: user lookup", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	existingUser := user != nil && user.PasswordHash != ""
+
+	tenant, err := h.store.GetTenant(r.Context(), inv.TenantID)
+	tenantName := ""
+	if err == nil && tenant != nil {
+		tenantName = tenant.Name
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"email":         inv.Email,
+		"role":          inv.Role,
+		"tenant_name":   tenantName,
+		"existing_user": existingUser,
+	})
+}
+
 // POST /api/v1/tenant-auth/accept-invite
 // Body: {token, password}
 // Creates the user if new, sets/replaces password, marks invite accepted,
@@ -75,36 +119,45 @@ func (h *TenantAuthHandler) AcceptInvite(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	hash, err := crypto.HashPassword(req.Password)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Upsert user by email, preserving existing password if user already has
-	// one for another tenant (they'll log in with that; this invite just
-	// grants access — we don't overwrite an established password).
+	// Look up any existing user with this email — they may already have an
+	// account from another tenant.
 	user, err := h.store.GetUserByEmail(r.Context(), inv.Email)
 	if err != nil {
 		slog.Error("looking up user by email", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to look up user")
 		return
 	}
-	if user == nil {
-		user, err = h.store.CreateUser(r.Context(), inv.Email, hash)
+
+	if user != nil && user.PasswordHash != "" {
+		// Existing user with an established password — verify they know it.
+		// We never overwrite a real password from an invite flow; that would
+		// let anyone with the invite link take over the account.
+		if err := crypto.CheckPassword(user.PasswordHash, req.Password); err != nil {
+			writeError(w, http.StatusUnauthorized, "incorrect password for existing account")
+			return
+		}
+	} else {
+		// New user, or existing user that never set a password — create/set.
+		hash, err := crypto.HashPassword(req.Password)
 		if err != nil {
-			slog.Error("creating user", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to create user")
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-	} else if user.PasswordHash == "" {
-		// Existing user record without a password (invited then never accepted).
-		if err := h.store.UpdateUserPassword(r.Context(), user.ID, hash); err != nil {
-			slog.Error("setting user password", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to set password")
-			return
+		if user == nil {
+			user, err = h.store.CreateUser(r.Context(), inv.Email, hash)
+			if err != nil {
+				slog.Error("creating user", "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to create user")
+				return
+			}
+		} else {
+			if err := h.store.UpdateUserPassword(r.Context(), user.ID, hash); err != nil {
+				slog.Error("setting user password", "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to set password")
+				return
+			}
+			user.PasswordHash = hash
 		}
-		user.PasswordHash = hash
 	}
 	// Invite click proves email ownership.
 	if user.EmailVerifiedAt == nil {

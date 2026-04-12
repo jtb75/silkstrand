@@ -90,6 +90,7 @@ func run() error {
 
 	// Tenant end-user auth routes (public).
 	mux.HandleFunc("POST /api/v1/tenant-auth/login", tenantAuthH.Login)
+	mux.HandleFunc("GET /api/v1/tenant-auth/invitation-preview", tenantAuthH.PreviewInvitation)
 	mux.HandleFunc("POST /api/v1/tenant-auth/accept-invite", tenantAuthH.AcceptInvite)
 	mux.HandleFunc("POST /api/v1/tenant-auth/forgot-password", tenantAuthH.ForgotPassword)
 	mux.HandleFunc("POST /api/v1/tenant-auth/reset-password", tenantAuthH.ResetPassword)
