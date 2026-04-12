@@ -92,6 +92,16 @@ a:hover {
   background-color: #dc2626;
 }
 
+.btn-secondary {
+  background-color: #e5e7eb;
+  border-color: #d1d5db;
+  color: #0d1b2a;
+}
+
+.btn-secondary:hover {
+  background-color: #d1d5db;
+}
+
 .btn-sm {
   padding: 4px 10px;
   font-size: 12px;
@@ -398,4 +408,71 @@ a:hover {
 .login-btn {
   width: 100%;
   margin-top: 8px;
+}
+
+/* Modal */
+
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(13, 27, 42, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 6px;
+  padding: 24px;
+  width: 100%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #6b7280;
+  padding: 0;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: #0d1b2a;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* Row actions */
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
 }

@@ -1,14 +1,25 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listDataCenters, createDataCenter, deleteDataCenter } from '../api/client';
-import type { DataCenter, CreateDataCenterRequest, DCEnvironment } from '../api/types';
+import {
+  listDataCenters,
+  createDataCenter,
+  updateDataCenter,
+  deleteDataCenter,
+} from '../api/client';
+import type {
+  DataCenter,
+  CreateDataCenterRequest,
+  UpdateDataCenterRequest,
+  DCEnvironment,
+} from '../api/types';
 import StatusBadge from '../components/StatusBadge';
 
 export default function DataCenters() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<DataCenter | null>(null);
 
   const { data: dataCenters, isLoading, error } = useQuery<DataCenter[]>({
     queryKey: ['data-centers'],
@@ -23,6 +34,15 @@ export default function DataCenters() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, req }: { id: string; req: UpdateDataCenterRequest }) =>
+      updateDataCenter(id, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['data-centers'] });
+      setEditing(null);
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteDataCenter(id),
     onSuccess: () => {
@@ -32,9 +52,7 @@ export default function DataCenters() {
 
   function handleCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const form = e.currentTarget;
-    const formData = new FormData(form);
-
+    const formData = new FormData(e.currentTarget);
     createMutation.mutate({
       name: formData.get('name') as string,
       region: formData.get('region') as string,
@@ -42,6 +60,24 @@ export default function DataCenters() {
       api_url: formData.get('api_url') as string,
       api_key: formData.get('api_key') as string,
     });
+  }
+
+  function handleEdit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!editing) return;
+    const formData = new FormData(e.currentTarget);
+    const req: UpdateDataCenterRequest = {
+      name: formData.get('name') as string,
+      region: formData.get('region') as string,
+      environment: formData.get('environment') as DCEnvironment,
+      api_url: formData.get('api_url') as string,
+    };
+    // Only send api_key if user entered one (leave blank to keep existing)
+    const apiKey = formData.get('api_key') as string;
+    if (apiKey && apiKey.trim() !== '') {
+      req.api_key = apiKey;
+    }
+    updateMutation.mutate({ id: editing.id, req });
   }
 
   function handleDelete(id: string) {
@@ -99,6 +135,91 @@ export default function DataCenters() {
         </form>
       )}
 
+      {editing && (
+        <div className="modal-backdrop" onClick={() => setEditing(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Edit Data Center</h2>
+              <button className="modal-close" onClick={() => setEditing(null)}>
+                &times;
+              </button>
+            </div>
+            <form onSubmit={handleEdit}>
+              <div className="form-group">
+                <label htmlFor="edit-name">Name</label>
+                <input
+                  id="edit-name"
+                  name="name"
+                  type="text"
+                  required
+                  defaultValue={editing.name}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="edit-region">Region</label>
+                <input
+                  id="edit-region"
+                  name="region"
+                  type="text"
+                  required
+                  defaultValue={editing.region}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="edit-environment">Environment</label>
+                <select
+                  id="edit-environment"
+                  name="environment"
+                  required
+                  defaultValue={editing.environment}
+                >
+                  <option value="stage">Stage</option>
+                  <option value="prod">Prod</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label htmlFor="edit-api_url">API URL</label>
+                <input
+                  id="edit-api_url"
+                  name="api_url"
+                  type="url"
+                  required
+                  defaultValue={editing.api_url}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="edit-api_key">API Key</label>
+                <input
+                  id="edit-api_key"
+                  name="api_key"
+                  type="password"
+                  placeholder="Leave blank to keep current key"
+                />
+              </div>
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setEditing(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={updateMutation.isPending}
+                >
+                  {updateMutation.isPending ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+              {updateMutation.error && (
+                <p className="error">{(updateMutation.error as Error).message}</p>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
+
       {isLoading && <p>Loading...</p>}
       {error && <p className="error">Failed to load data centers: {(error as Error).message}</p>}
       {!isLoading && dataCenters && dataCenters.length === 0 && <p>No data centers registered.</p>}
@@ -132,7 +253,16 @@ export default function DataCenters() {
                 </td>
                 <td>{dc.tenant_count}</td>
                 <td>{new Date(dc.created_at).toLocaleString()}</td>
-                <td>
+                <td className="row-actions">
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditing(dc);
+                    }}
+                  >
+                    Edit
+                  </button>
                   <button
                     className="btn btn-danger btn-sm"
                     onClick={(e) => {
