@@ -18,7 +18,28 @@ type Agent struct {
 	Status        string     `json:"status"`
 	LastHeartbeat *time.Time `json:"last_heartbeat,omitempty"`
 	Version       string     `json:"version,omitempty"`
+	KeyHash       string     `json:"-"`
+	NextKeyHash   *string    `json:"-"`
+	KeyRotatedAt  *time.Time `json:"key_rotated_at,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
+}
+
+type CreateAgentRequest struct {
+	TenantID string `json:"tenant_id"`
+	Name     string `json:"name"`
+	Version  string `json:"version,omitempty"`
+}
+
+type Bundle struct {
+	ID         string     `json:"id"`
+	TenantID   *string    `json:"tenant_id,omitempty"`
+	Name       string     `json:"name"`
+	Version    string     `json:"version"`
+	Framework  string     `json:"framework"`
+	TargetType string     `json:"target_type"`
+	GCSPath    string     `json:"gcs_path,omitempty"`
+	Signature  string     `json:"signature,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 type Target struct {

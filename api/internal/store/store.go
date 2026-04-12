@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/jtb75/silkstrand/api/internal/model"
 )
@@ -28,7 +29,20 @@ type Store interface {
 
 	// Agents
 	GetAgent(ctx context.Context, id string) (*model.Agent, error)
+	GetAgentByID(ctx context.Context, id string) (*model.Agent, error) // not tenant-scoped, for WSS auth
+	CreateAgent(ctx context.Context, req model.CreateAgentRequest) (*model.Agent, string, error)
 	UpdateAgentStatus(ctx context.Context, id string, status string) error
+	RotateAgentKey(ctx context.Context, id string) (string, error)
+	PromoteAgentKey(ctx context.Context, id string) error
+
+	// Targets (non-tenant-scoped, for directive enrichment)
+	GetTargetByID(ctx context.Context, id string) (*model.Target, error)
+
+	// Bundles
+	GetBundle(ctx context.Context, id string) (*model.Bundle, error)
+
+	// Credentials
+	GetCredentialsByTarget(ctx context.Context, targetID string) (json.RawMessage, error)
 
 	// Health
 	Ping(ctx context.Context) error

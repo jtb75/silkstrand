@@ -95,7 +95,7 @@ jobs:
         run: cd web && npm run typecheck
 
       - name: Test
-        run: cd web && npm run test -- --ci
+        run: cd web && npm run test
 
   build-images:
     name: Build Container Images (verify)

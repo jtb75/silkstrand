@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/config"
 	"github.com/jtb75/silkstrand/api/internal/handler"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
+	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/store"
 	"github.com/jtb75/silkstrand/api/internal/websocket"
@@ -64,11 +66,14 @@ func run() error {
 	// WebSocket hub
 	hub := websocket.NewHub()
 
+	// Wire up agent message handling
+	hub.OnMessage = buildOnMessage(pgStore, ps)
+
 	// Handlers
 	healthH := handler.NewHealthHandler(pgStore, redisPingFunc(ps))
 	targetH := handler.NewTargetHandler(pgStore)
-	scanH := handler.NewScanHandler(pgStore)
-	agentH := handler.NewAgentHandler(hub)
+	scanH := handler.NewScanHandler(pgStore, ps, hub)
+	agentH := handler.NewAgentHandler(hub, pgStore, ps)
 
 	// Router
 	mux := http.NewServeMux()
@@ -77,7 +82,7 @@ func run() error {
 	mux.HandleFunc("GET /healthz", healthH.Healthz)
 	mux.HandleFunc("GET /readyz", healthH.Readyz)
 
-	// Agent WebSocket (agent auth — separate from user auth)
+	// Agent WebSocket (agent auth — key-based, separate from user auth)
 	mux.HandleFunc("GET /ws/agent", agentH.Connect)
 
 	// Authenticated API routes
@@ -125,6 +130,121 @@ func run() error {
 	defer cancel()
 
 	return server.Shutdown(ctx)
+}
+
+// buildOnMessage returns the hub.OnMessage callback that handles agent messages.
+func buildOnMessage(s store.Store, ps *pubsub.PubSub) func(agentID string, msg websocket.Message) {
+	return func(agentID string, msg websocket.Message) {
+		ctx := context.Background()
+
+		switch msg.Type {
+		case websocket.TypeScanStarted:
+			var payload websocket.ScanStartedPayload
+			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+				slog.Error("parsing scan_started payload", "agent_id", agentID, "error", err)
+				return
+			}
+			if err := s.UpdateScanStatus(ctx, payload.ScanID, model.ScanStatusRunning); err != nil {
+				slog.Error("updating scan to running", "scan_id", payload.ScanID, "error", err)
+			}
+			slog.Info("scan started", "agent_id", agentID, "scan_id", payload.ScanID)
+
+		case websocket.TypeScanResults:
+			handleScanResults(ctx, s, ps, agentID, msg.Payload)
+
+		case websocket.TypeScanError:
+			var payload websocket.ScanErrorPayload
+			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+				slog.Error("parsing scan_error payload", "agent_id", agentID, "error", err)
+				return
+			}
+			if err := s.UpdateScanStatus(ctx, payload.ScanID, model.ScanStatusFailed); err != nil {
+				slog.Error("updating scan to failed", "scan_id", payload.ScanID, "error", err)
+			}
+			slog.Warn("scan failed", "agent_id", agentID, "scan_id", payload.ScanID, "error", payload.Error)
+
+		case websocket.TypeHeartbeat:
+			if err := s.UpdateAgentStatus(ctx, agentID, model.AgentStatusConnected); err != nil {
+				slog.Error("updating agent heartbeat", "agent_id", agentID, "error", err)
+			}
+
+		default:
+			slog.Warn("unknown message type from agent", "agent_id", agentID, "type", msg.Type)
+		}
+	}
+}
+
+// ScanResultsMessage wraps the standard results schema with a scan_id.
+type ScanResultsMessage struct {
+	ScanID  string          `json:"scan_id"`
+	Results json.RawMessage `json:"results"`
+}
+
+// BundleResults is the standard results schema output from bundles.
+type BundleResults struct {
+	SchemaVersion string `json:"schema_version"`
+	Status        string `json:"status"`
+	Controls      []struct {
+		ID          string          `json:"id"`
+		Title       string          `json:"title"`
+		Status      string          `json:"status"`
+		Severity    string          `json:"severity,omitempty"`
+		Evidence    json.RawMessage `json:"evidence,omitempty"`
+		Remediation string          `json:"remediation,omitempty"`
+	} `json:"controls"`
+}
+
+func handleScanResults(ctx context.Context, s store.Store, ps *pubsub.PubSub, agentID string, payload json.RawMessage) {
+	var msg ScanResultsMessage
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		slog.Error("parsing scan_results payload", "agent_id", agentID, "error", err)
+		return
+	}
+
+	var results BundleResults
+	if err := json.Unmarshal(msg.Results, &results); err != nil {
+		slog.Error("parsing bundle results", "scan_id", msg.ScanID, "error", err)
+		if err := s.UpdateScanStatus(ctx, msg.ScanID, model.ScanStatusFailed); err != nil {
+			slog.Error("updating scan to failed", "scan_id", msg.ScanID, "error", err)
+		}
+		return
+	}
+
+	// Convert to model.ScanResult slice
+	scanResults := make([]model.ScanResult, 0, len(results.Controls))
+	for _, c := range results.Controls {
+		scanResults = append(scanResults, model.ScanResult{
+			ScanID:      msg.ScanID,
+			ControlID:   c.ID,
+			Title:       c.Title,
+			Status:      c.Status,
+			Severity:    c.Severity,
+			Evidence:    c.Evidence,
+			Remediation: c.Remediation,
+		})
+	}
+
+	// Store results
+	if err := s.CreateScanResults(ctx, msg.ScanID, scanResults); err != nil {
+		slog.Error("storing scan results", "scan_id", msg.ScanID, "error", err)
+		if err := s.UpdateScanStatus(ctx, msg.ScanID, model.ScanStatusFailed); err != nil {
+			slog.Error("updating scan to failed", "scan_id", msg.ScanID, "error", err)
+		}
+		return
+	}
+
+	// Update scan status to completed
+	if err := s.UpdateScanStatus(ctx, msg.ScanID, model.ScanStatusCompleted); err != nil {
+		slog.Error("updating scan to completed", "scan_id", msg.ScanID, "error", err)
+		return
+	}
+
+	// Publish progress for real-time UI
+	if ps != nil {
+		_ = ps.PublishScanProgress(ctx, msg.ScanID, model.ScanStatusCompleted)
+	}
+
+	slog.Info("scan completed", "agent_id", agentID, "scan_id", msg.ScanID, "controls", len(scanResults))
 }
 
 func runMigrations(db *sql.DB) error {
