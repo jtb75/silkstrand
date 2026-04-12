@@ -59,15 +59,45 @@ variable "cloudflare_zone_id" {
 }
 
 variable "redis_url" {
-  description = "Upstash Redis URL"
+  description = "Upstash Redis URL for DC API pub/sub"
   type        = string
   sensitive   = true
 }
 
 variable "jwt_secret" {
-  description = "JWT signing secret"
+  description = "JWT signing secret for DC API"
   type        = string
   sensitive   = true
+}
+
+variable "internal_api_key" {
+  description = "API key for backoffice to access DC internal API"
+  type        = string
+  sensitive   = true
+}
+
+variable "backoffice_jwt_secret" {
+  description = "JWT signing secret for backoffice admin auth"
+  type        = string
+  sensitive   = true
+}
+
+variable "backoffice_encryption_key" {
+  description = "AES-256 encryption key for DC API keys stored in backoffice DB (64 hex chars)"
+  type        = string
+  sensitive   = true
+}
+
+variable "backoffice_api_image" {
+  description = "Backoffice API container image"
+  type        = string
+  default     = "gcr.io/cloudrun/hello"
+}
+
+variable "backoffice_web_image" {
+  description = "Backoffice web frontend container image"
+  type        = string
+  default     = "gcr.io/cloudrun/hello"
 }
 
 # --- Networking ---
@@ -101,6 +131,9 @@ module "storage" {
 }
 
 # --- Cloud Run API ---
+# TODO: The cloud-run module needs an extra_env_vars variable to pass
+# INTERNAL_API_KEY and CREDENTIAL_ENCRYPTION_KEY. For now, set these
+# manually in the Cloud Run console or via gcloud after initial deploy.
 module "cloud_run" {
   source = "../../modules/cloud-run"
 
@@ -122,4 +155,211 @@ module "dns" {
   zone_id           = var.cloudflare_zone_id
   environment       = "prod"
   api_cloud_run_url = module.cloud_run.service_hostname
+}
+
+# --- Backoffice ---
+#
+# The backoffice runs in the same GCP project as prod. It uses a second database
+# on the same Cloud SQL instance (no extra instance cost) and its own Cloud Run
+# services. One backoffice manages all data centers (stage, prod, future regions).
+
+# Second database on the existing Cloud SQL instance for backoffice data
+resource "google_sql_database" "backoffice" {
+  project  = var.project_id
+  instance = module.database.instance_name
+  name     = "silkstrand_backoffice"
+}
+
+# Note: The backoffice database URL uses the same user/password as the DC database
+# (same Cloud SQL instance, different database name). The DATABASE_URL env var in
+# the backoffice API Cloud Run service references the private IP directly.
+
+# Backoffice API service account
+resource "google_service_account" "backoffice_api" {
+  project      = var.project_id
+  account_id   = "backoffice-api"
+  display_name = "Backoffice API"
+}
+
+resource "google_project_iam_member" "backoffice_api_cloudsql" {
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${google_service_account.backoffice_api.email}"
+}
+
+resource "google_project_iam_member" "backoffice_api_secrets" {
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.backoffice_api.email}"
+}
+
+# Backoffice API Cloud Run service
+resource "google_cloud_run_v2_service" "backoffice_api" {
+  project  = var.project_id
+  name     = "backoffice-api"
+  location = var.region
+  ingress  = "INGRESS_TRAFFIC_ALL"
+
+  template {
+    service_account = google_service_account.backoffice_api.email
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 2
+    }
+
+    vpc_access {
+      connector = "projects/${var.project_id}/locations/${var.region}/connectors/${module.networking.vpc_connector_name}"
+      egress    = "PRIVATE_RANGES_ONLY"
+    }
+
+    containers {
+      image = var.backoffice_api_image
+
+      ports {
+        container_port = 8081
+      }
+
+      env {
+        name  = "ENV"
+        value = "production"
+      }
+
+      env {
+        name  = "PORT"
+        value = "8081"
+      }
+
+      env {
+        name  = "DATABASE_URL"
+        value = "postgres://${module.database.database_user}@${module.database.private_ip}:5432/silkstrand_backoffice?sslmode=disable"
+      }
+
+      env {
+        name  = "JWT_SECRET"
+        value = var.backoffice_jwt_secret
+      }
+
+      env {
+        name  = "ENCRYPTION_KEY"
+        value = var.backoffice_encryption_key
+      }
+
+      resources {
+        cpu_idle = true
+        limits = {
+          cpu    = "1"
+          memory = "256Mi"
+        }
+      }
+
+      startup_probe {
+        http_get {
+          path = "/healthz"
+        }
+        initial_delay_seconds = 5
+        period_seconds        = 3
+        failure_threshold     = 10
+      }
+
+      liveness_probe {
+        http_get {
+          path = "/healthz"
+        }
+        period_seconds = 30
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,
+    ]
+  }
+}
+
+resource "google_cloud_run_v2_service_iam_member" "backoffice_api_public" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.backoffice_api.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+# Backoffice Web Frontend
+resource "google_service_account" "backoffice_web" {
+  project      = var.project_id
+  account_id   = "backoffice-web"
+  display_name = "Backoffice Web Frontend"
+}
+
+resource "google_cloud_run_v2_service" "backoffice_web" {
+  project  = var.project_id
+  name     = "backoffice-web"
+  location = var.region
+  ingress  = "INGRESS_TRAFFIC_ALL"
+
+  template {
+    service_account = google_service_account.backoffice_web.email
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 2
+    }
+
+    containers {
+      image = var.backoffice_web_image
+
+      ports {
+        container_port = 80
+      }
+
+      resources {
+        cpu_idle = true
+        limits = {
+          cpu    = "1"
+          memory = "256Mi"
+        }
+      }
+
+      startup_probe {
+        http_get {
+          path = "/"
+        }
+        initial_delay_seconds = 5
+        period_seconds        = 3
+        failure_threshold     = 10
+      }
+
+      liveness_probe {
+        http_get {
+          path = "/"
+        }
+        period_seconds = 30
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,
+    ]
+  }
+}
+
+resource "google_cloud_run_v2_service_iam_member" "backoffice_web_public" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.backoffice_web.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+# --- Backoffice Outputs ---
+output "backoffice_api_url" {
+  value = google_cloud_run_v2_service.backoffice_api.uri
+}
+
+output "backoffice_web_url" {
+  value = google_cloud_run_v2_service.backoffice_web.uri
 }

@@ -333,8 +333,7 @@ Server sends WebSocket pings every 30s; agent responds with pong (60s timeout).
 | Environment | Project ID | Deploy Trigger | Purpose |
 |-------------|-----------|----------------|---------|
 | Stage | `silkstrand-stage` | Auto on merge to `main` | DC stage deployment |
-| Prod | `silkstrand-prod` | Manual via git tag `v*` | DC prod deployment |
-| Backoffice | TBD | TBD | Backoffice manager |
+| Prod | `silkstrand-prod` | Manual via git tag `v*` | DC prod + backoffice (one backoffice manages all DCs) |
 
 ## Local Development
 
