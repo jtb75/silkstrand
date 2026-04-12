@@ -153,3 +153,9 @@ export function retryTenantProvisioning(id: string): Promise<Tenant> {
     method: 'POST',
   });
 }
+
+export function deleteTenant(id: string): Promise<void> {
+  return request<void>(`/api/v1/tenants/${id}`, {
+    method: 'DELETE',
+  });
+}

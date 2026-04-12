@@ -58,12 +58,10 @@ export default function TenantDetail() {
               </span>
             </div>
             <div className="detail-row">
-              <span className="detail-label">Tenant ID (DC)</span>
-              <code>{tenant.dc_tenant_id || '-'}</code>
-            </div>
-            <div className="detail-row">
-              <span className="detail-label">Tenant ID (Backoffice)</span>
-              <code>{tenant.id}</code>
+              <span className="detail-label">Tenant ID</span>
+              <code title="Tenant ID in the data center's database — use this when debugging on the DC side">
+                {tenant.dc_tenant_id || '-'}
+              </code>
             </div>
             <div className="detail-row">
               <span className="detail-label">Created</span>

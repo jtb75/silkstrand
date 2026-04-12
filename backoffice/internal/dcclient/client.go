@@ -104,6 +104,21 @@ func (c *Client) UpdateTenant(conn DCConn, tenantID string, status string) error
 	return nil
 }
 
+// DeleteTenant removes (soft-deletes) a tenant in the data center.
+func (c *Client) DeleteTenant(conn DCConn, tenantID string) error {
+	resp, err := c.do("DELETE", conn.APIURL+"/internal/v1/tenants/"+tenantID, nil, conn)
+	if err != nil {
+		return fmt.Errorf("deleting tenant in DC: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("DC returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // ListTenants lists all tenants in the data center.
 func (c *Client) ListTenants(conn DCConn) ([]model.DCTenantResponse, error) {
 	resp, err := c.do("GET", conn.APIURL+"/internal/v1/tenants", nil, conn)

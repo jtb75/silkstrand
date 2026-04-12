@@ -272,6 +272,18 @@ func (s *PostgresStore) UpdateTenantProvisioning(ctx context.Context, id string,
 	return nil
 }
 
+func (s *PostgresStore) DeleteTenant(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM tenants WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("deleting tenant: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *PostgresStore) ListTenantsByDataCenter(ctx context.Context, dcID string) ([]model.Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, clerk_org_id, created_at, updated_at
