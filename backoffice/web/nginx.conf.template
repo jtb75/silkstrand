@@ -1,12 +1,18 @@
 server {
     listen ${PORT};
+    resolver 8.8.8.8 ipv6=off;
     root /usr/share/nginx/html;
     index index.html;
 
     location /api/ {
-        proxy_pass ${BACKOFFICE_API_URL};
+        # Use a variable so nginx resolves the hostname at request time.
+        # Without this, nginx resolves once at startup and can cache stale IPs.
+        set $backend_url ${BACKOFFICE_API_URL};
+        proxy_pass $backend_url;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        proxy_ssl_server_name on;
+        # Strip our host header so the upstream sees its own hostname
+        proxy_set_header Host $proxy_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
