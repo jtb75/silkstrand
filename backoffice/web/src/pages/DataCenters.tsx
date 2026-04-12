@@ -14,6 +14,7 @@ import type {
   DCEnvironment,
 } from '../api/types';
 import StatusBadge from '../components/StatusBadge';
+import { relativeTime } from '../lib/time';
 
 export default function DataCenters() {
   const queryClient = useQueryClient();
@@ -231,6 +232,7 @@ export default function DataCenters() {
               <th>Region</th>
               <th>Environment</th>
               <th>Status</th>
+              <th>Health</th>
               <th>Tenants</th>
               <th>Created</th>
               <th></th>
@@ -250,6 +252,12 @@ export default function DataCenters() {
                 </td>
                 <td>
                   <StatusBadge status={dc.status} />
+                </td>
+                <td>
+                  <StatusBadge status={dc.last_health_status || 'unknown'} />
+                  <span className="text-muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                    {relativeTime(dc.last_health_check)}
+                  </span>
                 </td>
                 <td>{dc.tenant_count}</td>
                 <td>{new Date(dc.created_at).toLocaleString()}</td>
