@@ -92,7 +92,6 @@ jobs:
         run: |
           SHA=${{ needs.validate-tag.outputs.sha }}
           docker build \
-            --build-arg VITE_CLERK_PUBLISHABLE_KEY="${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}" \
             -t ${{ env.GAR_REGISTRY }}/web:sha-${SHA} \
             -t ${{ env.GAR_REGISTRY }}/web:latest \
             -f web/Dockerfile web/

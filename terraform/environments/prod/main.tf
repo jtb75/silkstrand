@@ -497,6 +497,11 @@ resource "google_cloud_run_v2_service" "web" {
         value = module.cloud_run.service_url
       }
 
+      env {
+        name  = "BACKOFFICE_API_URL"
+        value = google_cloud_run_v2_service.backoffice_api.uri
+      }
+
       resources {
         cpu_idle = true
         limits = {

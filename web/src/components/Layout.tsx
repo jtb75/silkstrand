@@ -1,59 +1,37 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { useOrganization, OrganizationSwitcher } from '@clerk/clerk-react';
-import { hasDevToken, clearToken } from '../api/client';
+import { useAuth } from '../auth/useAuth';
+import TenantSwitcher from './TenantSwitcher';
 import './Layout.css';
 
-const isClerkMode = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-
 export default function Layout() {
+  const { user, active, logout } = useAuth();
+  const isAdmin = active?.role === 'admin';
+
   return (
     <div className="layout">
       <aside className="sidebar">
         <div className="sidebar-brand">SilkStrand</div>
         <nav className="sidebar-nav">
-          <NavLink to="/" end>
-            Dashboard
-          </NavLink>
+          <NavLink to="/" end>Dashboard</NavLink>
           <NavLink to="/targets">Targets</NavLink>
           <NavLink to="/scans">Scans</NavLink>
-          {isClerkMode && <AdminOnlyTeamLink />}
+          {isAdmin && <NavLink to="/team">Team</NavLink>}
         </nav>
       </aside>
       <div className="main-area">
         <header className="topbar">
           <span>CIS Compliance Scanner</span>
-          {isClerkMode && (
-            <span style={{ marginLeft: 'auto' }}>
-              <OrganizationSwitcher
-                hidePersonal
-                appearance={{
-                  elements: {
-                    rootBox: { display: 'inline-flex' },
-                    organizationSwitcherTrigger: { padding: '4px 8px' },
-                  },
-                }}
-              />
-            </span>
-          )}
-          {!isClerkMode && (
-            <span className="topbar-token-status">
-              {hasDevToken() ? (
-                <>
-                  Dev token set
-                  <button
-                    onClick={() => {
-                      clearToken();
-                      window.location.reload();
-                    }}
-                  >
-                    Clear
-                  </button>
-                </>
-              ) : (
-                'No auth token'
-              )}
-            </span>
-          )}
+          <span className="topbar-right">
+            <TenantSwitcher />
+            {user && (
+              <>
+                <span className="muted" style={{ marginLeft: 12 }}>{user.email}</span>
+                <button className="btn btn-sm" style={{ marginLeft: 8 }} onClick={logout}>
+                  Log out
+                </button>
+              </>
+            )}
+          </span>
         </header>
         <main className="content">
           <Outlet />
@@ -61,15 +39,4 @@ export default function Layout() {
       </div>
     </div>
   );
-}
-
-// AdminOnlyTeamLink renders the Team nav link only for users with the admin
-// role in their current organization. Uses Clerk's useOrganization hook.
-function AdminOnlyTeamLink() {
-  const { membership, isLoaded } = useOrganization();
-  if (!isLoaded) return null;
-  if (membership?.role !== 'admin' && membership?.role !== 'org:admin') {
-    return null;
-  }
-  return <NavLink to="/team">Team</NavLink>;
 }

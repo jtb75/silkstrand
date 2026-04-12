@@ -402,3 +402,24 @@ a:hover {
 .quick-links {
   margin-top: 12px;
 }
+
+/* Auth pages (login, accept-invite, forgot/reset password) */
+.auth-card {
+  max-width: 400px;
+  margin: 80px auto;
+  padding: 32px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.auth-card h1 { margin-top: 0; }
+.auth-card form { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.auth-card label { display: flex; flex-direction: column; font-size: 14px; color: #374151; gap: 4px; }
+.auth-card input {
+  padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px;
+  font-size: 14px;
+}
+.auth-card button { margin-top: 8px; }
+.muted { color: #6b7280; font-size: 14px; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; }

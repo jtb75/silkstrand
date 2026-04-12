@@ -594,3 +594,25 @@ func (s *PostgresStore) MarkPasswordResetUsed(ctx context.Context, tokenHash []b
 	}
 	return nil
 }
+
+func (s *PostgresStore) ListTenantMembers(ctx context.Context, tenantID string) ([]model.TenantMember, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT u.id, u.email, m.role, m.created_at
+		   FROM memberships m
+		   JOIN users u ON u.id = m.user_id
+		  WHERE m.tenant_id = $1
+		  ORDER BY m.created_at`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing tenant members: %w", err)
+	}
+	defer rows.Close()
+	var out []model.TenantMember
+	for rows.Next() {
+		var m model.TenantMember
+		if err := rows.Scan(&m.UserID, &m.Email, &m.Role, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning member: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
