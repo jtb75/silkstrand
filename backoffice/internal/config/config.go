@@ -14,6 +14,12 @@ type Config struct {
 	BootstrapAdminEmail    string // If set with password, create admin on first startup
 	BootstrapAdminPassword string
 	ClerkSecretKey         string // If set, backoffice auto-creates Clerk orgs for tenants
+
+	// Tenant auth (in-house, replacing Clerk).
+	TenantJWTSecret string // HS256 secret shared with all DC APIs
+	ResendAPIKey    string // Empty → mailer falls back to noop (logs to stdout)
+	FromEmail       string // e.g. "SilkStrand <noreply@silkstrand.io>"
+	TenantWebURL    string // Base URL of the tenant frontend for building invite / reset links
 }
 
 func Load() (*Config, error) {
@@ -37,6 +43,10 @@ func Load() (*Config, error) {
 		BootstrapAdminEmail:    getEnv("BOOTSTRAP_ADMIN_EMAIL", ""),
 		BootstrapAdminPassword: getEnv("BOOTSTRAP_ADMIN_PASSWORD", ""),
 		ClerkSecretKey:         getEnv("CLERK_SECRET_KEY", ""),
+		TenantJWTSecret:        getEnv("TENANT_JWT_SECRET", "dev-secret-change-in-production"),
+		ResendAPIKey:           getEnv("RESEND_API_KEY", ""),
+		FromEmail:              getEnv("FROM_EMAIL", "SilkStrand <noreply@silkstrand.io>"),
+		TenantWebURL:           getEnv("TENANT_WEB_URL", "http://localhost:5173"),
 	}
 
 	if getEnv("ENV", "dev") == "production" {
@@ -45,6 +55,9 @@ func Load() (*Config, error) {
 		}
 		if len(cfg.EncryptionKey) == 0 {
 			return nil, fmt.Errorf("ENCRYPTION_KEY must be set in production")
+		}
+		if cfg.TenantJWTSecret == "dev-secret-change-in-production" {
+			return nil, fmt.Errorf("TENANT_JWT_SECRET must be set in production")
 		}
 	}
 

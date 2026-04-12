@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/jtb75/silkstrand/backoffice/internal/model"
 )
@@ -31,6 +32,32 @@ type Store interface {
 	GetAdminByEmail(ctx context.Context, email string) (*model.AdminUser, error)
 	CreateAdmin(ctx context.Context, email, passwordHash, role string) (*model.AdminUser, error)
 	CountAdmins(ctx context.Context) (int, error)
+
+	// Tenant Users (end users of the tenant frontend)
+	GetUserByEmail(ctx context.Context, email string) (*model.User, error)
+	GetUserByID(ctx context.Context, id string) (*model.User, error)
+	CreateUser(ctx context.Context, email, passwordHash string) (*model.User, error)
+	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
+	TouchUserLogin(ctx context.Context, userID string) error
+	MarkUserEmailVerified(ctx context.Context, userID string) error
+
+	// Memberships
+	CreateMembership(ctx context.Context, userID, tenantID, role string) (*model.Membership, error)
+	DeleteMembership(ctx context.Context, userID, tenantID string) error
+	GetMembership(ctx context.Context, userID, tenantID string) (*model.Membership, error)
+	ListMembershipsByUser(ctx context.Context, userID string) ([]model.MembershipSummary, error)
+	ListMembershipsByTenant(ctx context.Context, tenantID string) ([]model.Membership, error)
+	CountMembershipsByUser(ctx context.Context, userID string) (int, error)
+
+	// Invitations
+	CreateInvitation(ctx context.Context, tenantID, email, role string, tokenHash []byte, expiresAt time.Time, invitedByAdmin *string) (*model.Invitation, error)
+	GetInvitationByTokenHash(ctx context.Context, tokenHash []byte) (*model.Invitation, error)
+	MarkInvitationAccepted(ctx context.Context, id string) error
+
+	// Password resets
+	CreatePasswordReset(ctx context.Context, userID string, tokenHash []byte, expiresAt time.Time) error
+	GetPasswordResetByTokenHash(ctx context.Context, tokenHash []byte) (userID string, expiresAt time.Time, usedAt *time.Time, err error)
+	MarkPasswordResetUsed(ctx context.Context, tokenHash []byte) error
 
 	// Health
 	Ping(ctx context.Context) error

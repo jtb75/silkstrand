@@ -38,6 +38,57 @@ const (
 	RoleSuperAdmin = "super_admin"
 )
 
+// Tenant user (membership) roles.
+const (
+	MembershipRoleAdmin  = "admin"
+	MembershipRoleMember = "member"
+)
+
+// MaxMembershipsPerUser caps how many tenants a single user can belong to.
+// Prevents abuse/runaway invitation of one account across thousands of orgs.
+const MaxMembershipsPerUser = 20
+
+// User is an end-user that authenticates into the tenant frontend.
+// Distinct from AdminUser (backoffice admin).
+type User struct {
+	ID              string     `json:"id"`
+	Email           string     `json:"email"`
+	PasswordHash    string     `json:"-"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
+	LastLoginAt     *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+type Membership struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	TenantID  string    `json:"tenant_id"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// MembershipSummary is what we return to the tenant frontend so it knows
+// which tenants a user can switch between and where each one lives.
+type MembershipSummary struct {
+	TenantID   string `json:"tenant_id"`
+	TenantName string `json:"tenant_name"`
+	DCID       string `json:"dc_id"`
+	DCAPIURL   string `json:"dc_api_url"`
+	Role       string `json:"role"`
+}
+
+type Invitation struct {
+	ID             string     `json:"id"`
+	TenantID       string     `json:"tenant_id"`
+	Email          string     `json:"email"`
+	Role           string     `json:"role"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+	AcceptedAt     *time.Time `json:"accepted_at,omitempty"`
+	InvitedByAdmin *string    `json:"invited_by_admin,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
 type DataCenter struct {
 	ID                string     `json:"id"`
 	Name              string     `json:"name"`
