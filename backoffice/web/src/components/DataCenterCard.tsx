@@ -15,7 +15,7 @@ export default function DataCenterCard({ dc }: DataCenterCardProps) {
         <span className="dc-card-name">
           {dc.name} <span className={`env-badge env-${dc.environment}`}>{dc.environment}</span>
         </span>
-        <StatusBadge status={dc.status} />
+        <StatusBadge status={dc.last_health_status || dc.status} />
       </div>
       <div className="dc-card-meta">
         <div>Region: {dc.region}</div>

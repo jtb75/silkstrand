@@ -137,12 +137,25 @@ type DCAgentResponse struct {
 	Version  string  `json:"version"`
 }
 
-type DashboardStats struct {
-	DataCenters []DataCenterStats `json:"data_centers"`
+// DataCenterListItem is what the list endpoint returns — base DC plus a
+// computed tenant_count from the backoffice DB.
+type DataCenterListItem struct {
+	DataCenter
+	TenantCount int `json:"tenant_count"`
 }
 
-type DataCenterStats struct {
-	DataCenter DataCenter      `json:"data_center"`
-	Stats      *DCStatsResponse `json:"stats,omitempty"`
-	Error      string          `json:"error,omitempty"`
+type DashboardStats struct {
+	TotalDataCenters int                  `json:"total_data_centers"`
+	TotalTenants     int                  `json:"total_tenants"`
+	ActiveTenants    int                  `json:"active_tenants"`
+	SuspendedTenants int                  `json:"suspended_tenants"`
+	DataCenters      []DataCenterWithStats `json:"data_centers"`
+}
+
+type DataCenterWithStats struct {
+	DataCenter
+	TenantCount int    `json:"tenant_count"`
+	AgentCount  int    `json:"agent_count"`
+	ScanCount   int    `json:"scan_count"`
+	StatsError  string `json:"stats_error,omitempty"`
 }

@@ -6,7 +6,9 @@ export interface DataCenter {
   region: string;
   environment: DCEnvironment;
   api_url: string;
-  status: 'healthy' | 'degraded' | 'offline';
+  status: 'active' | 'inactive';
+  last_health_status: string; // 'healthy' | 'unhealthy' | 'unknown'
+  last_health_check?: string;
   tenant_count: number;
   created_at: string;
   updated_at: string;
