@@ -1,7 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getTenant } from '../api/client';
-import type { Tenant } from '../api/types';
+import { getTenant, getDataCenter } from '../api/client';
+import type { Tenant, DataCenter } from '../api/types';
 import StatusBadge from '../components/StatusBadge';
 
 export default function TenantDetail() {
@@ -11,6 +11,12 @@ export default function TenantDetail() {
     queryKey: ['tenants', id],
     queryFn: () => getTenant(id!),
     enabled: !!id,
+  });
+
+  const { data: dc } = useQuery<DataCenter>({
+    queryKey: ['data-centers', tenant?.data_center_id],
+    queryFn: () => getDataCenter(tenant!.data_center_id),
+    enabled: !!tenant?.data_center_id,
   });
 
   return (
@@ -37,12 +43,27 @@ export default function TenantDetail() {
               <StatusBadge status={tenant.provisioning_status} />
             </div>
             <div className="detail-row">
-              <span className="detail-label">DC Tenant ID</span>
-              <span>{tenant.dc_tenant_id || '-'}</span>
+              <span className="detail-label">Data Center</span>
+              <span>
+                {dc ? (
+                  <>
+                    <Link to={`/data-centers/${dc.id}`}>{dc.name}</Link>
+                    {' '}({dc.region})
+                    {' '}
+                    <span className={`env-badge env-${dc.environment}`}>{dc.environment}</span>
+                  </>
+                ) : (
+                  <code>{tenant.data_center_id}</code>
+                )}
+              </span>
             </div>
             <div className="detail-row">
-              <span className="detail-label">Data Center ID</span>
-              <span className="text-muted">{tenant.data_center_id}</span>
+              <span className="detail-label">Tenant ID (DC)</span>
+              <code>{tenant.dc_tenant_id || '-'}</code>
+            </div>
+            <div className="detail-row">
+              <span className="detail-label">Tenant ID (Backoffice)</span>
+              <code>{tenant.id}</code>
             </div>
             <div className="detail-row">
               <span className="detail-label">Created</span>
