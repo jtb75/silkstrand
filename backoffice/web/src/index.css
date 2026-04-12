@@ -476,3 +476,39 @@ a:hover {
   gap: 6px;
   white-space: nowrap;
 }
+
+/* Pill buttons (segmented control) */
+
+.pill-group {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 20px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.pill {
+  padding: 6px 14px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid #d1d5db;
+  cursor: pointer;
+  font-size: 13px;
+  color: #4b5563;
+  transition: background 0.15s, color 0.15s;
+}
+
+.pill:last-child {
+  border-right: none;
+}
+
+.pill:hover:not(.pill-active) {
+  background: #f3f4f6;
+}
+
+.pill-active {
+  background: #1b998b;
+  color: #ffffff;
+  font-weight: 600;
+}
