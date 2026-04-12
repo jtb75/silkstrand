@@ -254,6 +254,52 @@ func (h *TenantHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tenant)
 }
 
+func (h *TenantHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	tenant, err := h.store.GetTenant(r.Context(), id)
+	if err != nil {
+		slog.Error("getting tenant for delete", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to get tenant")
+		return
+	}
+	if tenant == nil {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+
+	// Best-effort delete in the DC (soft-delete — sets status=inactive there).
+	if tenant.DCTenantID != nil && len(h.encKey) > 0 {
+		dc, err := h.store.GetDataCenter(r.Context(), tenant.DataCenterID)
+		if err == nil && dc != nil {
+			if conn, err := dcConnFromRecord(dc, h.encKey); err == nil {
+				if err := h.dc.DeleteTenant(*conn, *tenant.DCTenantID); err != nil {
+					slog.Warn("deleting tenant in DC", "tenant_id", tenant.ID, "error", err)
+				}
+			} else {
+				slog.Warn("decrypting DC API key for tenant delete", "error", err)
+			}
+		}
+	}
+
+	// Best-effort Clerk org delete.
+	if tenant.ClerkOrgID != nil && h.clerk != nil && h.clerk.SecretKey != "" {
+		if err := h.clerk.DeleteOrganization(*tenant.ClerkOrgID); err != nil {
+			if !errors.Is(err, clerkclient.ErrDisabled) {
+				slog.Warn("deleting Clerk organization", "tenant_id", tenant.ID, "error", err)
+			}
+		}
+	}
+
+	if err := h.store.DeleteTenant(r.Context(), id); err != nil {
+		slog.Error("deleting tenant", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to delete tenant")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *TenantHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 

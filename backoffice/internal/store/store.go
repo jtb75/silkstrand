@@ -25,6 +25,7 @@ type Store interface {
 	UpdateTenantProvisioning(ctx context.Context, id string, provStatus string, dcTenantID *string) error
 	UpdateTenantClerkOrg(ctx context.Context, id string, clerkOrgID *string) error
 	ListTenantsByDataCenter(ctx context.Context, dcID string) ([]model.Tenant, error)
+	DeleteTenant(ctx context.Context, id string) error
 
 	// Admin Users
 	GetAdminByEmail(ctx context.Context, email string) (*model.AdminUser, error)

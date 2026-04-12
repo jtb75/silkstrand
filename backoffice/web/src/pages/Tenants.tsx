@@ -7,6 +7,7 @@ import {
   createTenant,
   updateTenantStatus,
   retryTenantProvisioning,
+  deleteTenant,
 } from '../api/client';
 import type { Tenant, DataCenter, CreateTenantRequest, DCEnvironment } from '../api/types';
 import { worldRegionForGCP, WORLD_REGIONS, type WorldRegion } from '../lib/regions';
@@ -25,6 +26,10 @@ export default function Tenants() {
   const [formEnv, setFormEnv] = useState<EnvFilter>('prod');
   const [formRegion, setFormRegion] = useState<RegionFilter>('all');
   const [formDc, setFormDc] = useState('');
+
+  // Delete confirmation modal
+  const [deleteTarget, setDeleteTarget] = useState<Tenant | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const { data: tenants, isLoading, error } = useQuery<Tenant[]>({
     queryKey: ['tenants', { data_center_id: filterDc || undefined }],
@@ -57,6 +62,15 @@ export default function Tenants() {
     mutationFn: (id: string) => retryTenantProvisioning(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tenants'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteTenant(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tenants'] });
+      setDeleteTarget(null);
+      setDeleteConfirmText('');
     },
   });
 
@@ -248,11 +262,77 @@ export default function Tenants() {
                       Retry
                     </button>
                   )}
+                  <button
+                    className="btn btn-danger btn-sm"
+                    style={{ marginLeft: 6 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(t);
+                      setDeleteConfirmText('');
+                    }}
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+      )}
+
+      {deleteTarget && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            if (!deleteMutation.isPending) {
+              setDeleteTarget(null);
+              setDeleteConfirmText('');
+            }
+          }}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete Tenant</h2>
+            <p>
+              This will permanently delete tenant <strong>{deleteTarget.name}</strong>,
+              deactivate it in the data center, and remove its Clerk organization.
+              This cannot be undone.
+            </p>
+            <p>
+              Type <code>{deleteTarget.name}</code> to confirm:
+            </p>
+            <input
+              autoFocus
+              type="text"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder={deleteTarget.name}
+            />
+            {deleteMutation.error && (
+              <p className="error">{(deleteMutation.error as Error).message}</p>
+            )}
+            <div className="modal-actions">
+              <button
+                className="btn"
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteConfirmText('');
+                }}
+                disabled={deleteMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
+                disabled={
+                  deleteConfirmText !== deleteTarget.name || deleteMutation.isPending
+                }
+                onClick={() => deleteMutation.mutate(deleteTarget.id)}
+              >
+                {deleteMutation.isPending ? 'Deleting...' : 'Delete Tenant'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

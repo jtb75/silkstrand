@@ -99,6 +99,7 @@ func run() error {
 	apiMux.HandleFunc("PUT /api/v1/tenants/{id}", tenantH.Update)
 	apiMux.HandleFunc("PUT /api/v1/tenants/{id}/status", tenantH.UpdateStatus)
 	apiMux.HandleFunc("POST /api/v1/tenants/{id}/retry", tenantH.Retry)
+	apiMux.HandleFunc("DELETE /api/v1/tenants/{id}", tenantH.Delete)
 
 	// Apply auth middleware to API routes
 	authedAPI := middleware.Auth(cfg.JWTSecret)(apiMux)
