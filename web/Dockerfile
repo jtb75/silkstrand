@@ -1,9 +1,6 @@
 # Build stage
 FROM node:20-alpine AS builder
 
-ARG VITE_CLERK_PUBLISHABLE_KEY=""
-ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
-
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -23,6 +20,7 @@ COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 # Defaults for local docker-compose; overridden in Cloud Run.
 ENV PORT=80
 ENV SILKSTRAND_API_URL=http://api:8080
+ENV BACKOFFICE_API_URL=http://backoffice-api:8081
 
 EXPOSE 80
 

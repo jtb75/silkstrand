@@ -76,7 +76,9 @@ Each data center is a full deployment in a specific region. EU customers get the
 | Container Registry | Artifact Registry | `us-central1-docker.pkg.dev/silkstrand-{env}/silkstrand/` |
 | IaC | OpenTofu (Terraform-compatible) | GCP infrastructure management |
 | DNS | Cloudflare | DNS management, domain: silkstrand.io |
-| Auth | Clerk (planned) | Off-the-shelf tenant auth. Backoffice uses own JWT + bcrypt. |
+| Auth (tenant) | In-house: bcrypt + HS256 JWT | Users + memberships live in the backoffice; DCs validate JWTs with a shared `TENANT_JWT_SECRET`. |
+| Auth (admin) | In-house: bcrypt + JWT | Backoffice admin login (separate from tenant users). |
+| Transactional email | Resend | Invitations, password resets. Pluggable `mailer.Mailer` interface. |
 
 ## Project Structure
 
@@ -148,7 +150,7 @@ silkstrand/
 
 - **Data Center API** — Full Go API server with:
   - User-facing routes: targets CRUD, scans, scan results (JWT + tenant middleware)
-  - Dual-mode auth: Clerk JWKS (RS256, production) + HMAC-SHA256 (dev). Stdlib-only crypto.
+  - HS256 tenant JWT validation using a `TENANT_JWT_SECRET` shared with the backoffice. Stdlib-only crypto.
   - Agent WebSocket endpoint with per-agent API key auth (SHA-256, dual-key rotation)
   - Internal API routes (`/internal/v1/`) for backoffice access (API key auth)
   - Tenant status enforcement (active/suspended/inactive with 5s TTL cache)
@@ -158,13 +160,15 @@ silkstrand/
   - Dockerfile: multi-stage (golang:1.24-alpine → distroless)
 - **Edge Agent** — Go binary with WSS tunnel (exponential backoff reconnect), Python runner, bundle cache, heartbeat. Cross-compiled for 6 platforms on release.
 - **CIS PostgreSQL Bundle** — 8 CIS Benchmark controls (log_connections, ssl, password_encryption, pg_hba.conf, log_statement, pgaudit, superuser roles). End-to-end tested locally.
-- **Tenant Frontend** — React + TypeScript SPA: dashboard, targets CRUD, scan triggering, results viewer with summary bar. Clerk integration (production) + dev token flow (local). Dockerfile with nginx.
+- **Tenant Frontend** — React + TypeScript SPA: dashboard, targets CRUD, scan triggering, results viewer with summary bar. In-house auth (login / accept-invite / forgot-password / reset-password pages), Team page for admins to invite/remove users, `<TenantSwitcher />` in the topbar for multi-tenant users. Dockerfile with nginx that splits `/api/v1/tenant-auth/*` → backoffice and `/api/*` → DC API.
 - **Backoffice Manager** — Separate Go module + React frontend:
   - Data center registration with AES-256-GCM encrypted API key storage
   - Two-phase tenant provisioning (backoffice DB → DC API call, retry on failure)
   - Tenant suspend/activate with DC sync
   - Health poller (60s) monitors all registered data centers
   - Admin JWT auth with role-based access (viewer/admin/super_admin) + bcrypt login
+  - **Tenant user auth** (in-house replacement for Clerk): users, memberships, invitations, password_resets tables; HS256 JWT signed with `TENANT_JWT_SECRET` (same secret every DC uses to validate). Endpoints: `/api/v1/tenant-auth/{login,accept-invite,forgot-password,reset-password,me,switch-org,members,invites}`.
+  - **Transactional email** via Resend (`internal/mailer`): invitation emails with single-use tokens, password-reset emails with 1h expiry. Falls back to a noop logger if no API key (local dev).
   - Dashboard with DC health cards, cross-DC tenant management
   - Dockerfile: multi-stage (golang → distroless for API, node → nginx for web)
 - **CI/CD** — GitHub Actions with path-based filtering for all components (DC API, agent, tenant web, backoffice API, backoffice web, Terraform). Docker image verify builds. Smoke test with fallback.
@@ -321,7 +325,7 @@ Server sends WebSocket pings every 30s; agent responds with pong (60s timeout).
 - **Backoffice in prod project**: Runs as additional Cloud Run services in `silkstrand-prod` — not a separate GCP project. Uses second database on the same Cloud SQL instance ($0 extra). One backoffice manages all DCs (stage, prod, future regions).
 - **Two-phase tenant provisioning**: Create in backoffice DB first (provisioning_status=pending), then call DC API. On failure, mark as failed with retry option. Returns 202 (not 201) on DC provisioning failure.
 - **Credential encryption at rest**: AES-256-GCM with `CREDENTIAL_ENCRYPTION_KEY` env var. DC API decrypts before sending to agent. No encryption key = passthrough (dev only). Post-MVP: tenant-configurable credential sources (Vault, CyberArk, etc.).
-- **Dual-mode auth**: DC API supports both Clerk JWKS (RS256, production) and HMAC-SHA256 (dev). Controlled by `CLERK_JWKS_URL` env var — empty = dev mode. All JWKS crypto is stdlib-only (no external JWT libraries).
+- **In-house tenant auth over Clerk**: Replaced Clerk with bcrypt + HS256 JWTs. Rationale: B2B model with admin-managed invitations, small user counts, Clerk's embedded UI was too hard to customize (CSS hacks to hide "Leave organization", no server-side toggle), external dependency per sign-in, and we already had the Go auth plumbing for backoffice admins. DC API validates `TENANT_JWT_SECRET`-signed tokens; tenant frontend hits backoffice for `/api/v1/tenant-auth/*` (via nginx split) and DC for everything else. Multi-tenant membership is native (one user, many tenants) via the `memberships` table + `<TenantSwitcher />`.
 - **Stuck scan cleanup**: Running/pending scans automatically fail when agent disconnects.
 - **Upstash Redis over self-hosted Redis**: Eliminates idle cost. See `docs/adr/001-upstash-over-redis.md`.
 - **Artifact Registry over GHCR**: Cloud Run compatibility. Images at `us-central1-docker.pkg.dev/silkstrand-{env}/silkstrand/`.
@@ -428,7 +432,6 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT signing key |
 | `INTERNAL_API_KEY` | (none) | API key for backoffice access |
 | `CREDENTIAL_ENCRYPTION_KEY` | (none) | 64 hex chars (32 bytes) for AES-256-GCM |
-| `CLERK_JWKS_URL` | (none) | Clerk JWKS endpoint for production auth (empty = dev HMAC mode) |
 
 ### Backoffice API
 
@@ -436,8 +439,12 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 |----------|---------|-------------|
 | `PORT` | `8081` | Server port |
 | `DATABASE_URL` | `postgres://...localhost:15433/silkstrand_backoffice` | Postgres connection |
-| `JWT_SECRET` | `dev-secret-change-in-production` | Admin JWT signing key |
+| `JWT_SECRET` | `dev-secret-change-in-production` | Backoffice **admin** JWT signing key |
 | `ENCRYPTION_KEY` | (none) | 64 hex chars for DC API key encryption |
+| `TENANT_JWT_SECRET` | `dev-secret-change-in-production` | HS256 signing key for tenant user JWTs. Must match DC's `JWT_SECRET`. |
+| `RESEND_API_KEY` | (none) | Resend transactional email API key. Empty = noop mailer (logs to stdout). |
+| `FROM_EMAIL` | `SilkStrand <noreply@silkstrand.io>` | From address for invites / password resets |
+| `TENANT_WEB_URL` | `http://localhost:5173` | Base URL used to build invite / reset links in emails |
 
 ### Agent
 
@@ -459,13 +466,13 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 - `BACKOFFICE_JWT_SECRET` — Backoffice admin JWT signing key
 - `BACKOFFICE_ENCRYPTION_KEY` — AES-256 key for DC API key encryption in backoffice DB (64 hex chars)
 - `CREDENTIAL_ENCRYPTION_KEY_STAGE` / `CREDENTIAL_ENCRYPTION_KEY_PROD` — AES-256 key for credential encryption
+- `TENANT_JWT_SECRET` — HS256 signing key for tenant user JWTs. Shared: backoffice signs, every DC validates. `openssl rand -hex 32`.
+- `RESEND_API_KEY` — Resend API key for transactional email
 
 ### Variables
 - `WIF_PROVIDER_STAGE` / `WIF_PROVIDER_PROD` — Workload Identity Federation provider names
 - `WIF_SA_STAGE` / `WIF_SA_PROD` — GitHub Actions service account emails
 - `CLOUDFLARE_ZONE_ID` — Zone ID for silkstrand.io
-- `CLERK_JWKS_URL` — Clerk JWKS endpoint (set when Clerk is configured)
-- `VITE_CLERK_PUBLISHABLE_KEY` — Clerk publishable key for tenant frontend build
 
 ## Database Migrations
 
@@ -482,3 +489,6 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 | Migration | Description |
 |-----------|-------------|
 | 001_initial | data_centers, tenants, admin_users |
+| 002_dc_environment | environment column on data_centers (stage/prod) |
+| 003_clerk_org | clerk_org_id on tenants (kept for rollback; unused after Phase 6) |
+| 004_users_auth | users, memberships, invitations, password_resets (tenant auth) |

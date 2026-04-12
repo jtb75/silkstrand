@@ -374,3 +374,110 @@ func (h *TenantAuthHandler) issueJWTForTenant(w http.ResponseWriter, r *http.Req
 		},
 	})
 }
+
+// GET /api/v1/tenant-auth/members (authenticated)
+// Returns the list of users in the caller's active tenant.
+func (h *TenantAuthHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	members, err := h.store.ListTenantMembers(r.Context(), claims.TenantID)
+	if err != nil {
+		slog.Error("listing tenant members", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list members")
+		return
+	}
+	if members == nil {
+		members = []model.TenantMember{}
+	}
+	writeJSON(w, http.StatusOK, members)
+}
+
+// POST /api/v1/tenant-auth/invites (authenticated, admin-only)
+// Body: {email, role}
+func (h *TenantAuthHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if claims.Role != model.MembershipRoleAdmin {
+		writeError(w, http.StatusForbidden, "admin role required")
+		return
+	}
+
+	var req struct {
+		Email string `json:"email"`
+		Role  string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Email == "" {
+		writeError(w, http.StatusBadRequest, "email is required")
+		return
+	}
+	if req.Role != model.MembershipRoleAdmin && req.Role != model.MembershipRoleMember {
+		writeError(w, http.StatusBadRequest, "role must be 'admin' or 'member'")
+		return
+	}
+
+	tenant, err := h.store.GetTenant(r.Context(), claims.TenantID)
+	if err != nil || tenant == nil {
+		writeError(w, http.StatusInternalServerError, "tenant lookup failed")
+		return
+	}
+
+	plaintext, tokenHash, err := crypto.NewURLToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "token generation failed")
+		return
+	}
+	expiry := time.Now().Add(inviteExpiry)
+	if _, err := h.store.CreateInvitation(r.Context(), claims.TenantID, req.Email, req.Role, tokenHash, expiry, nil); err != nil {
+		slog.Error("creating invitation", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create invitation")
+		return
+	}
+	inviteURL := h.tenantWebURL + "/accept-invite?token=" + plaintext
+	if err := h.mailer.SendInvite(req.Email, inviteURL, tenant.Name); err != nil {
+		slog.Warn("sending invitation email", "error", err)
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"status": "created_but_email_failed",
+			"error":  err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "invited"})
+}
+
+// DELETE /api/v1/tenant-auth/members/{user_id} (authenticated, admin-only)
+func (h *TenantAuthHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetTenantClaims(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if claims.Role != model.MembershipRoleAdmin {
+		writeError(w, http.StatusForbidden, "admin role required")
+		return
+	}
+	userID := r.PathValue("user_id")
+	if userID == claims.Sub {
+		writeError(w, http.StatusBadRequest, "cannot remove yourself")
+		return
+	}
+	if err := h.store.DeleteMembership(r.Context(), userID, claims.TenantID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "membership not found")
+			return
+		}
+		slog.Error("removing member", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to remove member")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

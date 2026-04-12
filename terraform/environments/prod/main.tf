@@ -348,8 +348,10 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
       }
 
       env {
+        # Passed explicitly from the deploy workflow to avoid a Cloud Run
+        # service dependency cycle (backoffice → web → backoffice).
         name  = "TENANT_WEB_URL"
-        value = var.tenant_web_url != "" ? var.tenant_web_url : google_cloud_run_v2_service.web.uri
+        value = var.tenant_web_url
       }
 
       resources {
@@ -495,6 +497,11 @@ resource "google_cloud_run_v2_service" "web" {
       env {
         name  = "SILKSTRAND_API_URL"
         value = module.cloud_run.service_url
+      }
+
+      env {
+        name  = "BACKOFFICE_API_URL"
+        value = google_cloud_run_v2_service.backoffice_api.uri
       }
 
       resources {

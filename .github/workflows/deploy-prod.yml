@@ -92,7 +92,6 @@ jobs:
         run: |
           SHA=${{ needs.validate-tag.outputs.sha }}
           docker build \
-            --build-arg VITE_CLERK_PUBLISHABLE_KEY="${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}" \
             -t ${{ env.GAR_REGISTRY }}/web:sha-${SHA} \
             -t ${{ env.GAR_REGISTRY }}/web:latest \
             -f web/Dockerfile web/
@@ -187,6 +186,7 @@ jobs:
             -var="web_image=${{ env.GAR_REGISTRY }}/web:sha-${SHA}" \
             -var="tenant_jwt_secret=${{ secrets.TENANT_JWT_SECRET }}" \
             -var="resend_api_key=${{ secrets.RESEND_API_KEY }}" \
+            -var="tenant_web_url=https://silkstrand-web-baglom43cq-uc.a.run.app" \
             -var="bootstrap_admin_email=${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}" \
             -var="bootstrap_admin_password=${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}" \
             -var="clerk_secret_key=${{ secrets.CLERK_SECRET_KEY }}" \

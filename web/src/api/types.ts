@@ -67,3 +67,28 @@ export interface Bundle {
   framework: string;
   target_type: string;
 }
+
+// Auth / memberships
+
+export interface User {
+  id: string;
+  email: string;
+  last_login_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Membership {
+  tenant_id: string;
+  tenant_name: string;
+  dc_id: string;
+  dc_api_url: string;
+  role: 'admin' | 'member';
+}
+
+export interface ActiveTenant {
+  tenant_id: string;
+  data_center_id?: string;
+  dc_id?: string;
+  role: 'admin' | 'member';
+}

@@ -68,6 +68,14 @@ type Membership struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// TenantMember is a joined view of memberships + users for the Team page.
+type TenantMember struct {
+	UserID    string    `json:"user_id"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // MembershipSummary is what we return to the tenant frontend so it knows
 // which tenants a user can switch between and where each one lives.
 type MembershipSummary struct {
