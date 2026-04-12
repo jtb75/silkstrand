@@ -3,6 +3,7 @@ package cache
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io"
@@ -17,11 +18,13 @@ var ErrNotCached = errors.New("bundle not cached")
 // Cache manages local storage of compliance bundles.
 type Cache struct {
 	bundleDir string
+	publicKey ed25519.PublicKey // if nil, signature verification is skipped (dev mode)
 }
 
 // New creates a new Cache rooted at bundleDir.
-func New(bundleDir string) *Cache {
-	return &Cache{bundleDir: bundleDir}
+// If publicKey is nil, signature verification is disabled (local dev only).
+func New(bundleDir string, publicKey ed25519.PublicKey) *Cache {
+	return &Cache{bundleDir: bundleDir, publicKey: publicKey}
 }
 
 // Get returns the path to a cached bundle directory. It checks two layouts:
@@ -33,16 +36,48 @@ func (c *Cache) Get(bundleName, version string) (string, error) {
 	// Check versioned layout first
 	versionedPath := filepath.Join(c.bundleDir, bundleName, version)
 	if _, err := os.Stat(filepath.Join(versionedPath, "manifest.yaml")); err == nil {
+		if err := c.verify(versionedPath); err != nil {
+			return "", err
+		}
 		return versionedPath, nil
 	}
 
 	// Check flat layout (local dev convenience)
 	flatPath := filepath.Join(c.bundleDir, bundleName)
 	if _, err := os.Stat(filepath.Join(flatPath, "manifest.yaml")); err == nil {
+		if err := c.verify(flatPath); err != nil {
+			return "", err
+		}
 		return flatPath, nil
 	}
 
 	return "", ErrNotCached
+}
+
+// verify checks the Ed25519 signature of a bundle's manifest.
+// If no public key is configured, verification is skipped (dev mode).
+func (c *Cache) verify(bundlePath string) error {
+	if c.publicKey == nil {
+		return nil // dev mode — no verification
+	}
+
+	sigPath := filepath.Join(bundlePath, "signature.sig")
+	sig, err := os.ReadFile(sigPath)
+	if err != nil {
+		return fmt.Errorf("bundle missing signature file: %w", err)
+	}
+
+	manifestPath := filepath.Join(bundlePath, "manifest.yaml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("reading manifest for verification: %w", err)
+	}
+
+	if !ed25519.Verify(c.publicKey, manifest, sig) {
+		return fmt.Errorf("bundle signature verification failed")
+	}
+
+	return nil
 }
 
 // Store extracts a .tar.gz bundle archive into the cache at {bundleDir}/{bundleName}/{version}/.
