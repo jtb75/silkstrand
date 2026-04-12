@@ -12,6 +12,8 @@ const statusStyles: Record<string, { bg: string; color: string }> = {
   offline: { bg: '#fee2e2', color: '#991b1b' },
   suspended: { bg: '#fee2e2', color: '#991b1b' },
   failed: { bg: '#fee2e2', color: '#991b1b' },
+  unhealthy: { bg: '#fee2e2', color: '#991b1b' },
+  unknown: { bg: '#e5e7eb', color: '#4b5563' },
 };
 
 export default function StatusBadge({ status }: StatusBadgeProps) {
