@@ -16,6 +16,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/jtb75/silkstrand/backoffice/internal/clerkclient"
 	"github.com/jtb75/silkstrand/backoffice/internal/config"
 	"github.com/jtb75/silkstrand/backoffice/internal/crypto"
 	"github.com/jtb75/silkstrand/backoffice/internal/dcclient"
@@ -59,13 +60,19 @@ func run() error {
 		return fmt.Errorf("bootstrapping admin: %w", err)
 	}
 
-	// DC client
+	// DC and Clerk clients
 	dcClient := dcclient.New()
+	clerkClient := clerkclient.New(cfg.ClerkSecretKey)
+	if cfg.ClerkSecretKey != "" {
+		slog.Info("Clerk integration enabled")
+	} else {
+		slog.Info("Clerk integration disabled (no CLERK_SECRET_KEY)")
+	}
 
 	// Handlers
 	healthH := handler.NewHealthHandler(pgStore, dcClient, cfg.EncryptionKey)
 	dcH := handler.NewDataCenterHandler(pgStore, dcClient, cfg.EncryptionKey)
-	tenantH := handler.NewTenantHandler(pgStore, dcClient, cfg.EncryptionKey)
+	tenantH := handler.NewTenantHandler(pgStore, dcClient, clerkClient, cfg.EncryptionKey)
 	authH := handler.NewAuthHandler(pgStore, cfg.JWTSecret)
 
 	// Router

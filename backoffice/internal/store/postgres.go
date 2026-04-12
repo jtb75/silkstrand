@@ -147,7 +147,7 @@ func (s *PostgresStore) UpdateDataCenterHealth(ctx context.Context, id string, s
 
 func (s *PostgresStore) ListTenants(ctx context.Context) ([]model.Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, created_at, updated_at
+		`SELECT id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, clerk_org_id, created_at, updated_at
 		 FROM tenants ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing tenants: %w", err)
@@ -158,7 +158,7 @@ func (s *PostgresStore) ListTenants(ctx context.Context) ([]model.Tenant, error)
 	for rows.Next() {
 		var t model.Tenant
 		if err := rows.Scan(&t.ID, &t.DCTenantID, &t.DataCenterID, &t.Name, &t.Status, &t.Config,
-			&t.ProvisioningStatus, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			&t.ProvisioningStatus, &t.ClerkOrgID, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning tenant: %w", err)
 		}
 		tenants = append(tenants, t)
@@ -169,10 +169,10 @@ func (s *PostgresStore) ListTenants(ctx context.Context) ([]model.Tenant, error)
 func (s *PostgresStore) GetTenant(ctx context.Context, id string) (*model.Tenant, error) {
 	var t model.Tenant
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, created_at, updated_at
+		`SELECT id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, clerk_org_id, created_at, updated_at
 		 FROM tenants WHERE id = $1`, id).
 		Scan(&t.ID, &t.DCTenantID, &t.DataCenterID, &t.Name, &t.Status, &t.Config,
-			&t.ProvisioningStatus, &t.CreatedAt, &t.UpdatedAt)
+			&t.ProvisioningStatus, &t.ClerkOrgID, &t.CreatedAt, &t.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -192,10 +192,10 @@ func (s *PostgresStore) CreateTenant(ctx context.Context, t model.Tenant) (*mode
 	err := s.db.QueryRowContext(ctx,
 		`INSERT INTO tenants (data_center_id, name, config, provisioning_status)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, created_at, updated_at`,
+		 RETURNING id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, clerk_org_id, created_at, updated_at`,
 		t.DataCenterID, t.Name, cfg, model.ProvisioningPending).
 		Scan(&created.ID, &created.DCTenantID, &created.DataCenterID, &created.Name, &created.Status, &created.Config,
-			&created.ProvisioningStatus, &created.CreatedAt, &created.UpdatedAt)
+			&created.ProvisioningStatus, &created.ClerkOrgID, &created.CreatedAt, &created.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("creating tenant: %w", err)
 	}
@@ -222,10 +222,10 @@ func (s *PostgresStore) UpdateTenant(ctx context.Context, id string, name *strin
 	err = s.db.QueryRowContext(ctx,
 		`UPDATE tenants SET name = $1, config = $2, updated_at = NOW()
 		 WHERE id = $3
-		 RETURNING id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, created_at, updated_at`,
+		 RETURNING id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, clerk_org_id, created_at, updated_at`,
 		existing.Name, existing.Config, id).
 		Scan(&updated.ID, &updated.DCTenantID, &updated.DataCenterID, &updated.Name, &updated.Status, &updated.Config,
-			&updated.ProvisioningStatus, &updated.CreatedAt, &updated.UpdatedAt)
+			&updated.ProvisioningStatus, &updated.ClerkOrgID, &updated.CreatedAt, &updated.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("updating tenant: %w", err)
 	}
@@ -237,6 +237,19 @@ func (s *PostgresStore) UpdateTenantStatus(ctx context.Context, id string, statu
 		`UPDATE tenants SET status = $1, updated_at = NOW() WHERE id = $2`, status, id)
 	if err != nil {
 		return fmt.Errorf("updating tenant status: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("tenant not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdateTenantClerkOrg(ctx context.Context, id string, clerkOrgID *string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE tenants SET clerk_org_id = $1, updated_at = NOW() WHERE id = $2`, clerkOrgID, id)
+	if err != nil {
+		return fmt.Errorf("updating tenant clerk_org_id: %w", err)
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
@@ -261,7 +274,7 @@ func (s *PostgresStore) UpdateTenantProvisioning(ctx context.Context, id string,
 
 func (s *PostgresStore) ListTenantsByDataCenter(ctx context.Context, dcID string) ([]model.Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, created_at, updated_at
+		`SELECT id, dc_tenant_id, data_center_id, name, status, config, provisioning_status, clerk_org_id, created_at, updated_at
 		 FROM tenants WHERE data_center_id = $1 ORDER BY created_at DESC`, dcID)
 	if err != nil {
 		return nil, fmt.Errorf("listing tenants by data center: %w", err)
@@ -272,7 +285,7 @@ func (s *PostgresStore) ListTenantsByDataCenter(ctx context.Context, dcID string
 	for rows.Next() {
 		var t model.Tenant
 		if err := rows.Scan(&t.ID, &t.DCTenantID, &t.DataCenterID, &t.Name, &t.Status, &t.Config,
-			&t.ProvisioningStatus, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			&t.ProvisioningStatus, &t.ClerkOrgID, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning tenant: %w", err)
 		}
 		tenants = append(tenants, t)

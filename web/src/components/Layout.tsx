@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import { useOrganization } from '@clerk/clerk-react';
 import { hasDevToken, clearToken } from '../api/client';
 import './Layout.css';
 
@@ -15,6 +16,7 @@ export default function Layout() {
           </NavLink>
           <NavLink to="/targets">Targets</NavLink>
           <NavLink to="/scans">Scans</NavLink>
+          {isClerkMode && <AdminOnlyTeamLink />}
         </nav>
       </aside>
       <div className="main-area">
@@ -46,4 +48,15 @@ export default function Layout() {
       </div>
     </div>
   );
+}
+
+// AdminOnlyTeamLink renders the Team nav link only for users with the admin
+// role in their current organization. Uses Clerk's useOrganization hook.
+function AdminOnlyTeamLink() {
+  const { membership, isLoaded } = useOrganization();
+  if (!isLoaded) return null;
+  if (membership?.role !== 'admin' && membership?.role !== 'org:admin') {
+    return null;
+  }
+  return <NavLink to="/team">Team</NavLink>;
 }

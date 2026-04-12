@@ -47,6 +47,18 @@ variable "internal_api_key" {
   default     = ""
 }
 
+variable "clerk_jwks_url" {
+  description = "Clerk JWKS endpoint URL. When set, API validates Clerk JWTs via JWKS; otherwise HMAC-SHA256 (dev) is used."
+  type        = string
+  default     = ""
+}
+
+variable "clerk_issuer_url" {
+  description = "Expected issuer (iss) claim for Clerk JWTs"
+  type        = string
+  default     = ""
+}
+
 variable "image" {
   description = "Container image to deploy. Use a placeholder for initial creation."
   type        = string
@@ -149,6 +161,16 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "INTERNAL_API_KEY"
         value = var.internal_api_key
+      }
+
+      env {
+        name  = "CLERK_JWKS_URL"
+        value = var.clerk_jwks_url
+      }
+
+      env {
+        name  = "CLERK_ISSUER_URL"
+        value = var.clerk_issuer_url
       }
 
       resources {

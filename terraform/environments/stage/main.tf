@@ -77,6 +77,18 @@ variable "internal_api_key" {
   default     = ""
 }
 
+variable "clerk_jwks_url" {
+  description = "Clerk JWKS endpoint URL"
+  type        = string
+  default     = ""
+}
+
+variable "clerk_issuer_url" {
+  description = "Expected issuer (iss) claim for Clerk JWTs"
+  type        = string
+  default     = ""
+}
+
 variable "image" {
   description = "Container image for the API (passed from CI on deploy)"
   type        = string
@@ -126,6 +138,8 @@ module "cloud_run" {
   redis_url          = var.redis_url
   jwt_secret         = var.jwt_secret
   internal_api_key   = var.internal_api_key
+  clerk_jwks_url     = var.clerk_jwks_url
+  clerk_issuer_url   = var.clerk_issuer_url
   min_instances      = 0
   max_instances      = 2
 }

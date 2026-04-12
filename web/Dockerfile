@@ -1,6 +1,9 @@
 # Build stage
 FROM node:20-alpine AS builder
 
+ARG VITE_CLERK_PUBLISHABLE_KEY=""
+ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./

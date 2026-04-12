@@ -13,6 +13,7 @@ type Config struct {
 	EncryptionKey          []byte // 32 bytes for AES-256-GCM
 	BootstrapAdminEmail    string // If set with password, create admin on first startup
 	BootstrapAdminPassword string
+	ClerkSecretKey         string // If set, backoffice auto-creates Clerk orgs for tenants
 }
 
 func Load() (*Config, error) {
@@ -35,6 +36,7 @@ func Load() (*Config, error) {
 		EncryptionKey:          encKey,
 		BootstrapAdminEmail:    getEnv("BOOTSTRAP_ADMIN_EMAIL", ""),
 		BootstrapAdminPassword: getEnv("BOOTSTRAP_ADMIN_PASSWORD", ""),
+		ClerkSecretKey:         getEnv("CLERK_SECRET_KEY", ""),
 	}
 
 	if getEnv("ENV", "dev") == "production" {

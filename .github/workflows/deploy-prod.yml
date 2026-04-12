@@ -91,7 +91,11 @@ jobs:
         if: hashFiles('web/Dockerfile') != ''
         run: |
           SHA=${{ needs.validate-tag.outputs.sha }}
-          docker build -t ${{ env.GAR_REGISTRY }}/web:sha-${SHA} -t ${{ env.GAR_REGISTRY }}/web:latest -f web/Dockerfile web/
+          docker build \
+            --build-arg VITE_CLERK_PUBLISHABLE_KEY="${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}" \
+            -t ${{ env.GAR_REGISTRY }}/web:sha-${SHA} \
+            -t ${{ env.GAR_REGISTRY }}/web:latest \
+            -f web/Dockerfile web/
           docker push ${{ env.GAR_REGISTRY }}/web:sha-${SHA}
           docker push ${{ env.GAR_REGISTRY }}/web:latest
 
@@ -181,7 +185,10 @@ jobs:
             -var="backoffice_api_image=${{ env.GAR_REGISTRY }}/backoffice-api:sha-${SHA}" \
             -var="backoffice_web_image=${{ env.GAR_REGISTRY }}/backoffice-web:sha-${SHA}" \
             -var="bootstrap_admin_email=${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}" \
-            -var="bootstrap_admin_password=${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}"
+            -var="bootstrap_admin_password=${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}" \
+            -var="clerk_secret_key=${{ secrets.CLERK_SECRET_KEY }}" \
+            -var="clerk_jwks_url=${{ vars.CLERK_JWKS_URL }}" \
+            -var="clerk_issuer_url=${{ vars.CLERK_ISSUER_URL }}"
 
   smoke-test:
     name: Smoke Test (Prod)

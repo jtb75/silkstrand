@@ -23,6 +23,7 @@ type Store interface {
 	UpdateTenant(ctx context.Context, id string, name *string, config []byte) (*model.Tenant, error)
 	UpdateTenantStatus(ctx context.Context, id string, status string) error
 	UpdateTenantProvisioning(ctx context.Context, id string, provStatus string, dcTenantID *string) error
+	UpdateTenantClerkOrg(ctx context.Context, id string, clerkOrgID *string) error
 	ListTenantsByDataCenter(ctx context.Context, dcID string) ([]model.Tenant, error)
 
 	// Admin Users
