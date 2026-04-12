@@ -346,11 +346,6 @@ func generateAgentKey() (raw string, hash string, err error) {
 	return rawKey, hex.EncodeToString(h[:]), nil
 }
 
-func hashKey(key string) string {
-	h := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(h[:])
-}
-
 // CreateAgent creates a new agent record and returns the agent + raw API key (shown once).
 func (s *PostgresStore) CreateAgent(ctx context.Context, req model.CreateAgentRequest) (*model.Agent, string, error) {
 	rawKey, keyHash, err := generateAgentKey()
