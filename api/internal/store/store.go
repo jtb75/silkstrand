@@ -43,6 +43,24 @@ type Store interface {
 
 	// Credentials
 	GetCredentialsByTarget(ctx context.Context, targetID string) (json.RawMessage, error)
+	CreateCredential(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) (string, error)
+
+	// Tenants (internal, not tenant-scoped)
+	CreateTenant(ctx context.Context, name string) (*model.Tenant, error)
+	ListAllTenants(ctx context.Context) ([]model.Tenant, error)
+	GetTenantByID(ctx context.Context, id string) (*model.Tenant, error)
+	UpdateTenantStatus(ctx context.Context, id string, status string) error
+	UpdateTenantConfig(ctx context.Context, id string, config json.RawMessage) error
+	UpdateTenantName(ctx context.Context, id string, name string) error
+
+	// Agents (internal, cross-tenant)
+	ListAllAgents(ctx context.Context) ([]model.Agent, error)
+
+	// Scans (internal)
+	FailRunningScansForAgent(ctx context.Context, agentID string) (int, error)
+
+	// Stats
+	GetDCStats(ctx context.Context) (*model.DCStats, error)
 
 	// Health
 	Ping(ctx context.Context) error

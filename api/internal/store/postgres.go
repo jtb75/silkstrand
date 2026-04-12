@@ -453,3 +453,154 @@ func (s *PostgresStore) GetCredentialsByTarget(ctx context.Context, targetID str
 	}
 	return json.RawMessage(data), nil
 }
+
+func (s *PostgresStore) CreateCredential(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO credentials (tenant_id, target_id, type, encrypted_data)
+		 VALUES ($1, $2, $3, $4) RETURNING id`,
+		tenantID, targetID, credType, encryptedData).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("creating credential: %w", err)
+	}
+	return id, nil
+}
+
+// --- Scans (internal) ---
+
+func (s *PostgresStore) FailRunningScansForAgent(ctx context.Context, agentID string) (int, error) {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE scans SET status = $1, completed_at = NOW()
+		 WHERE agent_id = $2 AND status IN ($3, $4)`,
+		model.ScanStatusFailed, agentID, model.ScanStatusPending, model.ScanStatusRunning)
+	if err != nil {
+		return 0, fmt.Errorf("failing running scans for agent: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	return int(rows), nil
+}
+
+// --- Tenants (internal, not tenant-scoped) ---
+
+func (s *PostgresStore) CreateTenant(ctx context.Context, name string) (*model.Tenant, error) {
+	var t model.Tenant
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO tenants (name) VALUES ($1)
+		 RETURNING id, name, status, config, created_at`, name).
+		Scan(&t.ID, &t.Name, &t.Status, &t.Config, &t.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("creating tenant: %w", err)
+	}
+	return &t, nil
+}
+
+func (s *PostgresStore) ListAllTenants(ctx context.Context) ([]model.Tenant, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, name, status, config, created_at FROM tenants ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("listing tenants: %w", err)
+	}
+	defer rows.Close()
+
+	var tenants []model.Tenant
+	for rows.Next() {
+		var t model.Tenant
+		if err := rows.Scan(&t.ID, &t.Name, &t.Status, &t.Config, &t.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning tenant: %w", err)
+		}
+		tenants = append(tenants, t)
+	}
+	return tenants, rows.Err()
+}
+
+func (s *PostgresStore) GetTenantByID(ctx context.Context, id string) (*model.Tenant, error) {
+	var t model.Tenant
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, name, status, config, created_at FROM tenants WHERE id = $1`, id).
+		Scan(&t.ID, &t.Name, &t.Status, &t.Config, &t.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting tenant by id: %w", err)
+	}
+	return &t, nil
+}
+
+func (s *PostgresStore) UpdateTenantStatus(ctx context.Context, id string, status string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE tenants SET status = $1 WHERE id = $2`, status, id)
+	if err != nil {
+		return fmt.Errorf("updating tenant status: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("tenant not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdateTenantConfig(ctx context.Context, id string, config json.RawMessage) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE tenants SET config = $1 WHERE id = $2`, config, id)
+	if err != nil {
+		return fmt.Errorf("updating tenant config: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("tenant not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdateTenantName(ctx context.Context, id string, name string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE tenants SET name = $1 WHERE id = $2`, name, id)
+	if err != nil {
+		return fmt.Errorf("updating tenant name: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("tenant not found")
+	}
+	return nil
+}
+
+// --- Agents (internal, cross-tenant) ---
+
+func (s *PostgresStore) ListAllAgents(ctx context.Context) ([]model.Agent, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, name, status, last_heartbeat, version, key_hash, next_key_hash, key_rotated_at, created_at
+		 FROM agents ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("listing all agents: %w", err)
+	}
+	defer rows.Close()
+
+	var agents []model.Agent
+	for rows.Next() {
+		var a model.Agent
+		if err := rows.Scan(&a.ID, &a.TenantID, &a.Name, &a.Status, &a.LastHeartbeat, &a.Version,
+			&a.KeyHash, &a.NextKeyHash, &a.KeyRotatedAt, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning agent: %w", err)
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// --- Stats ---
+
+func (s *PostgresStore) GetDCStats(ctx context.Context) (*model.DCStats, error) {
+	var stats model.DCStats
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tenants WHERE status = $1`, model.TenantStatusActive).Scan(&stats.TenantCount)
+	if err != nil {
+		return nil, fmt.Errorf("counting tenants: %w", err)
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents`).Scan(&stats.AgentCount)
+	if err != nil {
+		return nil, fmt.Errorf("counting agents: %w", err)
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM scans`).Scan(&stats.ScanCount)
+	if err != nil {
+		return nil, fmt.Errorf("counting scans: %w", err)
+	}
+	return &stats, nil
+}

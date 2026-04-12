@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	"github.com/jtb75/silkstrand/api/internal/crypto"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -16,17 +18,18 @@ import (
 )
 
 type AgentHandler struct {
-	hub   *websocket.Hub
-	store store.Store
-	ps    *pubsub.PubSub
+	hub     *websocket.Hub
+	store   store.Store
+	ps      *pubsub.PubSub
+	credKey []byte
 }
 
-func NewAgentHandler(hub *websocket.Hub, s store.Store, ps *pubsub.PubSub) *AgentHandler {
-	return &AgentHandler{hub: hub, store: s, ps: ps}
+func NewAgentHandler(hub *websocket.Hub, s store.Store, ps *pubsub.PubSub, credKey []byte) *AgentHandler {
+	return &AgentHandler{hub: hub, store: s, ps: ps, credKey: credKey}
 }
 
 // Connect handles the WebSocket upgrade for agent connections.
-// Validates the agent key before upgrading to WebSocket.
+// Validates the agent key and tenant status before upgrading to WebSocket.
 func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	agentID := r.URL.Query().Get("agent_id")
 	if agentID == "" {
@@ -62,6 +65,19 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("agent authenticated", "agent_id", agentID, "tenant_id", agent.TenantID)
 
+	// Check tenant status — reject agents for suspended tenants
+	tenant, err := h.store.GetTenantByID(r.Context(), agent.TenantID)
+	if err != nil {
+		slog.Error("looking up tenant for agent", "tenant_id", agent.TenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if tenant == nil || tenant.Status != model.TenantStatusActive {
+		slog.Warn("agent rejected: tenant not active", "agent_id", agentID, "tenant_id", agent.TenantID)
+		writeError(w, http.StatusForbidden, "tenant suspended")
+		return
+	}
+
 	// Start Redis subscription for this agent's directives
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -80,9 +96,15 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("agent connection failed", "agent_id", agentID, "error", err)
 	}
 
-	// Agent disconnected — update status
+	// Agent disconnected — update status and fail any in-progress scans
 	if err := h.store.UpdateAgentStatus(context.Background(), agentID, model.AgentStatusDisconnected); err != nil {
 		slog.Error("updating agent status on disconnect", "agent_id", agentID, "error", err)
+	}
+
+	if count, err := h.store.FailRunningScansForAgent(context.Background(), agentID); err != nil {
+		slog.Error("failing scans on agent disconnect", "agent_id", agentID, "error", err)
+	} else if count > 0 {
+		slog.Warn("failed scans due to agent disconnect", "agent_id", agentID, "count", count)
 	}
 
 	slog.Info("agent disconnected", "agent_id", agentID)
@@ -120,8 +142,20 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 		return
 	}
 
-	// Look up credentials (may be nil)
-	creds, _ := h.store.GetCredentialsByTarget(ctx, d.TargetID)
+	// Look up and decrypt credentials (may be nil)
+	var creds json.RawMessage
+	encryptedCreds, _ := h.store.GetCredentialsByTarget(ctx, d.TargetID)
+	if encryptedCreds != nil && len(h.credKey) > 0 {
+		decrypted, err := crypto.Decrypt(encryptedCreds, h.credKey)
+		if err != nil {
+			slog.Error("decrypting credentials for directive", "target_id", d.TargetID, "error", err)
+		} else {
+			creds = json.RawMessage(decrypted)
+		}
+	} else if encryptedCreds != nil {
+		// No encryption key configured — pass through as-is (local dev)
+		creds = encryptedCreds
+	}
 
 	// Build enriched directive message
 	msg := websocket.NewDirectiveMessage(
@@ -148,12 +182,10 @@ func verifyAgentKey(key string, agent *model.Agent) bool {
 	h := sha256.Sum256([]byte(key))
 	keyHash := hex.EncodeToString(h[:])
 
-	// Check primary key
 	if agent.KeyHash != "" && constantTimeEqual(keyHash, agent.KeyHash) {
 		return true
 	}
 
-	// Check rotation key
 	if agent.NextKeyHash != nil && *agent.NextKeyHash != "" && constantTimeEqual(keyHash, *agent.NextKeyHash) {
 		return true
 	}

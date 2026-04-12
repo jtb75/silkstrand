@@ -25,5 +25,22 @@ services:
       timeout: 5s
       retries: 5
 
+  postgres-backoffice:
+    image: postgres:16-alpine
+    ports:
+      - "15433:5432"
+    environment:
+      POSTGRES_DB: silkstrand_backoffice
+      POSTGRES_USER: silkstrand
+      POSTGRES_PASSWORD: localdev
+    volumes:
+      - pgdata-backoffice:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U silkstrand"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   pgdata:
+  pgdata-backoffice:
