@@ -1,10 +1,10 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { hasToken, clearToken } from '../api/client';
+import { hasDevToken, clearToken } from '../api/client';
 import './Layout.css';
 
-export default function Layout() {
-  const authenticated = hasToken();
+const isClerkMode = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
+export default function Layout() {
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -20,23 +20,25 @@ export default function Layout() {
       <div className="main-area">
         <header className="topbar">
           <span>CIS Compliance Scanner</span>
-          <span className="topbar-token-status">
-            {authenticated ? (
-              <>
-                Token set
-                <button
-                  onClick={() => {
-                    clearToken();
-                    window.location.reload();
-                  }}
-                >
-                  Clear
-                </button>
-              </>
-            ) : (
-              'No auth token'
-            )}
-          </span>
+          {!isClerkMode && (
+            <span className="topbar-token-status">
+              {hasDevToken() ? (
+                <>
+                  Dev token set
+                  <button
+                    onClick={() => {
+                      clearToken();
+                      window.location.reload();
+                    }}
+                  >
+                    Clear
+                  </button>
+                </>
+              ) : (
+                'No auth token'
+              )}
+            </span>
+          )}
         </header>
         <main className="content">
           <Outlet />

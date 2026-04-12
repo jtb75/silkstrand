@@ -5,15 +5,16 @@ dev-deps:
 	docker compose up -d
 
 # Run the API server locally (requires dev-deps)
+# Loads api/.env.local if present for Clerk and other config
 run:
-	cd api && go run ./cmd/silkstrand-api/
+	cd api && if [ -f .env.local ]; then set -a && . ./.env.local && set +a; fi && go run ./cmd/silkstrand-api/
 
 # Start everything for local development
 dev: dev-deps
 	@echo "Waiting for Postgres..."
 	@until docker compose exec -T postgres pg_isready -U silkstrand > /dev/null 2>&1; do sleep 1; done
 	@echo "Dependencies ready. Starting API..."
-	cd api && go run ./cmd/silkstrand-api/
+	cd api && if [ -f .env.local ]; then set -a && . ./.env.local && set +a; fi && go run ./cmd/silkstrand-api/
 
 # Build the API binary
 build:
