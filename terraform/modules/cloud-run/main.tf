@@ -65,6 +65,12 @@ variable "image" {
   default     = "gcr.io/cloudrun/hello"
 }
 
+variable "allowed_origins" {
+  description = "Comma-separated list of allowed CORS / WebSocket origins. Empty disables CORS."
+  type        = string
+  default     = ""
+}
+
 variable "min_instances" {
   type    = number
   default = 0
@@ -171,6 +177,11 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "CLERK_ISSUER_URL"
         value = var.clerk_issuer_url
+      }
+
+      env {
+        name  = "ALLOWED_ORIGINS"
+        value = var.allowed_origins
       }
 
       resources {

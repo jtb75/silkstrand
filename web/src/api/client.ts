@@ -5,8 +5,15 @@ import type {
   Scan,
 } from './types';
 
-const BASE_URL = import.meta.env.VITE_API_URL || '';
+// DC API base URL is resolved at call time from the active tenant context.
+// In prod, each tenant lives on a specific DC (possibly different from the
+// one the frontend was deployed alongside); using the active DC URL means
+// the tenant frontend works for tenants in any region.
+//
+// For local dev (or if no DC URL is set yet), fall back to '' which means
+// same-origin (nginx proxy).
 const TOKEN_KEY = 'silkstrand_token';
+const DC_URL_KEY = 'silkstrand_dc_api_url';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -18,6 +25,16 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(DC_URL_KEY);
+}
+
+export function setDCApiURL(url: string | null | undefined): void {
+  if (url) localStorage.setItem(DC_URL_KEY, url);
+  else localStorage.removeItem(DC_URL_KEY);
+}
+
+function dcBaseURL(): string {
+  return localStorage.getItem(DC_URL_KEY) || import.meta.env.VITE_API_URL || '';
 }
 
 export function hasToken(): boolean {
@@ -41,7 +58,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers });
+  const res = await fetch(`${dcBaseURL()}${path}`, { ...init, headers });
 
   if (res.status === 401) {
     clearToken();

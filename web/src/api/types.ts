@@ -90,5 +90,6 @@ export interface ActiveTenant {
   tenant_id: string;
   data_center_id?: string;
   dc_id?: string;
+  dc_api_url?: string; // Base URL for the DC API serving this tenant
   role: 'admin' | 'member';
 }

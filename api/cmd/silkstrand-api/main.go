@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -115,10 +116,13 @@ func run() error {
 	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))
 	mux.Handle("/api/", authedAPI)
 
-	// Apply logging to all routes
+	// Apply CORS + logging to all routes. CORS must be outermost so that
+	// OPTIONS preflight replies carry the Access-Control-* headers and
+	// aren't swallowed by auth middleware.
+	corsOrigins := strings.Join(cfg.AllowedOrigins, ",")
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      middleware.Logging(mux),
+		Handler:      middleware.CORS(corsOrigins)(middleware.Logging(mux)),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
