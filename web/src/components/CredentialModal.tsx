@@ -2,6 +2,12 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { getTargetCredential, putTargetCredential, deleteTargetCredential } from '../api/client';
 import type { Target } from '../api/types';
 
+// Database engines all use the same {username, password} credential shape.
+function isDatabaseType(t: string): boolean {
+  return ['postgresql', 'aurora_postgresql', 'mssql', 'mongodb',
+          'mysql', 'aurora_mysql', 'database'].includes(t);
+}
+
 /**
  * Modal for setting/updating a credential on a single target. Credentials
  * are encrypted at rest; the ciphertext is never exposed to the UI —
@@ -42,7 +48,7 @@ export default function CredentialModal({
     try {
       let type: string;
       let data: Record<string, unknown>;
-      if (target.type === 'database') {
+      if (isDatabaseType(target.type)) {
         if (!dbUser || !dbPass) throw new Error('Username and password are required.');
         type = 'database';
         data = { username: dbUser, password: dbPass };
@@ -89,7 +95,7 @@ export default function CredentialModal({
         </p>
 
         <form onSubmit={save}>
-          {target.type === 'database' ? (
+          {isDatabaseType(target.type) ? (
             <>
               <label>Username
                 <input
