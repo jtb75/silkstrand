@@ -1,5 +1,5 @@
 name: cis-postgresql-16
-version: 1.0.0
+version: 2.0.0
 framework: python
 runtime_version: ">=3.9"
 target_type: database
