@@ -178,6 +178,7 @@ jobs:
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_PROD }}" \
             -var="jwt_secret=${{ secrets.TENANT_JWT_SECRET }}" \
             -var="internal_api_key=${{ secrets.INTERNAL_API_KEY_PROD }}" \
+            -var="credential_encryption_key=${{ secrets.CREDENTIAL_ENCRYPTION_KEY_PROD }}" \
             -var="backoffice_jwt_secret=${{ secrets.BACKOFFICE_JWT_SECRET }}" \
             -var="backoffice_encryption_key=${{ secrets.BACKOFFICE_ENCRYPTION_KEY }}" \
             -var="image=${{ env.GAR_REGISTRY }}/api:sha-${SHA}" \

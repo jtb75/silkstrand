@@ -47,6 +47,12 @@ variable "internal_api_key" {
   default     = ""
 }
 
+variable "credential_encryption_key" {
+  description = "AES-256 key (64 hex chars) for encrypting target credentials at rest. Stored in Secret Manager and mounted via secret_key_ref."
+  type        = string
+  sensitive   = true
+}
+
 variable "image" {
   description = "Container image to deploy. Use a placeholder for initial creation."
   type        = string
@@ -67,6 +73,24 @@ variable "min_instances" {
 variable "max_instances" {
   type    = number
   default = 2
+}
+
+# Secret Manager — credential encryption key.
+# Mounted into Cloud Run via secret_key_ref so the value never appears in
+# `gcloud run services describe` output. Rotation: add a new
+# secret_version, then redeploy (or wait for the next deploy).
+resource "google_secret_manager_secret" "credential_encryption_key" {
+  project   = var.project_id
+  secret_id = "credential-encryption-key-${var.environment}"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "credential_encryption_key" {
+  secret      = google_secret_manager_secret.credential_encryption_key.id
+  secret_data = var.credential_encryption_key
 }
 
 # Service account for Cloud Run
@@ -170,6 +194,16 @@ resource "google_cloud_run_v2_service" "api" {
         value = var.allowed_origins
       }
 
+      env {
+        name = "CREDENTIAL_ENCRYPTION_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.credential_encryption_key.secret_id
+            version = "latest"
+          }
+        }
+      }
+
       resources {
         cpu_idle = true
         limits = {
@@ -200,6 +234,10 @@ resource "google_cloud_run_v2_service" "api" {
       }
     }
   }
+
+  # Ensure the secret version exists before Cloud Run tries to mount it.
+  # The secret_key_ref above only depends on the secret, not the version.
+  depends_on = [google_secret_manager_secret_version.credential_encryption_key]
 
   lifecycle {
     # Image is updated via Terraform -var="image=..." during CI/CD deploys.

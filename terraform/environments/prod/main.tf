@@ -76,6 +76,12 @@ variable "internal_api_key" {
   sensitive   = true
 }
 
+variable "credential_encryption_key" {
+  description = "AES-256 key (64 hex chars) for credential encryption at rest. Stored in Secret Manager."
+  type        = string
+  sensitive   = true
+}
+
 variable "backoffice_jwt_secret" {
   description = "JWT signing secret for backoffice admin auth"
   type        = string
@@ -193,24 +199,22 @@ module "storage" {
 }
 
 # --- Cloud Run API ---
-# TODO: The cloud-run module needs an extra_env_vars variable to pass
-# INTERNAL_API_KEY and CREDENTIAL_ENCRYPTION_KEY. For now, set these
-# manually in the Cloud Run console or via gcloud after initial deploy.
 module "cloud_run" {
   source = "../../modules/cloud-run"
 
-  project_id         = var.project_id
-  region             = var.region
-  environment        = "prod"
-  image              = var.image
-  vpc_connector_name = module.networking.vpc_connector_name
-  database_url       = module.database.database_url
-  redis_url          = var.redis_url
-  jwt_secret         = var.jwt_secret
-  internal_api_key   = var.internal_api_key
-  allowed_origins    = var.tenant_web_url
-  min_instances      = 0
-  max_instances      = 5
+  project_id                = var.project_id
+  region                    = var.region
+  environment               = "prod"
+  image                     = var.image
+  vpc_connector_name        = module.networking.vpc_connector_name
+  database_url              = module.database.database_url
+  redis_url                 = var.redis_url
+  jwt_secret                = var.jwt_secret
+  internal_api_key          = var.internal_api_key
+  credential_encryption_key = var.credential_encryption_key
+  allowed_origins           = var.tenant_web_url
+  min_instances             = 0
+  max_instances             = 5
 }
 
 # --- DNS ---

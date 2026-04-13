@@ -77,6 +77,12 @@ variable "internal_api_key" {
   default     = ""
 }
 
+variable "credential_encryption_key" {
+  description = "AES-256 key (64 hex chars) for credential encryption at rest. Stored in Secret Manager."
+  type        = string
+  sensitive   = true
+}
+
 variable "image" {
   description = "Container image for the API (passed from CI on deploy)"
   type        = string
@@ -130,11 +136,12 @@ module "cloud_run" {
   vpc_connector_name = module.networking.vpc_connector_name
   database_url       = module.database.database_url
   redis_url          = var.redis_url
-  jwt_secret         = var.jwt_secret
-  internal_api_key   = var.internal_api_key
-  allowed_origins    = var.tenant_web_url
-  min_instances      = 0
-  max_instances      = 2
+  jwt_secret                = var.jwt_secret
+  internal_api_key          = var.internal_api_key
+  credential_encryption_key = var.credential_encryption_key
+  allowed_origins           = var.tenant_web_url
+  min_instances             = 0
+  max_instances             = 2
 }
 
 # --- DNS ---
