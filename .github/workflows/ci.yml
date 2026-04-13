@@ -10,7 +10,7 @@ permissions:
   id-token: write
 
 env:
-  GO_VERSION: "1.24"
+  GO_VERSION: "1.25"
   NODE_VERSION: "20"
   TERRAFORM_VERSION: "1.7"
 
@@ -65,7 +65,7 @@ jobs:
 
       - name: Lint agent
         if: hashFiles('agent/go.mod') != ''
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v9
         with:
           working-directory: agent
 
@@ -74,7 +74,7 @@ jobs:
         run: cd agent && go test ./... -v -race -coverprofile=coverage.out
 
       - name: Lint API
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v9
         with:
           working-directory: api
 
@@ -118,7 +118,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v9
         with:
           working-directory: backoffice
 

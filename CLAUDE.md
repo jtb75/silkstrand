@@ -283,7 +283,7 @@ Server sends WebSocket pings every 30s; agent responds with pong (60s timeout).
 
 ### Go (Agent + API + Backoffice)
 
-- Go 1.24 (pinned for golangci-lint compatibility)
+- Go 1.25
 - Standard `go fmt` and `go vet`
 - Use stdlib where possible; minimize third-party dependencies
 - Stdlib `net/http` router (Go 1.22+ enhanced routing, no gorilla/mux)
