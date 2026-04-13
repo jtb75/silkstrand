@@ -1,0 +1,48 @@
+id: "5.4"
+title: "Ensure that new entries are appended to the end of the log file"
+section: "Audit Logging"
+assessment: automated
+profile:
+  - "Level 2 - MongoDB"
+severity: MEDIUM
+
+description: >
+  By default, new log entries will overwrite old entries after a restart
+  of the mongod or Mongols service. Enabling the systemLog.logAppend
+  setting causes new entries to be appended to the end of the log file
+  rather than overwriting the existing content of the log when the
+  mongos or mongod instance restarts.
+
+rationale: >
+  Allowing old entries to be overwritten by new entries instead of
+  appending new entries to the end of the log may destroy old log data
+  that is needed for a variety of purposes.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getCmdLineOpts: 1
+  assertions:
+    - field: parsed.systemLog.logAppend
+      op: equals
+      value: true
+
+remediation: |
+  Set
+
+      systemLog:
+         logAppend: true
+
+  to true in the /etc/mongod.conf file.
+
+references:
+  - https://docs.mongodb.com/manual/reference/configuration-options/#systemLog.logAppend
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.10"
+      title: "Retain Audit Logs"
+  cis_controls_v7:
+    - id: "6.4"
+      title: "Ensure adequate storage for logs"

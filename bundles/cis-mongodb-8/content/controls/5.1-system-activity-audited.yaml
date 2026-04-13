@@ -1,0 +1,63 @@
+id: "5.1"
+title: "Ensure that system activity is audited"
+section: "Audit Logging"
+assessment: automated
+profile:
+  - "Level 1- MongoDB"
+severity: MEDIUM
+
+description: >
+  Track access and changes to database configurations and data. MongoDB
+  Enterprise includes a system auditing facility that can record system
+  events (e.g. user operations, connection events) on a MongoDB
+  instance. These audit records permit forensic analysis and allow
+  administrators to verify proper controls.
+
+rationale: >
+  System level logs can be handy while troubleshooting an operational
+  problem or handling a security incident.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getCmdLineOpts: 1
+  assertions:
+    - field: parsed.auditLog.destination
+      op: exists
+      value: true
+
+remediation: |
+  Set the value of auditLog.destination to the appropriate value from
+  the following options:
+
+  syslog — To enable auditing and print audit events to syslog
+      mongod --dbpath data/db --auditDestination syslog
+
+  console — To enable auditing and print audit events to standard
+  output (i.e., stdout)
+      mongod --dbpath data/db --auditDestination console
+
+  Json File — To enable auditing and print audit events to a file in
+  JSON format. Printing audit events to file in JSON format degrades
+  server performance more than printing to a file in BSON format.
+      mongod --dbpath data/db --auditDestination file --auditFormat JSON --auditPath data/db/auditLog.json
+
+  Bson File — To enable auditing and print audit events to a file in
+  BSON binary format
+      mongod --dbpath data/db --auditDestination file --auditFormat BSON --auditPath data/db/auditLog.bson
+
+default_value: "Not configured"
+
+references:
+  - http://docs.mongodb.org/manual/tutorial/configure-auditing/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.2"
+      title: "Collect Audit Logs"
+  cis_controls_v7:
+    - id: "6.2"
+      title: "Activate audit logging"
+    - id: "6.3"
+      title: "Enable Detailed Logging"
