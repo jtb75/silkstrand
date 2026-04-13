@@ -12,6 +12,7 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/store"
+	"github.com/jtb75/silkstrand/api/internal/websocket"
 )
 
 const installTokenTTL = time.Hour
@@ -21,11 +22,12 @@ const installTokenTTL = time.Hour
 // See api/internal/handler/agent.go for the WebSocket connect handler.
 type AgentsHandler struct {
 	store       store.Store
+	hub         *websocket.Hub
 	releasesURL string // base URL for agent binaries/installer, e.g. GCS bucket
 }
 
-func NewAgentsHandler(s store.Store, releasesURL string) *AgentsHandler {
-	return &AgentsHandler{store: s, releasesURL: releasesURL}
+func NewAgentsHandler(s store.Store, hub *websocket.Hub, releasesURL string) *AgentsHandler {
+	return &AgentsHandler{store: s, hub: hub, releasesURL: releasesURL}
 }
 
 // GET /api/v1/agents
@@ -262,5 +264,57 @@ func (h *AgentsHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"agent_id": agent.ID,
 		"api_key":  rawKey,
+	})
+}
+
+// UpgradeRequest is the body of POST /api/v1/agents/{id}/upgrade.
+// Version defaults to "latest" when empty. sha256_by_platform is optional;
+// if omitted the agent will download without checksum verification.
+type UpgradeRequest struct {
+	Version          string            `json:"version"`
+	SHA256ByPlatform map[string]string `json:"sha256_by_platform,omitempty"`
+}
+
+// POST /api/v1/agents/{id}/upgrade (tenant-authed)
+// Body: {version?, sha256_by_platform?}
+// Sends an upgrade directive to a connected agent.
+func (h *AgentsHandler) Upgrade(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	// Tenant-scoped GetAgent ensures the agent belongs to the caller's tenant.
+	agent, err := h.store.GetAgent(r.Context(), id)
+	if err != nil || agent == nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+
+	var req UpgradeRequest
+	// Body is optional — tolerate empty / missing.
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Version == "" {
+		req.Version = "latest"
+	}
+
+	baseURL := h.releasesURL
+	if baseURL == "" {
+		baseURL = "https://storage.googleapis.com/silkstrand-agent-releases"
+	}
+
+	payload, _ := json.Marshal(websocket.UpgradePayload{
+		Version:          req.Version,
+		BaseURL:          baseURL,
+		SHA256ByPlatform: req.SHA256ByPlatform,
+	})
+	if h.hub == nil {
+		writeError(w, http.StatusServiceUnavailable, "upgrade not available (no hub)")
+		return
+	}
+	if err := h.hub.Send(id, websocket.Message{Type: websocket.TypeUpgrade, Payload: payload}); err != nil {
+		slog.Warn("sending upgrade directive", "agent_id", id, "error", err)
+		writeError(w, http.StatusServiceUnavailable, "agent not connected")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"status":  "requested",
+		"version": req.Version,
 	})
 }

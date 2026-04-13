@@ -76,7 +76,7 @@ func run() error {
 	targetH := handler.NewTargetHandler(pgStore)
 	scanH := handler.NewScanHandler(pgStore, ps, hub)
 	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey)
-	agentsH := handler.NewAgentsHandler(pgStore, cfg.AgentReleasesURL)
+	agentsH := handler.NewAgentsHandler(pgStore, hub, cfg.AgentReleasesURL)
 	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 
@@ -127,6 +127,7 @@ func run() error {
 	apiMux.HandleFunc("POST /api/v1/agents", agentsH.Create)
 	apiMux.HandleFunc("GET /api/v1/agents/{id}", agentsH.Get)
 	apiMux.HandleFunc("POST /api/v1/agents/{id}/rotate-key", agentsH.RotateKey)
+	apiMux.HandleFunc("POST /api/v1/agents/{id}/upgrade", agentsH.Upgrade)
 	apiMux.HandleFunc("DELETE /api/v1/agents/{id}", agentsH.Delete)
 	apiMux.HandleFunc("POST /api/v1/agents/install-tokens", agentsH.CreateInstallToken)
 	apiMux.HandleFunc("POST /api/v1/scans", scanH.Create)

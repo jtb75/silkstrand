@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listAgents, rotateAgentKey, deleteAgent, getAgentDownloads, createInstallToken } from '../api/client';
+import {
+  listAgents, rotateAgentKey, deleteAgent, getAgentDownloads,
+  createInstallToken, upgradeAgent,
+} from '../api/client';
 import type { Agent, AgentDownloads } from '../api/types';
 import { useAuth } from '../auth/useAuth';
 
@@ -39,6 +42,11 @@ export default function Agents() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteAgent(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+  });
+
+  const upgradeMutation = useMutation({
+    mutationFn: (id: string) => upgradeAgent(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
   });
 
@@ -151,6 +159,20 @@ export default function Agents() {
                 <td>{a.version ?? '—'}</td>
                 <td>{a.last_heartbeat ? new Date(a.last_heartbeat).toLocaleString() : '—'}</td>
                 <td style={{ textAlign: 'right' }}>
+                  {a.status === 'connected' && (
+                    <button
+                      className="btn btn-sm"
+                      style={{ marginRight: 6 }}
+                      disabled={upgradeMutation.isPending}
+                      onClick={() => {
+                        if (confirm(`Upgrade ${a.name} to the latest version? The agent will download the new binary, verify it, and restart.`)) {
+                          upgradeMutation.mutate(a.id);
+                        }
+                      }}
+                    >
+                      Upgrade
+                    </button>
+                  )}
                   <button
                     className="btn btn-sm"
                     style={{ marginRight: 6 }}

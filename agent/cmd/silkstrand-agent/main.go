@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/jtb75/silkstrand/agent/internal/config"
 	"github.com/jtb75/silkstrand/agent/internal/runner"
 	"github.com/jtb75/silkstrand/agent/internal/tunnel"
+	"github.com/jtb75/silkstrand/agent/internal/updater"
 )
 
 // version is set via ldflags: -X main.version=$VERSION
@@ -106,6 +108,20 @@ func main() {
 			defer func() { <-scanSem }()
 			handleDirective(tun, bundleCache, pythonRunner, d)
 		}()
+	}
+
+	// Wire up upgrade handler. On success the process exits; the service
+	// manager (systemd/launchd) restarts us with the new binary.
+	tun.OnUpgrade = func(up tunnel.UpgradePayload) {
+		suffix := runtime.GOOS + "-" + runtime.GOARCH
+		expectedSHA := up.SHA256ByPlatform[suffix]
+		slog.Info("upgrade requested", "version", up.Version, "platform", suffix)
+		if err := updater.Apply(up.BaseURL, up.Version, expectedSHA); err != nil {
+			slog.Error("upgrade failed", "error", err)
+			return
+		}
+		slog.Info("upgrade complete; exiting so service manager restarts us")
+		os.Exit(0)
 	}
 
 	// Graceful shutdown
