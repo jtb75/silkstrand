@@ -10,7 +10,7 @@ permissions:
   id-token: write # required for GCP workload identity federation
 
 env:
-  GO_VERSION: "1.24"
+  GO_VERSION: "1.25"
   AGENT_RELEASES_BUCKET: silkstrand-agent-releases
   AGENT_IMAGE_REGISTRY: us-central1-docker.pkg.dev/silkstrand-prod/silkstrand
 
