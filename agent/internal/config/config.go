@@ -39,9 +39,15 @@ func Load() (*Config, error) {
 		CredsPath:     envOrDefault("SILKSTRAND_CREDS_PATH", "/var/lib/silkstrand/agent.creds"),
 	}
 
-	// Validation happens after the caller has had a chance to bootstrap.
-	// Only fail fast if nothing usable was provided at all.
-	if cfg.AgentID == "" && cfg.AgentKey == "" && cfg.InstallToken == "" {
+	// ID and KEY must either both be set (pre-bootstrapped) or both empty
+	// (bootstrap-or-load path). A half-filled pair is always an error.
+	if (cfg.AgentID == "") != (cfg.AgentKey == "") {
+		return nil, fmt.Errorf("SILKSTRAND_AGENT_ID and SILKSTRAND_AGENT_KEY must be set together")
+	}
+	// If neither credential is set, we need an install token for the
+	// bootstrap flow (or a pre-existing creds file at CredsPath, but we
+	// can't test for that here without racing).
+	if cfg.AgentID == "" && cfg.InstallToken == "" {
 		return nil, fmt.Errorf("one of SILKSTRAND_AGENT_ID+KEY or SILKSTRAND_INSTALL_TOKEN is required")
 	}
 
