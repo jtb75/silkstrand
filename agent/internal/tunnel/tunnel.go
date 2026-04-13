@@ -124,6 +124,14 @@ func (t *Tunnel) connect(ctx context.Context, version string, startedAt time.Tim
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
+	// The server (Hub) sends pings; gorilla's default ping handler writes
+	// back a pong but does NOT extend the read deadline, so without this
+	// override the connection times out after pongWait every cycle.
+	defaultPing := conn.PingHandler()
+	conn.SetPingHandler(func(appData string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+		return defaultPing(appData)
+	})
 
 	connCtx, connCancel := context.WithCancel(ctx)
 	defer connCancel()
