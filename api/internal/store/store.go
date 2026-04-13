@@ -52,12 +52,41 @@ type Store interface {
 	ListBundlesForTenant(ctx context.Context, tenantID string) ([]model.Bundle, error)
 	UpsertBundle(ctx context.Context, b model.Bundle) (*model.Bundle, error)
 
-	// Credentials
+	// Credentials (legacy table; kept authoritative through ADR 004 C0
+	// rollback window — writes dual-write to both surfaces).
 	GetCredentialsByTarget(ctx context.Context, targetID string) (json.RawMessage, error)
 	CreateCredential(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) (string, error)
 	UpsertCredential(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) error
 	DeleteCredential(ctx context.Context, tenantID, targetID string) error
 	HasCredential(ctx context.Context, targetID string) (bool, string, error)
+
+	// Credential Sources (ADR 004 C0).
+	CreateCredentialSource(ctx context.Context, tenantID, srcType string, config json.RawMessage) (string, error)
+	GetCredentialSource(ctx context.Context, id string) (*model.CredentialSource, error)
+	GetCredentialSourceByTarget(ctx context.Context, targetID string) (*model.CredentialSource, error)
+	UpdateCredentialSourceConfig(ctx context.Context, id string, config json.RawMessage) error
+	DeleteCredentialSource(ctx context.Context, id string) error
+	SetTargetCredentialSource(ctx context.Context, targetID, sourceID string) error
+	ClearTargetCredentialSource(ctx context.Context, targetID string) error
+
+	// UpsertStaticCredentialSource ensures a `static`-type credential_sources
+	// row exists for the target, pointed at by targets.credential_source_id,
+	// carrying the given type + AES-GCM encrypted blob. Idempotent.
+	UpsertStaticCredentialSource(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) error
+
+	// GetStaticCredentialForTarget resolves the credential bytes + type for a
+	// target, preferring credential_sources (type=static) and falling back to
+	// the legacy credentials table. Returns (nil, "", nil) when neither is set.
+	GetStaticCredentialForTarget(ctx context.Context, targetID string) ([]byte, string, error)
+
+	// HasCredentialForTarget is the read-path equivalent of HasCredential,
+	// preferring credential_sources with legacy fallback.
+	HasCredentialForTarget(ctx context.Context, targetID string) (bool, string, error)
+
+	// DeleteCredentialForTarget removes both the credential_sources row (if
+	// linked via static) and the legacy credentials row. Returns sql.ErrNoRows
+	// if nothing existed in either place.
+	DeleteCredentialForTarget(ctx context.Context, tenantID, targetID string) error
 
 	// Tenants (internal, not tenant-scoped)
 	CreateTenant(ctx context.Context, name string) (*model.Tenant, error)

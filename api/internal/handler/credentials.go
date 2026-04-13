@@ -35,7 +35,7 @@ func (h *CredentialsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "target not found")
 		return
 	}
-	has, credType, err := h.store.HasCredential(r.Context(), targetID)
+	has, credType, err := h.store.HasCredentialForTarget(r.Context(), targetID)
 	if err != nil {
 		slog.Error("checking credential", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed")
@@ -90,8 +90,16 @@ func (h *CredentialsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		stored = req.Data
 	}
 
+	// Dual-write during ADR 004 C0 rollout: write the new credential_sources
+	// row first (so reads prefer it), then the legacy credentials row so it
+	// stays authoritative if this code path is reverted.
+	if err := h.store.UpsertStaticCredentialSource(r.Context(), claims.TenantID, targetID, req.Type, stored); err != nil {
+		slog.Error("upserting credential source", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save credential")
+		return
+	}
 	if err := h.store.UpsertCredential(r.Context(), claims.TenantID, targetID, req.Type, stored); err != nil {
-		slog.Error("upserting credential", "error", err)
+		slog.Error("upserting legacy credential", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to save credential")
 		return
 	}
@@ -106,7 +114,7 @@ func (h *CredentialsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetID := r.PathValue("id")
-	if err := h.store.DeleteCredential(r.Context(), claims.TenantID, targetID); err != nil {
+	if err := h.store.DeleteCredentialForTarget(r.Context(), claims.TenantID, targetID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "no credential set for this target")
 			return
