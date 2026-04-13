@@ -84,32 +84,27 @@ variable "max_instances" {
 # new revision if you need immediate effect.
 
 locals {
-  api_secrets = {
-    credential_encryption_key = {
-      env_name = "CREDENTIAL_ENCRYPTION_KEY"
-      data     = var.credential_encryption_key
-    }
-    database_url = {
-      env_name = "DATABASE_URL"
-      data     = var.database_url
-    }
-    redis_url = {
-      env_name = "REDIS_URL"
-      data     = var.redis_url
-    }
-    jwt_secret = {
-      env_name = "JWT_SECRET"
-      data     = var.jwt_secret
-    }
-    internal_api_key = {
-      env_name = "INTERNAL_API_KEY"
-      data     = var.internal_api_key
-    }
+  # Non-sensitive metadata — safe for for_each. Keys map to the env var
+  # name and double as the secret_id suffix (with underscores → dashes).
+  api_secret_envs = {
+    credential_encryption_key = "CREDENTIAL_ENCRYPTION_KEY"
+    database_url              = "DATABASE_URL"
+    redis_url                 = "REDIS_URL"
+    jwt_secret                = "JWT_SECRET"
+    internal_api_key          = "INTERNAL_API_KEY"
+  }
+  # Sensitive values — looked up by key inside resources, never iterated.
+  api_secret_values = {
+    credential_encryption_key = var.credential_encryption_key
+    database_url              = var.database_url
+    redis_url                 = var.redis_url
+    jwt_secret                = var.jwt_secret
+    internal_api_key          = var.internal_api_key
   }
 }
 
 resource "google_secret_manager_secret" "api" {
-  for_each  = local.api_secrets
+  for_each  = local.api_secret_envs
   project   = var.project_id
   secret_id = "${replace(each.key, "_", "-")}-${var.environment}"
 
@@ -119,9 +114,9 @@ resource "google_secret_manager_secret" "api" {
 }
 
 resource "google_secret_manager_secret_version" "api" {
-  for_each    = local.api_secrets
+  for_each    = local.api_secret_envs
   secret      = google_secret_manager_secret.api[each.key].id
-  secret_data = each.value.data
+  secret_data = local.api_secret_values[each.key]
 }
 
 # Refactor: the credential encryption key was previously declared as a
@@ -220,9 +215,9 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       dynamic "env" {
-        for_each = local.api_secrets
+        for_each = local.api_secret_envs
         content {
-          name = env.value.env_name
+          name = env.value
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.api[env.key].secret_id

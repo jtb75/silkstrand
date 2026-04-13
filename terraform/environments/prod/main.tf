@@ -267,40 +267,37 @@ resource "google_project_iam_member" "backoffice_api_secrets" {
 # secret_key_ref so its value never appears in `gcloud run services
 # describe` output.
 locals {
-  # All sensitive backoffice env vars. RESEND_API_KEY and
-  # BOOTSTRAP_ADMIN_PASSWORD are optional; if blank we omit them entirely
-  # rather than create empty Secret Manager entries.
-  backoffice_secrets_all = {
-    database_url = {
-      env_name = "DATABASE_URL"
-      data     = "postgres://${module.database.database_user}:${module.database.database_password}@${module.database.private_ip}:5432/silkstrand_backoffice?sslmode=disable"
-    }
-    jwt_secret = {
-      env_name = "JWT_SECRET"
-      data     = var.backoffice_jwt_secret
-    }
-    encryption_key = {
-      env_name = "ENCRYPTION_KEY"
-      data     = var.backoffice_encryption_key
-    }
-    tenant_jwt_secret = {
-      env_name = "TENANT_JWT_SECRET"
-      data     = var.tenant_jwt_secret
-    }
-    resend_api_key = {
-      env_name = "RESEND_API_KEY"
-      data     = var.resend_api_key
-    }
-    bootstrap_admin_password = {
-      env_name = "BOOTSTRAP_ADMIN_PASSWORD"
-      data     = var.bootstrap_admin_password
-    }
+  # Non-sensitive metadata, safe for for_each.
+  backoffice_secret_envs_all = {
+    database_url             = "DATABASE_URL"
+    jwt_secret               = "JWT_SECRET"
+    encryption_key           = "ENCRYPTION_KEY"
+    tenant_jwt_secret        = "TENANT_JWT_SECRET"
+    resend_api_key           = "RESEND_API_KEY"
+    bootstrap_admin_password = "BOOTSTRAP_ADMIN_PASSWORD"
   }
-  backoffice_secrets = { for k, v in local.backoffice_secrets_all : k => v if v.data != "" }
+  # Sensitive values — looked up by key inside resources.
+  backoffice_secret_values = {
+    database_url             = "postgres://${module.database.database_user}:${module.database.database_password}@${module.database.private_ip}:5432/silkstrand_backoffice?sslmode=disable"
+    jwt_secret               = var.backoffice_jwt_secret
+    encryption_key           = var.backoffice_encryption_key
+    tenant_jwt_secret        = var.tenant_jwt_secret
+    resend_api_key           = var.resend_api_key
+    bootstrap_admin_password = var.bootstrap_admin_password
+  }
+  # RESEND_API_KEY and BOOTSTRAP_ADMIN_PASSWORD are optional; we omit
+  # them entirely when blank instead of creating empty Secret Manager
+  # entries (the backoffice handles their absence: noop mailer / no
+  # bootstrap). nonsensitive() is needed because the comparison touches
+  # a sensitive value but the resulting boolean is safe to expose.
+  backoffice_secret_envs = {
+    for k, v in local.backoffice_secret_envs_all : k => v
+    if nonsensitive(local.backoffice_secret_values[k]) != ""
+  }
 }
 
 resource "google_secret_manager_secret" "backoffice" {
-  for_each  = local.backoffice_secrets
+  for_each  = local.backoffice_secret_envs
   project   = var.project_id
   secret_id = "${replace(each.key, "_", "-")}-backoffice"
 
@@ -310,9 +307,9 @@ resource "google_secret_manager_secret" "backoffice" {
 }
 
 resource "google_secret_manager_secret_version" "backoffice" {
-  for_each    = local.backoffice_secrets
+  for_each    = local.backoffice_secret_envs
   secret      = google_secret_manager_secret.backoffice[each.key].id
-  secret_data = each.value.data
+  secret_data = local.backoffice_secret_values[each.key]
 }
 
 # Backoffice API Cloud Run service
@@ -369,9 +366,9 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
       }
 
       dynamic "env" {
-        for_each = local.backoffice_secrets
+        for_each = local.backoffice_secret_envs
         content {
-          name = env.value.env_name
+          name = env.value
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.backoffice[env.key].secret_id
