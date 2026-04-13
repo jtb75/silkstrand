@@ -16,6 +16,7 @@ type Manifest struct {
 	RuntimeVersion string `yaml:"runtime_version"`
 	TargetType     string `yaml:"target_type"`
 	Entrypoint     string `yaml:"entrypoint"`
+	VendorDir      string `yaml:"vendor_dir"`
 	Benchmark      struct {
 		Name    string `yaml:"name"`
 		Version string `yaml:"version"`

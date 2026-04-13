@@ -14,7 +14,17 @@ import os
 import sys
 from datetime import datetime, timezone
 
-import psycopg2
+# pg8000 (pure-Python PostgreSQL driver) is vendored under content/vendor.
+# The agent runner prepends this directory to PYTHONPATH automatically when
+# the manifest declares vendor_dir, but we also self-bootstrap so the bundle
+# can be executed directly (e.g. local dev, ad-hoc testing).
+_BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
+_VENDOR_DIR = os.path.join(_BUNDLE_DIR, "vendor")
+if _VENDOR_DIR not in sys.path:
+    sys.path.insert(0, _VENDOR_DIR)
+
+import pg8000.dbapi  # noqa: E402
+from pg8000.exceptions import DatabaseError  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +250,14 @@ def check_4_1_pg_hba_no_trust(cur) -> dict:
             "remediation": "No action required.",
         }
 
-    except psycopg2.errors.InsufficientPrivilege:
+    except DatabaseError as exc:
+        # pg8000 doesn't expose a typed InsufficientPrivilege; the SQLSTATE
+        # for it is 42501. Fall through to a generic error otherwise.
+        sqlstate = ""
+        if exc.args and isinstance(exc.args[0], dict):
+            sqlstate = exc.args[0].get("C", "")
+        if sqlstate != "42501":
+            return _error_control("4.1", title, str(exc))
         return {
             "id": "4.1",
             "title": title,
@@ -413,7 +430,7 @@ def _build_error_result(target_identifier: str, error_msg: str, started: str) ->
 
     return {
         "schema_version": "1",
-        "bundle": {"name": "cis-postgresql-16", "version": "1.0.0"},
+        "bundle": {"name": "cis-postgresql-16", "version": "1.0.1"},
         "target": {"type": "database", "identifier": target_identifier},
         "started_at": started,
         "completed_at": _now_iso(),
@@ -456,15 +473,22 @@ def main() -> None:
     _log(f"Connecting to {target_identifier} as {username}")
 
     # --- Connect ---
+    # pg8000 takes ssl_context (truthy / falsy / SSLContext), not "sslmode".
+    # Map common psycopg2-style values: disable -> no SSL; everything else -> True.
+    if sslmode in ("disable", "allow", ""):
+        ssl_context = None
+    else:
+        ssl_context = True
+
     try:
-        conn = psycopg2.connect(
+        conn = pg8000.dbapi.connect(
             host=host,
-            port=port,
-            dbname=database,
+            port=int(port),
+            database=database,
             user=username,
             password=password,
-            sslmode=sslmode,
-            connect_timeout=10,
+            ssl_context=ssl_context,
+            timeout=10,
         )
         conn.autocommit = True
     except Exception as exc:
@@ -475,12 +499,13 @@ def main() -> None:
 
     # --- Run checks ---
     controls = []
+    cur = conn.cursor()
     try:
-        with conn.cursor() as cur:
-            for check_fn in ALL_CHECKS:
-                _log(f"Running {check_fn.__name__}")
-                controls.append(check_fn(cur))
+        for check_fn in ALL_CHECKS:
+            _log(f"Running {check_fn.__name__}")
+            controls.append(check_fn(cur))
     finally:
+        cur.close()
         conn.close()
 
     # --- Compute summary ---
@@ -492,7 +517,7 @@ def main() -> None:
 
     result = {
         "schema_version": "1",
-        "bundle": {"name": "cis-postgresql-16", "version": "1.0.0"},
+        "bundle": {"name": "cis-postgresql-16", "version": "1.0.1"},
         "target": {"type": "database", "identifier": target_identifier},
         "started_at": started,
         "completed_at": _now_iso(),
