@@ -19,14 +19,16 @@ const tenantClaimsKey contextKey = "tenant_claims"
 // with every DC API, which validates the token to scope requests to the
 // correct tenant.
 type TenantClaims struct {
-	Sub         string `json:"sub"`           // user UUID
-	Email       string `json:"email"`
-	TenantID    string `json:"tenant_id"`     // DC-side tenant UUID — what the DC validates
-	BoTenantID  string `json:"bo_tenant_id"`  // Backoffice-side tenant UUID — for switch-org and UI routing
-	DCID        string `json:"dc_id"`         // active tenant's DC
-	Role        string `json:"role"`          // "admin" or "member"
-	Iat         int64  `json:"iat"`
-	Exp         int64  `json:"exp"`
+	Sub        string `json:"sub"`          // user UUID
+	Email      string `json:"email"`
+	TenantID   string `json:"tenant_id"`    // DC-side tenant UUID — what the DC validates
+	BoTenantID string `json:"bo_tenant_id"` // Backoffice-side tenant UUID — for switch-org and UI routing
+	DCID       string `json:"dc_id"`        // active tenant's DC
+	Role       string `json:"role"`         // "admin" or "member"
+	Iss        string `json:"iss,omitempty"`
+	Aud        string `json:"aud,omitempty"`
+	Iat        int64  `json:"iat"`
+	Exp        int64  `json:"exp"`
 }
 
 // CreateTenantJWT issues a tenant-scoped token. Expiry is 1h by design; the
@@ -41,6 +43,8 @@ func CreateTenantJWT(secret, userID, email, tenantID, boTenantID, dcID, role str
 		BoTenantID: boTenantID,
 		DCID:       dcID,
 		Role:       role,
+		Iss:        BackofficeIssuer,
+		Aud:        TenantAudience,
 		Iat:        now.Unix(),
 		Exp:        now.Add(expiry).Unix(),
 	}
@@ -79,6 +83,15 @@ func ValidateTenantJWT(token, secret string) (*TenantClaims, error) {
 		return nil, errTokenExpired
 	}
 	if claims.Sub == "" || claims.TenantID == "" {
+		return nil, errInvalidToken
+	}
+	// iss/aud validation (audit 3.4). Transitional: accept tokens that
+	// predate the iss/aud rollout (tenant tokens have a 1h lifetime), but
+	// reject any token that carries an explicit mismatch.
+	if claims.Iss != "" && claims.Iss != BackofficeIssuer {
+		return nil, errInvalidToken
+	}
+	if claims.Aud != "" && claims.Aud != TenantAudience {
 		return nil, errInvalidToken
 	}
 	return &claims, nil
