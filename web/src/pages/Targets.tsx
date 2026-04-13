@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listTargets, createTarget, deleteTarget, listAgents, probeTarget } from '../api/client';
+import { listTargets, createTarget, deleteTarget, listAgents, probeTarget, updateTarget } from '../api/client';
 import type { Target, CreateTargetRequest, Agent } from '../api/types';
 import CredentialModal from '../components/CredentialModal';
 
@@ -32,6 +32,14 @@ export default function Targets() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteTarget(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['targets'] });
+    },
+  });
+
+  const assignAgentMutation = useMutation({
+    mutationFn: ({ id, agentId }: { id: string; agentId: string | undefined }) =>
+      updateTarget(id, { agent_id: agentId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['targets'] });
     },
@@ -176,13 +184,31 @@ export default function Targets() {
           </thead>
           <tbody>
             {targets.map((t) => {
-              const agent = agents?.find((a) => a.id === t.agent_id);
               return (
                 <tr key={t.id}>
                   <td><span className="badge badge-type">{t.type}</span></td>
                   <td>{t.identifier}</td>
                   <td>{t.environment || '-'}</td>
-                  <td>{agent ? agent.name : (t.agent_id ? t.agent_id.slice(0, 8) + '…' : '-')}</td>
+                  <td>
+                    <select
+                      value={t.agent_id ?? ''}
+                      onChange={(e) =>
+                        assignAgentMutation.mutate({
+                          id: t.id,
+                          agentId: e.target.value || undefined,
+                        })
+                      }
+                      disabled={assignAgentMutation.isPending}
+                      title="Assign an agent to this target"
+                    >
+                      <option value="">— unassigned —</option>
+                      {agents?.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.status})
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                   <td>{new Date(t.created_at).toLocaleString()}</td>
                   <td style={{ textAlign: 'right' }}>
                     {probeResult[t.id] && (
