@@ -232,6 +232,34 @@ Long-running recon scans (a /16 can take hours) give live progress
 in the UI. Partial failure preserves partial findings. Same
 transport, auth, and reconnect logic as compliance scans.
 
+### D11. Customer-controlled scan allowlist (added 2026-04-13, audit 3.2)
+
+The agent will only initiate discovery against CIDRs / hostnames the
+customer has explicitly enrolled in a **local allowlist file** on the
+agent host (`/etc/silkstrand/scan-allowlist.yaml` by default,
+configurable via `SILKSTRAND_SCAN_ALLOWLIST_PATH`). The SaaS cannot
+override or extend this allowlist — directives that target
+out-of-allowlist ranges are rejected by the agent before any packet
+goes out.
+
+```yaml
+# /etc/silkstrand/scan-allowlist.yaml
+allow:
+  - 10.0.0.0/16
+  - 192.168.50.0/24
+  - corp-internal.example.com
+deny: []          # optional, evaluated after allow
+rate_limit_pps: 1000   # global packets-per-second ceiling
+```
+
+Two-key principle: a compromised SaaS account cannot weaponize
+customer agents into a lateral-movement / DoS tool against the
+customer's own network. The customer's local file is the ultimate
+authority.
+
+A global hard-coded packets-per-second cap also lives in the recon
+runner code as defense-in-depth against allowlist misconfiguration.
+
 ### D10. Data store — stay relational
 
 All asset / finding / event data lives in Postgres alongside the
@@ -262,7 +290,7 @@ credential_sources      — see ADR 004
 | Phase | Scope | Prereq |
 |---|---|---|
 | **R0** | Asset/target schema migration; `credential_source_id` on targets | ADR 004 Phase C0 |
-| **R1** | L3 discovery (`target_type: network_range`), correlation rules, Assets page, manual/discovered unification | R0 |
+| **R1** | L3 discovery (`target_type: network_range`), correlation rules, Assets page, manual/discovered unification, customer-controlled scan allowlist (D11), evidence redaction (see Open items) | R0 |
 | **R1.1** | Host list import target source | R1 |
 | **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential binding | R1, ADR 004 Phase C1 |
 | **R3+** | Vault credential resolution (ADR 004 Phase C3); DNS zone enumeration; Azure/GCP cloud discovery | Demand-driven |
@@ -289,6 +317,17 @@ Unchanged from ADR 002, reiterated for clarity:
 - Cross-account AWS target topology (do we support one-target-per-
   account, or tenant-level fanout across OUs?). Punt until we have a
   multi-account customer.
+- **Evidence redaction** (audit 4.3, R1 implementation requirement).
+  Nuclei templates frequently capture response bodies that may contain
+  PII, session tokens, or other secrets. The recon runner must apply a
+  redaction pass before persisting `scan_results.evidence` JSONB:
+  - Mask common secret patterns (AWS keys, JWTs, bearer tokens,
+    private keys, db connection strings) with a regex set.
+  - Truncate captured response bodies to a configurable byte ceiling.
+  - Customer-overridable redaction rules per tenant (config file or
+    UI later).
+  Goal: don't accidentally exfiltrate customer secrets into our DB
+  while doing security work for them.
 - Whether agent embeds PD tools as libraries or invokes as subprocesses.
 - Runtime install strategy for PD binaries — track in a separate note;
   leaning toward agent-managed install into `/var/lib/silkstrand/runtimes/`
