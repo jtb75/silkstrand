@@ -5,6 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Targets from './pages/Targets';
+import Agents from './pages/Agents';
 import Scans from './pages/Scans';
 import ScanResults from './pages/ScanResults';
 import Team from './pages/Team';
@@ -36,6 +37,7 @@ export default function App() {
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/targets" element={<Targets />} />
+              <Route path="/agents" element={<Agents />} />
               <Route path="/scans" element={<Scans />} />
               <Route path="/scans/:id" element={<ScanResults />} />
               <Route path="/team" element={<Team />} />

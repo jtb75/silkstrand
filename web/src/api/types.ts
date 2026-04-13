@@ -60,6 +60,21 @@ export interface ScanSummary {
   not_applicable: number;
 }
 
+export interface Agent {
+  id: string;
+  tenant_id: string;
+  name: string;
+  status: 'pending' | 'online' | 'offline';
+  last_heartbeat?: string;
+  version?: string;
+  created_at: string;
+}
+
+export interface CreateAgentResponse {
+  agent: Agent;
+  api_key: string; // plaintext, shown once
+}
+
 export interface Bundle {
   id: string;
   name: string;

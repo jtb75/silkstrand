@@ -34,6 +34,8 @@ type Store interface {
 	UpdateAgentStatus(ctx context.Context, id string, status string) error
 	RotateAgentKey(ctx context.Context, id string) (string, error)
 	PromoteAgentKey(ctx context.Context, id string) error
+	ListAgents(ctx context.Context) ([]model.Agent, error)
+	DeleteAgent(ctx context.Context, id string) error
 
 	// Targets (non-tenant-scoped, for directive enrichment)
 	GetTargetByID(ctx context.Context, id string) (*model.Target, error)

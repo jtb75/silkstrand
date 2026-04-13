@@ -3,6 +3,8 @@ import type {
   CreateTargetRequest,
   UpdateTargetRequest,
   Scan,
+  Agent,
+  CreateAgentResponse,
 } from './types';
 
 // DC API base URL is resolved at call time from the active tenant context.
@@ -98,3 +100,15 @@ export const createScan = (targetId: string, bundleId: string) =>
     body: JSON.stringify({ target_id: targetId, bundle_id: bundleId }),
   });
 export const getScan = (id: string) => request<Scan>(`/api/v1/scans/${id}`);
+
+// Agents
+export const listAgents = () => request<Agent[]>('/api/v1/agents');
+export const createAgent = (name: string, version?: string) =>
+  request<CreateAgentResponse>('/api/v1/agents', {
+    method: 'POST',
+    body: JSON.stringify({ name, version }),
+  });
+export const rotateAgentKey = (id: string) =>
+  request<{ api_key: string }>(`/api/v1/agents/${id}/rotate-key`, { method: 'POST' });
+export const deleteAgent = (id: string) =>
+  request<void>(`/api/v1/agents/${id}`, { method: 'DELETE' });
