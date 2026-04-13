@@ -93,6 +93,10 @@ func run() error {
 	// Agent bootstrap (public; authed by install token in the body)
 	mux.HandleFunc("POST /api/v1/agents/bootstrap", agentsH.Bootstrap)
 
+	// Agent self-delete (authed by the agent's own API key, not a
+	// tenant user JWT — so it can be called from the uninstall flow).
+	mux.HandleFunc("DELETE /api/v1/agents/self", agentH.SelfDelete)
+
 	// Internal API routes (backoffice access via API key)
 	internalMux := http.NewServeMux()
 	internalMux.HandleFunc("POST /internal/v1/tenants", internalH.CreateTenant)

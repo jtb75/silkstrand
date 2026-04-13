@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jtb75/silkstrand/agent/internal/bootstrap"
 	"github.com/jtb75/silkstrand/agent/internal/cache"
@@ -21,6 +23,21 @@ import (
 var version = "dev"
 
 func main() {
+	// CLI subcommands — keep minimal to avoid a flag package.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "uninstall":
+			if err := runUninstall(); err != nil {
+				slog.Error("uninstall", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "version", "--version", "-v":
+			printlnSafe(version)
+			return
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("loading config", "error", err)
@@ -173,3 +190,50 @@ func sendError(tun *tunnel.Tunnel, scanID, errMsg string) {
 	payload, _ := json.Marshal(tunnel.ScanErrorPayload{ScanID: scanID, Error: errMsg})
 	tun.Send(tunnel.Message{Type: tunnel.TypeScanError, Payload: payload})
 }
+
+// runUninstall calls the DC's /api/v1/agents/self endpoint to deregister
+// this agent, using credentials loaded from env or the persisted creds
+// file. Used by `silkstrand-agent uninstall` (container flow) and by a
+// `docker run ... uninstall` one-off.
+//
+// Intentionally best-effort: if the server is unreachable or the agent row
+// has already been deleted, we still exit 0 so `docker rm` etc. proceed.
+func runUninstall() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if err := bootstrap.EnsureCreds(cfg); err != nil {
+		// No creds to call with — nothing to deregister.
+		slog.Warn("no credentials available; skipping server deregister", "error", err)
+		return nil
+	}
+	httpURL := cfg.APIURL
+	switch {
+	case len(httpURL) >= 6 && httpURL[:6] == "wss://":
+		httpURL = "https://" + httpURL[6:]
+	case len(httpURL) >= 5 && httpURL[:5] == "ws://":
+		httpURL = "http://" + httpURL[5:]
+	}
+	url := httpURL + "/api/v1/agents/self?agent_id=" + cfg.AgentID
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.AgentKey)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Warn("deregister call failed (continuing)", "error", err)
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		slog.Warn("deregister returned non-2xx (continuing)", "status", resp.StatusCode)
+		return nil
+	}
+	slog.Info("agent deregistered", "agent_id", cfg.AgentID)
+	return nil
+}
+
+func printlnSafe(s string) { _, _ = os.Stdout.WriteString(s + "\n") }

@@ -15,6 +15,11 @@
 # To run multiple replicas, use separate install tokens per pod — each
 # bootstrap registers a distinct agent. For HA on a single identity,
 # prefer keeping replicas=1 + a restart policy.
+#
+# To uninstall cleanly (deregister on the server, then remove resources):
+#   kubectl -n silkstrand exec deploy/silkstrand-agent -- \
+#     /usr/local/bin/silkstrand-agent uninstall
+#   kubectl delete -f silkstrand-agent.yaml
 
 apiVersion: v1
 kind: Namespace
