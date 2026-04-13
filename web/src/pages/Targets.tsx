@@ -1,15 +1,22 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listTargets, createTarget, deleteTarget } from '../api/client';
-import type { Target, CreateTargetRequest } from '../api/types';
+import { listTargets, createTarget, deleteTarget, listAgents } from '../api/client';
+import type { Target, CreateTargetRequest, Agent } from '../api/types';
+import CredentialModal from '../components/CredentialModal';
 
 export default function Targets() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [credTarget, setCredTarget] = useState<Target | null>(null);
 
   const { data: targets, isLoading, error } = useQuery<Target[]>({
     queryKey: ['targets'],
     queryFn: listTargets,
+  });
+
+  const { data: agents } = useQuery<Agent[]>({
+    queryKey: ['agents'],
+    queryFn: listAgents,
   });
 
   const createMutation = useMutation({
@@ -47,6 +54,7 @@ export default function Targets() {
       type: formData.get('type') as string,
       identifier: formData.get('identifier') as string,
       environment: (formData.get('environment') as string) || undefined,
+      agent_id: (formData.get('agent_id') as string) || undefined,
       config,
     });
   }
@@ -84,8 +92,17 @@ export default function Targets() {
               name="identifier"
               type="text"
               required
-              placeholder="e.g. postgres://host:5432/db"
+              placeholder="e.g. studio-local-apps-db"
             />
+          </div>
+          <div className="form-group">
+            <label htmlFor="agent_id">Agent</label>
+            <select id="agent_id" name="agent_id" defaultValue="">
+              <option value="">— none (unassigned) —</option>
+              {agents?.map((a) => (
+                <option key={a.id} value={a.id}>{a.name} ({a.status})</option>
+              ))}
+            </select>
           </div>
           <div className="form-group">
             <label htmlFor="environment">Environment</label>
@@ -102,10 +119,14 @@ export default function Targets() {
               id="config"
               name="config"
               rows={4}
-              placeholder="{}"
+              placeholder='{"host": "localhost", "port": 5432, "database": "postgres"}'
               defaultValue="{}"
             />
           </div>
+          <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
+            After creating, click <strong>Credential</strong> to set the username/password
+            the agent will use to connect.
+          </p>
           <button
             type="submit"
             className="btn btn-primary"
@@ -135,28 +156,40 @@ export default function Targets() {
             </tr>
           </thead>
           <tbody>
-            {targets.map((t) => (
-              <tr key={t.id}>
-                <td>
-                  <span className="badge badge-type">{t.type}</span>
-                </td>
-                <td>{t.identifier}</td>
-                <td>{t.environment || '-'}</td>
-                <td>{t.agent_id ? t.agent_id.slice(0, 8) + '...' : '-'}</td>
-                <td>{new Date(t.created_at).toLocaleString()}</td>
-                <td>
-                  <button
-                    className="btn btn-danger btn-sm"
-                    onClick={() => handleDelete(t.id)}
-                    disabled={deleteMutation.isPending}
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {targets.map((t) => {
+              const agent = agents?.find((a) => a.id === t.agent_id);
+              return (
+                <tr key={t.id}>
+                  <td><span className="badge badge-type">{t.type}</span></td>
+                  <td>{t.identifier}</td>
+                  <td>{t.environment || '-'}</td>
+                  <td>{agent ? agent.name : (t.agent_id ? t.agent_id.slice(0, 8) + '…' : '-')}</td>
+                  <td>{new Date(t.created_at).toLocaleString()}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <button
+                      className="btn btn-sm"
+                      style={{ marginRight: 6 }}
+                      onClick={() => setCredTarget(t)}
+                    >
+                      Credential
+                    </button>
+                    <button
+                      className="btn btn-danger btn-sm"
+                      onClick={() => handleDelete(t.id)}
+                      disabled={deleteMutation.isPending}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+      )}
+
+      {credTarget && (
+        <CredentialModal target={credTarget} onClose={() => setCredTarget(null)} />
       )}
     </div>
   );

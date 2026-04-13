@@ -46,6 +46,9 @@ type Store interface {
 	// Credentials
 	GetCredentialsByTarget(ctx context.Context, targetID string) (json.RawMessage, error)
 	CreateCredential(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) (string, error)
+	UpsertCredential(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) error
+	DeleteCredential(ctx context.Context, tenantID, targetID string) error
+	HasCredential(ctx context.Context, targetID string) (bool, string, error)
 
 	// Tenants (internal, not tenant-scoped)
 	CreateTenant(ctx context.Context, name string) (*model.Tenant, error)
