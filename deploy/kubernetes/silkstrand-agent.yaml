@@ -1,0 +1,84 @@
+# SilkStrand agent — Kubernetes manifest.
+#
+# Generate an install token in the SilkStrand UI (Agents → "Generate install
+# command"), then either:
+#   (a) kubectl create secret generic silkstrand-agent-install \
+#         --from-literal=install-token=sst_... \
+#         --from-literal=api-url=https://<your DC API host>
+#   (b) edit this file's Secret stanza below.
+#
+# The agent exchanges the install token for long-lived credentials on its
+# first start and persists them to /var/lib/silkstrand/agent.creds (mounted
+# PVC). Subsequent pod restarts reuse the persisted credentials and don't
+# need the install token.
+#
+# To run multiple replicas, use separate install tokens per pod — each
+# bootstrap registers a distinct agent. For HA on a single identity,
+# prefer keeping replicas=1 + a restart policy.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: silkstrand
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: silkstrand-agent-install
+  namespace: silkstrand
+stringData:
+  install-token: sst_REPLACE_ME      # from SilkStrand UI; valid 1h
+  api-url: https://REPLACE.run.app   # your DC API URL
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: silkstrand-agent-creds
+  namespace: silkstrand
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: silkstrand-agent
+  namespace: silkstrand
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # only one agent shares the creds PVC
+  selector:
+    matchLabels: { app: silkstrand-agent }
+  template:
+    metadata:
+      labels: { app: silkstrand-agent }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: agent
+          image: us-central1-docker.pkg.dev/silkstrand-prod/silkstrand/agent:latest
+          imagePullPolicy: Always
+          env:
+            - name: SILKSTRAND_INSTALL_TOKEN
+              valueFrom:
+                secretKeyRef: { name: silkstrand-agent-install, key: install-token }
+            - name: SILKSTRAND_API_URL
+              valueFrom:
+                secretKeyRef: { name: silkstrand-agent-install, key: api-url }
+            - name: SILKSTRAND_CREDS_PATH
+              value: /var/lib/silkstrand/agent.creds
+          volumeMounts:
+            - name: creds
+              mountPath: /var/lib/silkstrand
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
+      volumes:
+        - name: creds
+          persistentVolumeClaim:
+            claimName: silkstrand-agent-creds

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/jtb75/silkstrand/agent/internal/bootstrap"
 	"github.com/jtb75/silkstrand/agent/internal/cache"
 	"github.com/jtb75/silkstrand/agent/internal/config"
 	"github.com/jtb75/silkstrand/agent/internal/runner"
@@ -30,6 +31,16 @@ func main() {
 	logLevel := config.ParseLogLevel(cfg.LogLevel)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
+
+	// If no explicit credentials, try loading from disk or the install-token flow.
+	if err := bootstrap.EnsureCreds(cfg); err != nil {
+		slog.Error("bootstrap", "error", err)
+		os.Exit(1)
+	}
+	if err := cfg.RequireCreds(); err != nil {
+		slog.Error("missing credentials after bootstrap", "error", err)
+		os.Exit(1)
+	}
 
 	slog.Info("starting silkstrand-agent",
 		"version", version,
