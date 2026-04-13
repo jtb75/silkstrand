@@ -41,6 +41,7 @@ AS_SERVICE=0
 UNINSTALL=0
 CONFIG_DIR="/etc/silkstrand"
 CONFIG_FILE="/etc/silkstrand/agent.env"
+BUNDLE_DIR="/var/lib/silkstrand/bundles"
 
 log() { printf '==> %s\n' "$*"; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -159,6 +160,7 @@ Tokens are single-use and expire after 1 hour — generate a new one in the Silk
     ws_url=$(printf '%s' "$API_URL" | sed -e 's,^https://,wss://,' -e 's,^http://,ws://,')
 
     install -d -m 0700 "$CONFIG_DIR"
+    install -d -m 0755 "$BUNDLE_DIR"
     umask 077
     cat > "$CONFIG_FILE" <<EOF
 # SilkStrand agent — written by install.sh.
@@ -166,6 +168,7 @@ Tokens are single-use and expire after 1 hour — generate a new one in the Silk
 SILKSTRAND_AGENT_ID=$agent_id
 SILKSTRAND_AGENT_KEY=$api_key
 SILKSTRAND_API_URL=$ws_url
+SILKSTRAND_BUNDLE_DIR=$BUNDLE_DIR
 EOF
     chmod 0600 "$CONFIG_FILE"
     log "Credentials written to $CONFIG_FILE"
@@ -213,6 +216,7 @@ install_service_darwin() {
     <key>SILKSTRAND_AGENT_ID</key><string>${SILKSTRAND_AGENT_ID}</string>
     <key>SILKSTRAND_AGENT_KEY</key><string>${SILKSTRAND_AGENT_KEY}</string>
     <key>SILKSTRAND_API_URL</key><string>${SILKSTRAND_API_URL}</string>
+    <key>SILKSTRAND_BUNDLE_DIR</key><string>${SILKSTRAND_BUNDLE_DIR}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -290,6 +294,7 @@ do_uninstall() {
     esac
     rm -f "$INSTALL_DIR/silkstrand-agent"
     rm -rf "$CONFIG_DIR"
+    rm -rf "$BUNDLE_DIR"
     log "Uninstalled silkstrand-agent"
 }
 
@@ -307,6 +312,10 @@ cleanup_partial_install() {
     if [ -d "$CONFIG_DIR" ]; then
         rm -rf "$CONFIG_DIR" 2>/dev/null || true
         printf 'removed %s\n' "$CONFIG_DIR" >&2
+    fi
+    if [ -d "$BUNDLE_DIR" ]; then
+        rm -rf "$BUNDLE_DIR" 2>/dev/null || true
+        printf 'removed %s\n' "$BUNDLE_DIR" >&2
     fi
     printf 'Host is clean. Fix the error above and re-run the install command.\n' >&2
 }
