@@ -183,6 +183,40 @@ need per-CIDR or per-tag routing.
   already carry a typed field that future resolver dispatches can slot
   into without another schema break.
 
+### Pre-C1 hardening requirements (audit 3.1, added 2026-04-13)
+
+When C1 wires the first non-static resolver (AWS Secrets Manager), the
+agent's compromise blast radius widens: it needs an IAM role that can
+read secrets on demand, not just the credentials for the current scan.
+A compromised agent process could exfiltrate every secret that role is
+allowed to fetch. C1 must land with the following controls or it
+should not ship:
+
+1. **Documented least-privilege IAM policy.** Ship a reference policy
+   that grants `secretsmanager:GetSecretValue` only on resource ARNs
+   tagged `silkstrand:tenant=<id>`, with a corresponding tagging
+   convention in the customer setup guide. Broad-prefix grants
+   (`secret/silkstrand/*`) must not be the recommended default.
+2. **Resource-based policies on the secrets themselves.** Where the
+   secret manager supports it (AWS does, Vault does via policies),
+   the secret should restrict access to the specific agent IAM role
+   ARN. Defense in depth — the agent's IAM policy is one fence; the
+   secret's own policy is another.
+3. **Per-fetch authorization on the API side.** Every credential
+   fetch the agent makes must carry the active scan_id (or probe_id);
+   the API must verify that the requested credential_source_id is
+   actually referenced by a target the agent has an open scan
+   directive for. Without this, a compromised agent can fetch any
+   credential the IAM role allows even when no scan is running.
+   Implementation: the agent reports back a `credential.fetched`
+   message after each resolution, the API correlates it against the
+   in-flight directive, and a rate-limit / anomaly-detection rule
+   alerts on mismatches.
+4. **Mandatory `credential.fetch` audit log sink.** The slog event
+   added in C0 must be wired to a queryable sink (Cloud Logging
+   query, dedicated Postgres table, or both) before C1 makes the
+   event security-relevant. Today it's stdout-only.
+
 ## Consequences
 
 - **Positive**: product scales to enterprise customers who won't store
