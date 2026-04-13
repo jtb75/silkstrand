@@ -106,6 +106,40 @@ func (ps *PubSub) PublishScanProgress(ctx context.Context, scanID string, status
 // subscribes to BEFORE publishing the request (pub/sub has no durability;
 // late subscribers miss the reply).
 
+// PublishUpgrade sends an upgrade directive to whichever instance owns
+// the agent's WSS. Payload is the websocket.UpgradePayload JSON bytes.
+// Fire-and-forget — the agent restarts itself on success and reconnects,
+// which is the implicit acknowledgement.
+func (ps *PubSub) PublishUpgrade(ctx context.Context, agentID string, payload []byte) error {
+	channel := fmt.Sprintf("agent:%s:upgrades", agentID)
+	if err := ps.client.Publish(ctx, channel, payload).Err(); err != nil {
+		return fmt.Errorf("publishing upgrade: %w", err)
+	}
+	return nil
+}
+
+// SubscribeUpgrades subscribes to upgrade directives for an agent. Each
+// WSS connection handler runs one of these alongside SubscribeDirectives
+// and SubscribeProbes.
+func (ps *PubSub) SubscribeUpgrades(ctx context.Context, agentID string, callback func(payload []byte)) error {
+	channel := fmt.Sprintf("agent:%s:upgrades", agentID)
+	sub := ps.client.Subscribe(ctx, channel)
+	defer sub.Close()
+
+	ch := sub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case msg, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			callback([]byte(msg.Payload))
+		}
+	}
+}
+
 // PublishProbe sends a probe request to whichever instance owns the
 // agent's WSS. Payload is the websocket.ProbePayload JSON bytes.
 func (ps *PubSub) PublishProbe(ctx context.Context, agentID string, payload []byte) error {

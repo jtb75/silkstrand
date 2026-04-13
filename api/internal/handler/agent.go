@@ -85,6 +85,7 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	if h.ps != nil {
 		go h.subscribeDirectives(ctx, agentID)
 		go h.subscribeProbes(ctx, agentID)
+		go h.subscribeUpgrades(ctx, agentID)
 	}
 
 	// Update agent status to connected
@@ -132,6 +133,21 @@ func (h *AgentHandler) subscribeProbes(ctx context.Context, agentID string) {
 	})
 	if err != nil && ctx.Err() == nil {
 		slog.Error("probe subscription error", "agent_id", agentID, "error", err)
+	}
+}
+
+// subscribeUpgrades forwards upgrade directives originating on any API
+// instance to the agent's WebSocket. Mirrors subscribeProbes — only the
+// instance that owns this WSS connection actually delivers the message.
+func (h *AgentHandler) subscribeUpgrades(ctx context.Context, agentID string) {
+	err := h.ps.SubscribeUpgrades(ctx, agentID, func(payload []byte) {
+		msg := websocket.Message{Type: websocket.TypeUpgrade, Payload: payload}
+		if err := h.hub.Send(agentID, msg); err != nil {
+			slog.Warn("forwarding upgrade to agent", "agent_id", agentID, "error", err)
+		}
+	})
+	if err != nil && ctx.Err() == nil {
+		slog.Error("upgrade subscription error", "agent_id", agentID, "error", err)
 	}
 }
 
