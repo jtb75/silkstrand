@@ -1,3 +1,7 @@
+// Accept certs with negative serial numbers (common in older/self-signed
+// MSSQL certs). Go 1.23+ rejects these by default.
+//go:debug x509negativeserial=1
+
 package main
 
 import (
