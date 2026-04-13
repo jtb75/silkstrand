@@ -129,6 +129,27 @@ def _run_query(cursor, sql: str) -> list[dict]:
     return [dict(zip(cols, r)) for r in cursor.fetchall()]
 
 
+def _use_db(cursor, db: str | None) -> None:
+    """Switch database context when the primitive declares a scope.
+    Only runs a USE statement for trusted engine system names and for the
+    per-DB iterator (which feeds names from sys.databases)."""
+    if db:
+        # Identifiers are quoted; the iterator only passes names it read
+        # from sys.databases, so the quoted form is safe.
+        cursor.execute(f"USE [{db}];")
+
+
+def _iter_user_databases(cursor) -> list[str]:
+    """Names of online user databases, excluding the four system DBs."""
+    rows = _run_query(
+        cursor,
+        "SELECT name FROM sys.databases "
+        "WHERE database_id > 4 AND state = 0 "  # online only
+        "AND name NOT IN ('master','tempdb','model','msdb','rdsadmin');",
+    )
+    return [r["name"] for r in rows]
+
+
 def _eval_sql_configuration(cursor, check: dict) -> tuple[str, str]:
     rows = _run_query(cursor, check["query"])
     return _evaluate_rows(
@@ -160,15 +181,39 @@ def _eval_sql_no_rows_match(cursor, check: dict) -> tuple[str, str]:
     Useful for "ensure no orphan users", "ensure no unexpected superusers",
     etc. — expressible as "this query should return nothing."
     """
+    _use_db(cursor, check.get("database"))
     rows = _run_query(cursor, check["query"])
     return _evaluate_rows(rows, "no_rows", "all_rows_match",
                           check.get("assertions", []))
 
 
+def _eval_sql_no_rows_match_per_database(cursor, check: dict) -> tuple[str, str]:
+    """Run the check query in every user database; PASS iff no database
+    returns any rows. Used for CIS controls that say 'run this query in
+    each database' and expect zero violations cluster-wide."""
+    dbs = _iter_user_databases(cursor)
+    if not dbs:
+        return PASS, "no user databases present"
+
+    offenders: list[str] = []
+    for db in dbs:
+        try:
+            _use_db(cursor, db)
+            rows = _run_query(cursor, check["query"])
+        except Exception as exc:  # noqa: BLE001
+            return ERROR, f"query failed in database {db!r}: {exc}"
+        if rows:
+            offenders.append(f"{db} ({len(rows)})")
+    if offenders:
+        return FAIL, "row(s) returned in: " + ", ".join(offenders)
+    return PASS, f"clean across {len(dbs)} user database(s)"
+
+
 PRIMITIVES = {
-    "sql_configuration":   _eval_sql_configuration,
-    "sql_scalar":          _eval_sql_scalar,
-    "sql_no_rows_match":   _eval_sql_no_rows_match,
+    "sql_configuration":                 _eval_sql_configuration,
+    "sql_scalar":                        _eval_sql_scalar,
+    "sql_no_rows_match":                 _eval_sql_no_rows_match,
+    "sql_no_rows_match_per_database":    _eval_sql_no_rows_match_per_database,
 }
 
 

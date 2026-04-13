@@ -1,0 +1,61 @@
+id: "5.2"
+title: "Ensure 'Default Trace Enabled' Server Configuration Option is set to '1'"
+section: "Auditing and Logging"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  The default trace provides audit logging of database activity
+  including account creations, privilege elevation and execution of
+  DBCC commands.
+
+rationale: >
+  Default trace provides valuable audit information regarding
+  security-related activities on the server.
+
+check:
+  type: sql_configuration
+  query: |
+    SELECT name,
+           CAST(value as int) as value_configured,
+           CAST(value_in_use as int) as value_in_use
+    FROM sys.configurations
+    WHERE name = 'default trace enabled';
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: value_configured
+      op: equals
+      value: 1
+    - field: value_in_use
+      op: equals
+      value: 1
+
+remediation: |
+  EXECUTE sp_configure 'show advanced options', 1;
+  RECONFIGURE;
+  EXECUTE sp_configure 'default trace enabled', 1;
+  RECONFIGURE;
+  GO
+  EXECUTE sp_configure 'show advanced options', 0;
+  RECONFIGURE;
+
+default_value: "1 (on)"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/default-trace-enabled-server-configuration-option
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.2"
+      title: "Collect Audit Logs"
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.2"
+      title: "Activate audit logging"
+    - id: "6.3"
+      title: "Enable Detailed Logging"

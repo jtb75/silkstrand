@@ -1,0 +1,54 @@
+id: "3.10"
+title: "Ensure Windows local groups are not SQL Logins"
+section: "Authentication and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: HIGH
+
+description: >
+  Local Windows groups should not be used as logins for SQL Server
+  instances.
+
+rationale: >
+  Allowing local Windows groups as SQL Logins provides a loophole
+  whereby anyone with OS level administrator rights (and no SQL Server
+  rights) could add users to the local Windows groups and thereby give
+  themselves or others access to the SQL Server instance.
+
+impact: >
+  Before dropping the local group logins, ensure that alternative AD
+  Groups or Windows logins have been added with equivalent permissions.
+  Otherwise, the SQL Server instance may become totally inaccessible.
+
+check:
+  type: sql_no_rows_match
+  query: |
+    SELECT pr.[name] AS LocalGroupName, pe.[permission_name], pe.[state_desc]
+    FROM sys.server_principals pr
+    JOIN sys.server_permissions pe
+      ON pr.[principal_id] = pe.[grantee_principal_id]
+    WHERE pr.[type_desc] = 'WINDOWS_GROUP'
+    AND pr.[name] LIKE CAST(SERVERPROPERTY('MachineName') AS nvarchar) + '%';
+
+remediation: |
+  -- 1. For each LocalGroupName login, if needed create an equivalent AD
+  --    group containing only the required user accounts.
+  -- 2. Add the AD group or individual Windows accounts as a SQL Server
+  --    login and grant it the permissions required.
+  -- 3. Drop the LocalGroupName login:
+  USE [master]
+  GO
+  DROP LOGIN [<name>]
+  GO
+
+default_value: "No local groups are added as SQL logins by default."
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.3"
+      title: "Configure Data Access Control Lists"
+  cis_controls_v7:
+    - id: "14.6"
+      title: "Protect Information through Access Control Lists"

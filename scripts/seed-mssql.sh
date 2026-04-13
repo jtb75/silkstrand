@@ -42,6 +42,12 @@ IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = '$SCAN_USER')
 GRANT VIEW SERVER STATE TO [$SCAN_USER];
 GRANT VIEW ANY DEFINITION TO [$SCAN_USER];
 GRANT VIEW ANY DATABASE TO [$SCAN_USER];
+
+-- msdb: CIS checks (3.11, 3.13, 7.3) read backup/proxy/role tables.
+USE msdb;
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '$SCAN_USER')
+    CREATE USER [$SCAN_USER] FOR LOGIN [$SCAN_USER];
+ALTER ROLE db_datareader ADD MEMBER [$SCAN_USER];
 "
 
 echo "==> scan user ready:"

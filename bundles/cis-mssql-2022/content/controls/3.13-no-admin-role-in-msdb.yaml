@@ -1,0 +1,51 @@
+id: "3.13"
+title: "Ensure no admin role membership in MSDB database"
+section: "Authentication and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+severity: HIGH
+
+description: >
+  Based on Microsoft design an account with DB_OWNER can elevate
+  permissions to SYSADMIN.
+
+rationale: >
+  MSDB must be configured with the TRUSTWORTHY flag ON to work properly.
+  If the TRUSTWORTHY setting is set to ON, and if the owner of the
+  database is a member of a group that has administrative credentials,
+  such as the sysadmin group (for example the default sa login), the
+  database owner can then be able to create and run unsafe assemblies
+  that can compromise the instance of the SQL Server, as well as run
+  code to elevate his privileges to SYSADMIN.
+
+check:
+  type: sql_no_rows_match
+  database: msdb
+  query: |
+    SELECT drm.*, r.name AS role_name, m.name AS member_name
+    FROM sys.database_role_members AS drm
+    INNER JOIN sys.database_principals AS r
+      ON drm.role_principal_id = r.principal_id
+    INNER JOIN sys.database_principals AS m
+      ON drm.member_principal_id = m.principal_id
+    WHERE r.name IN ('db_owner', 'db_securityadmin', 'db_ddladmin', 'db_datawriter')
+    AND m.name <> 'dbo';
+
+remediation: |
+  USE [msdb]
+  GO
+  ALTER ROLE [db_owner] DROP MEMBER <username>;
+
+default_value: "Only dbo user is a member of db_owner role in MSDB database."
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/trustworthy-database-property?view=sql-server-ver16
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "5.4"
+      title: "Restrict Administrator Privileges to Dedicated Administrator Accounts"
+  cis_controls_v7:
+    - id: "4.3"
+      title: "Ensure the Use of Dedicated Administrative Accounts"

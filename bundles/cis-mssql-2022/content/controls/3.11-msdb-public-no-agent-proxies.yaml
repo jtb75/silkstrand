@@ -1,0 +1,57 @@
+id: "3.11"
+title: "Ensure the public role in the msdb database is not granted access to SQL Agent proxies"
+section: "Authentication and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+severity: MEDIUM
+
+description: >
+  The public database role contains every user in the msdb database.
+  SQL Agent proxies define a security context in which a job step can
+  run.
+
+rationale: >
+  Granting access to SQL Agent proxies for the public role would allow
+  all users to utilize the proxy which may have high privileges. This
+  would likely break the principle of least privileges.
+
+impact: >
+  Before revoking the public role from the proxy, ensure that
+  alternative logins or appropriate user-defined database roles have
+  been added with equivalent permissions. Otherwise, SQL Agent job
+  steps dependent upon this access will fail.
+
+check:
+  type: sql_no_rows_match
+  database: msdb
+  query: |
+    SELECT sp.name AS proxyname
+    FROM dbo.sysproxylogin spl
+    JOIN sys.database_principals dp
+      ON dp.sid = spl.sid
+    JOIN sysproxies sp
+      ON sp.proxy_id = spl.proxy_id
+    WHERE principal_id = USER_ID('public');
+
+remediation: |
+  -- 1. Ensure the required security principals are explicitly granted
+  --    access to the proxy (use sp_grant_login_to_proxy).
+  -- 2. Revoke access to <proxyname> from the public role:
+  USE [msdb]
+  GO
+  EXEC dbo.sp_revoke_login_from_proxy @name = N'public', @proxy_name = N'<proxyname>';
+  GO
+
+default_value: "By default, the msdb public database role does not have access to any proxy."
+
+references:
+  - https://learn.microsoft.com/en-US/sql/ssms/agent/create-a-sql-server-agent-proxy
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.3"
+      title: "Configure Data Access Control Lists"
+  cis_controls_v7:
+    - id: "14.6"
+      title: "Protect Information through Access Control Lists"

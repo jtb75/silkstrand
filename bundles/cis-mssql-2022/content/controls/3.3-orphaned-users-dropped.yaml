@@ -1,0 +1,47 @@
+id: "3.3"
+title: "Ensure 'Orphaned Users' are Dropped From SQL Server Databases"
+section: "Authentication and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  A database user for which the corresponding SQL Server login is
+  undefined or is incorrectly defined on a server instance cannot log in
+  to the instance and is referred to as orphaned and should be removed.
+
+rationale: >
+  Orphan users should be removed to avoid potential misuse of those
+  broken users in any way.
+
+check:
+  type: sql_no_rows_match_per_database
+  query: |
+    SELECT dp.type_desc, dp.sid, dp.name AS orphan_user_name,
+           dp.authentication_type_desc
+    FROM sys.database_principals AS dp
+    LEFT JOIN sys.server_principals AS sp
+      ON dp.sid = sp.sid
+    WHERE sp.sid IS NULL
+    AND dp.authentication_type_desc = 'INSTANCE';
+
+remediation: |
+  -- If the orphaned user cannot or should not be matched to an existing
+  -- or new login using the Microsoft documented process referenced
+  -- below, run the following to remove the orphan user:
+  USE <database_name>;
+  GO
+  DROP USER <username>;
+
+references:
+  - https://learn.microsoft.com/en-us/sql/sql-server/failover-clusters/troubleshoot-orphaned-users-sql-server
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "5.3"
+      title: "Disable Dormant Accounts"
+  cis_controls_v7:
+    - id: "16.8"
+      title: "Disable Any Unassociated Accounts"

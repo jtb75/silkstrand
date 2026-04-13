@@ -1,0 +1,66 @@
+id: "5.1"
+title: "Ensure 'Maximum number of error log files' is set to greater than or equal to '12'"
+section: "Auditing and Logging"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  SQL Server error log files must be protected from loss. The log files
+  must be backed up before they are overwritten. Retaining more error
+  logs helps prevent loss from frequent recycling before backups can
+  occur.
+
+rationale: >
+  The SQL Server error log contains important information about major
+  server events and login attempt information as well.
+
+impact: >
+  Once the max number of error logs is reached, the oldest error log
+  file is deleted each time SQL Server restarts or sp_cycle_errorlog is
+  executed.
+
+check:
+  # Reads NumErrorLogs via xp_instance_regread OUTPUT parameter. Returns
+  # -1 if no explicit limit is configured, in which case the control
+  # fails the >=12 assertion (matches CIS audit expectation that a limit
+  # must be set).
+  type: sql_scalar
+  query: |
+    DECLARE @NumErrorLogs int;
+    EXEC master.sys.xp_instance_regread
+      N'HKEY_LOCAL_MACHINE',
+      N'Software\Microsoft\MSSQLServer\MSSQLServer',
+      N'NumErrorLogs',
+      @NumErrorLogs OUTPUT;
+    SELECT ISNULL(@NumErrorLogs, -1) AS [NumberOfLogFiles];
+  assertions:
+    - field: value
+      op: greater_than_or_equal
+      value: 12
+
+remediation: |
+  Adjust the number of logs to prevent data loss. The default value of 6
+  may be insufficient for a production environment. Run:
+
+  EXEC master.sys.xp_instance_regwrite
+    N'HKEY_LOCAL_MACHINE',
+    N'Software\Microsoft\MSSQLServer\MSSQLServer',
+    N'NumErrorLogs',
+    REG_DWORD,
+    <NumberAbove12>;
+
+default_value: "6 SQL Server error log files in addition to the current error log file are retained by default."
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/scm-services-configure-sql-server-error-logs
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.3"
+      title: "Ensure Adequate Audit Log Storage"
+  cis_controls_v7:
+    - id: "6.4"
+      title: "Ensure adequate storage for logs"

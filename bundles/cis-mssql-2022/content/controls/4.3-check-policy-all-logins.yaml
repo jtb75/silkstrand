@@ -1,0 +1,61 @@
+id: "4.3"
+title: "Ensure 'CHECK_POLICY' Option is set to 'ON' for All SQL Authenticated Logins"
+section: "Password Policies"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: HIGH
+
+description: >
+  Applies the same password complexity policy used in Windows to passwords
+  used inside SQL Server.
+
+rationale: >
+  Ensure SQL authenticated login passwords comply with the secure password
+  policy applied by the Windows Server Benchmark so that they cannot be
+  easily compromised via brute force attack.
+
+impact: |
+  This is a mitigating recommendation for systems which cannot follow the
+  recommendation to use only Windows Authenticated logins.
+
+  Weak passwords can lead to compromised systems. SQL Server authenticated
+  logins will utilize the password policy set in the computer's local
+  policy, which is typically set by the Default Domain Policy setting.
+
+  The setting is only enforced when the password is changed. This setting
+  does not force existing weak passwords to be changed.
+
+check:
+  # The is_policy_checked value of 0 indicates that the CHECK_POLICY
+  # option is OFF; value of 1 is ON. If is_disabled value is 1, then the
+  # login is disabled and unusable. If no rows are returned then either
+  # no SQL Authenticated logins exist or they all have CHECK_POLICY ON.
+  type: sql_no_rows_match
+  query: |
+    SELECT name, is_disabled
+    FROM sys.sql_logins
+    WHERE is_policy_checked = 0;
+
+remediation: |
+  For each <login_name> found by the Audit Procedure, execute the
+  following T-SQL statement:
+
+  ALTER LOGIN [<login_name>] WITH CHECK_POLICY = ON;
+
+  Note: In the case of AWS RDS do not perform this remediation for the
+  Master account.
+
+default_value: "CHECK_POLICY is ON"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/password-policy
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "5.2"
+      title: "Use Unique Passwords"
+  cis_controls_v7:
+    - id: "4.4"
+      title: "Use Unique Passwords"

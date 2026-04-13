@@ -1,0 +1,59 @@
+id: "3.2"
+title: "Ensure CONNECT permissions on the 'guest' user is Revoked within all SQL Server databases"
+section: "Authentication and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  Remove the right of the guest user to connect to SQL Server databases,
+  except for master, msdb, tempdb, and, on AWS RDS instances, rdsadmin.
+
+rationale: >
+  A login assumes the identity of the guest user when a login has access
+  to SQL Server but does not have access to a database through its own
+  account and the database has a guest user account. Revoking the
+  CONNECT permission for the guest user will ensure that a login is not
+  able to access database information without explicit access to do so.
+
+impact: >
+  When CONNECT permission to the guest user is revoked, a SQL Server
+  instance login must be mapped to a database user explicitly in order
+  to have access to the database.
+
+check:
+  # Iterated across every user database (system DBs are excluded by the
+  # evaluator's per-db iterator). A row in any DB indicates guest still
+  # has CONNECT granted there.
+  type: sql_no_rows_match_per_database
+  query: |
+    SELECT DB_NAME() AS DatabaseName, 'guest' AS Database_User,
+           [permission_name], [state_desc]
+    FROM sys.database_permissions
+    WHERE [grantee_principal_id] = DATABASE_PRINCIPAL_ID('guest')
+    AND [state_desc] LIKE 'GRANT%'
+    AND [permission_name] = 'CONNECT';
+
+remediation: |
+  -- For each database returned by the audit:
+  USE <database_name>;
+  GO
+  REVOKE CONNECT FROM guest;
+
+default_value: >
+  The guest user cannot have the CONNECT permission revoked in master,
+  msdb, tempdb, and, on AWS RDS instances, rdsadmin. This permission
+  should be revoked in all other databases.
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/policy-based-management/guest-permissions-on-user-databases
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.3"
+      title: "Configure Data Access Control Lists"
+  cis_controls_v7:
+    - id: "14.6"
+      title: "Protect Information through Access Control Lists"

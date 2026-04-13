@@ -1,0 +1,62 @@
+id: "7.3"
+title: "Ensure Database Backups are Encrypted"
+section: "Encryption"
+assessment: automated
+profile:
+  - "Level 2 - Database Engine"
+severity: HIGH
+
+description: >
+  Ensure Database Backups are Encrypted
+
+rationale: >
+  Databases may contain sensitive. Backups of this data allow the data
+  to easily leave the Enterprise and secure environments. Encrypting
+  the backup makes accessing the data much more difficult.
+
+impact: >
+  A database backup accidentally exposed to the Internet or transmitted
+  outside a secure environment can be easily restored to a SQL Server
+  anywhere and its contents discovered.
+
+check:
+  # Query msdb.dbo.backupset joined with sys.databases; any row = an
+  # unencrypted backup. PASS iff no rows returned.
+  type: sql_no_rows_match
+  database: msdb
+  query: |
+    SELECT
+      b.key_algorithm, b.encryptor_type, d.is_encrypted,
+      b.database_name,
+      b.server_name,
+      b.backup_finish_date
+    FROM msdb.dbo.backupset b
+    INNER JOIN sys.databases d ON b.database_name = d.name
+    WHERE b.key_algorithm IS NULL
+      AND b.encryptor_type IS NULL
+      AND d.is_encrypted = 0;
+
+remediation: |
+  SQL Server backups need to 'Back up to a new media set', not 'Back up
+  to the existing media set' in order to allow for encryption. The
+  backup option to Encrypt Backup can be implemented after a Certificate
+  or Asymmetric key has been applied to the SQL Server for this purpose.
+  Alternatively, encrypt the database with TDE. This automatically
+  encrypts the backups as well. See 7.5
+
+  Additional Information:
+  We recommend you purge backup history prior to the date you began
+  using encryption. Use sp_delete_backuphistory to purge old records.
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/backup-restore/backup-encryption
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.11"
+      title: "Encrypt Sensitive Data at Rest"
+    - id: "11.3"
+      title: "Protect Recovery Data"
+  cis_controls_v7:
+    - id: "14.8"
+      title: "Encrypt Sensitive Information at Rest"
