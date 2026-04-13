@@ -78,7 +78,7 @@ func run() error {
 	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey)
 	agentsH := handler.NewAgentsHandler(pgStore, hub, cfg.AgentReleasesURL)
 	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey)
-	probeH := handler.NewProbeHandler(pgStore, hub, cfg.CredentialEncryptionKey)
+	probeH := handler.NewProbeHandler(pgStore, ps, cfg.CredentialEncryptionKey)
 	bundlesH := handler.NewBundlesHandler(pgStore)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 
@@ -217,7 +217,11 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub) func(a
 				slog.Error("parsing probe_result payload", "agent_id", agentID, "error", err)
 				return
 			}
-			hub.DeliverProbeResult(result)
+			// Publish to Redis so whichever instance owns the originating
+			// HTTP probe handler can pick the result up.
+			if err := ps.PublishProbeResult(ctx, result.ProbeID, msg.Payload); err != nil {
+				slog.Error("publishing probe_result to redis", "probe_id", result.ProbeID, "error", err)
+			}
 
 		case websocket.TypeHeartbeat:
 			var hb websocket.HeartbeatPayload
