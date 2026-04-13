@@ -650,3 +650,50 @@ func (s *PostgresStore) DeleteAgent(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// UpsertCredential replaces the credential for a target (one credential
+// per target via the credentials_target_unique index).
+func (s *PostgresStore) UpsertCredential(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO credentials (tenant_id, target_id, type, encrypted_data)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (target_id) DO UPDATE
+		   SET type = EXCLUDED.type, encrypted_data = EXCLUDED.encrypted_data`,
+		tenantID, targetID, credType, encryptedData)
+	if err != nil {
+		return fmt.Errorf("upserting credential: %w", err)
+	}
+	return nil
+}
+
+// DeleteCredential removes a credential for a target, scoped to tenant.
+func (s *PostgresStore) DeleteCredential(ctx context.Context, tenantID, targetID string) error {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM credentials WHERE tenant_id = $1 AND target_id = $2`,
+		tenantID, targetID)
+	if err != nil {
+		return fmt.Errorf("deleting credential: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// HasCredential reports whether a target has a credential, and its type.
+// Used by the tenant UI to render 'credential set' vs 'no credential' without
+// ever exposing the ciphertext.
+func (s *PostgresStore) HasCredential(ctx context.Context, targetID string) (bool, string, error) {
+	var credType string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT type FROM credentials WHERE target_id = $1 LIMIT 1`, targetID).
+		Scan(&credType)
+	if err == sql.ErrNoRows {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", fmt.Errorf("checking credential: %w", err)
+	}
+	return true, credType, nil
+}

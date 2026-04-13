@@ -115,3 +115,14 @@ export const deleteAgent = (id: string) =>
   request<void>(`/api/v1/agents/${id}`, { method: 'DELETE' });
 export const getAgentDownloads = () =>
   request<AgentDownloads>('/api/v1/agents/downloads');
+
+// Credentials (per-target)
+export const getTargetCredential = (targetId: string) =>
+  request<{ set: boolean; type?: string }>(`/api/v1/targets/${targetId}/credential`);
+export const putTargetCredential = (targetId: string, type: string, data: Record<string, unknown>) =>
+  request<void>(`/api/v1/targets/${targetId}/credential`, {
+    method: 'PUT',
+    body: JSON.stringify({ type, data }),
+  });
+export const deleteTargetCredential = (targetId: string) =>
+  request<void>(`/api/v1/targets/${targetId}/credential`, { method: 'DELETE' });
