@@ -11,6 +11,7 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/crypto"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
+	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/store"
 	"github.com/jtb75/silkstrand/api/internal/websocket"
 )
@@ -23,11 +24,12 @@ const installTokenTTL = time.Hour
 type AgentsHandler struct {
 	store       store.Store
 	hub         *websocket.Hub
+	ps          *pubsub.PubSub
 	releasesURL string // base URL for agent binaries/installer, e.g. GCS bucket
 }
 
-func NewAgentsHandler(s store.Store, hub *websocket.Hub, releasesURL string) *AgentsHandler {
-	return &AgentsHandler{store: s, hub: hub, releasesURL: releasesURL}
+func NewAgentsHandler(s store.Store, hub *websocket.Hub, ps *pubsub.PubSub, releasesURL string) *AgentsHandler {
+	return &AgentsHandler{store: s, hub: hub, ps: ps, releasesURL: releasesURL}
 }
 
 // GET /api/v1/agents
@@ -304,13 +306,16 @@ func (h *AgentsHandler) Upgrade(w http.ResponseWriter, r *http.Request) {
 		BaseURL:          baseURL,
 		SHA256ByPlatform: req.SHA256ByPlatform,
 	})
-	if h.hub == nil {
-		writeError(w, http.StatusServiceUnavailable, "upgrade not available (no hub)")
+	if h.ps == nil {
+		writeError(w, http.StatusServiceUnavailable, "upgrade not available (no pubsub)")
 		return
 	}
-	if err := h.hub.Send(id, websocket.Message{Type: websocket.TypeUpgrade, Payload: payload}); err != nil {
-		slog.Warn("sending upgrade directive", "agent_id", id, "error", err)
-		writeError(w, http.StatusServiceUnavailable, "agent not connected")
+	// Route through Redis pub/sub — the API instance handling this HTTP
+	// request rarely owns the agent's WSS connection. Whichever instance
+	// has the connection picks up the published message and delivers it.
+	if err := h.ps.PublishUpgrade(r.Context(), id, payload); err != nil {
+		slog.Error("publishing upgrade directive", "agent_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to dispatch upgrade")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{

@@ -47,7 +47,15 @@ export default function Agents() {
 
   const upgradeMutation = useMutation({
     mutationFn: (id: string) => upgradeAgent(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['agents'] });
+      // Confirm to the user — without this the click is silent and the
+      // agent restart can take ~30s, which feels like nothing happened.
+      alert(`Upgrade requested → ${res.version}. Agent will download, verify, and restart in ~30s.`);
+    },
+    onError: (e) => {
+      alert(`Upgrade failed: ${(e as Error).message}`);
+    },
   });
 
   const oneLiner = installToken && apiURL

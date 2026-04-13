@@ -76,7 +76,7 @@ func run() error {
 	targetH := handler.NewTargetHandler(pgStore)
 	scanH := handler.NewScanHandler(pgStore, ps, hub)
 	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey)
-	agentsH := handler.NewAgentsHandler(pgStore, hub, cfg.AgentReleasesURL)
+	agentsH := handler.NewAgentsHandler(pgStore, hub, ps, cfg.AgentReleasesURL)
 	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey)
 	probeH := handler.NewProbeHandler(pgStore, ps, cfg.CredentialEncryptionKey)
 	bundlesH := handler.NewBundlesHandler(pgStore)
