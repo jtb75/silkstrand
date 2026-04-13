@@ -430,7 +430,7 @@ def _build_error_result(target_identifier: str, error_msg: str, started: str) ->
 
     return {
         "schema_version": "1",
-        "bundle": {"name": "cis-postgresql-16", "version": "1.0.1"},
+        "bundle": {"name": "cis-postgresql-16", "version": "1.0.2"},
         "target": {"type": "database", "identifier": target_identifier},
         "started_at": started,
         "completed_at": _now_iso(),
@@ -462,11 +462,24 @@ def main() -> None:
         _log(f"Failed to read target config from {config_path}: {exc}")
         sys.exit(1)
 
+    # Credentials are written to a separate file by the agent runner
+    # (SILKSTRAND_CREDENTIALS); merge them into the connection params so
+    # secret material never has to live in target_config.
+    creds = {}
+    creds_path = os.environ.get("SILKSTRAND_CREDENTIALS")
+    if creds_path:
+        try:
+            with open(creds_path, "r") as f:
+                creds = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            _log(f"Failed to read credentials from {creds_path}: {exc}")
+            sys.exit(1)
+
     host = config.get("host", "localhost")
     port = config.get("port", 5432)
     database = config.get("database", "postgres")
-    username = config.get("username", "postgres")
-    password = config.get("password", "")
+    username = creds.get("username") or config.get("username", "postgres")
+    password = creds.get("password") or config.get("password", "")
     sslmode = config.get("sslmode", "prefer")
 
     target_identifier = f"{host}:{port}/{database}"
@@ -517,7 +530,7 @@ def main() -> None:
 
     result = {
         "schema_version": "1",
-        "bundle": {"name": "cis-postgresql-16", "version": "1.0.1"},
+        "bundle": {"name": "cis-postgresql-16", "version": "1.0.2"},
         "target": {"type": "database", "identifier": target_identifier},
         "started_at": started,
         "completed_at": _now_iso(),
