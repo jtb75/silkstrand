@@ -753,3 +753,51 @@ func (s *PostgresStore) ConsumeInstallToken(ctx context.Context, tokenHash []byt
 	}
 	return tenantID, nil
 }
+
+// ListBundlesForTenant returns bundles available to a tenant: either global
+// (tenant_id IS NULL) or explicitly owned by this tenant.
+func (s *PostgresStore) ListBundlesForTenant(ctx context.Context, tenantID string) ([]model.Bundle, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, name, version, framework, target_type, gcs_path, signature, created_at
+		   FROM bundles
+		  WHERE tenant_id IS NULL OR tenant_id = $1
+		  ORDER BY name, version`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing bundles: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Bundle
+	for rows.Next() {
+		var b model.Bundle
+		if err := rows.Scan(&b.ID, &b.TenantID, &b.Name, &b.Version, &b.Framework, &b.TargetType,
+			&b.GCSPath, &b.Signature, &b.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning bundle: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// UpsertBundle creates or updates a bundle by id. Used to seed global bundles
+// via the backoffice internal API.
+func (s *PostgresStore) UpsertBundle(ctx context.Context, b model.Bundle) (*model.Bundle, error) {
+	var out model.Bundle
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO bundles (id, tenant_id, name, version, framework, target_type, gcs_path, signature)
+		 VALUES (COALESCE(NULLIF($1, '')::uuid, uuid_generate_v4()), $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (id) DO UPDATE
+		   SET name = EXCLUDED.name,
+		       version = EXCLUDED.version,
+		       framework = EXCLUDED.framework,
+		       target_type = EXCLUDED.target_type,
+		       gcs_path = EXCLUDED.gcs_path,
+		       signature = EXCLUDED.signature
+		 RETURNING id, tenant_id, name, version, framework, target_type, gcs_path, signature, created_at`,
+		b.ID, b.TenantID, b.Name, b.Version, b.Framework, b.TargetType, b.GCSPath, b.Signature).
+		Scan(&out.ID, &out.TenantID, &out.Name, &out.Version, &out.Framework, &out.TargetType,
+			&out.GCSPath, &out.Signature, &out.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("upserting bundle: %w", err)
+	}
+	return &out, nil
+}

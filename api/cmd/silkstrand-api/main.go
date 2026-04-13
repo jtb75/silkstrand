@@ -79,6 +79,7 @@ func run() error {
 	agentsH := handler.NewAgentsHandler(pgStore, hub, cfg.AgentReleasesURL)
 	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey)
 	probeH := handler.NewProbeHandler(pgStore, hub, cfg.CredentialEncryptionKey)
+	bundlesH := handler.NewBundlesHandler(pgStore)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 
 	// Router
@@ -100,6 +101,7 @@ func run() error {
 
 	// Internal API routes (backoffice access via API key)
 	internalMux := http.NewServeMux()
+	internalMux.HandleFunc("PUT /internal/v1/bundles", internalH.UpsertBundle)
 	internalMux.HandleFunc("POST /internal/v1/tenants", internalH.CreateTenant)
 	internalMux.HandleFunc("GET /internal/v1/tenants", internalH.ListTenants)
 	internalMux.HandleFunc("GET /internal/v1/tenants/{id}", internalH.GetTenant)
@@ -123,6 +125,8 @@ func run() error {
 	apiMux.HandleFunc("PUT /api/v1/targets/{id}/credential", credsH.Put)
 	apiMux.HandleFunc("DELETE /api/v1/targets/{id}/credential", credsH.Delete)
 	apiMux.HandleFunc("POST /api/v1/targets/{id}/probe", probeH.Probe)
+
+	apiMux.HandleFunc("GET /api/v1/bundles", bundlesH.List)
 
 	apiMux.HandleFunc("GET /api/v1/agents/downloads", agentsH.Downloads)
 	apiMux.HandleFunc("GET /api/v1/agents", agentsH.List)

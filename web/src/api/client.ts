@@ -6,6 +6,7 @@ import type {
   Agent,
   CreateAgentResponse,
   AgentDownloads,
+  Bundle,
 } from './types';
 
 // DC API base URL is resolved at call time from the active tenant context.
@@ -101,6 +102,7 @@ export const createScan = (targetId: string, bundleId: string) =>
     body: JSON.stringify({ target_id: targetId, bundle_id: bundleId }),
   });
 export const getScan = (id: string) => request<Scan>(`/api/v1/scans/${id}`);
+export const listBundles = () => request<Bundle[]>('/api/v1/bundles');
 
 // Agents
 export const listAgents = () => request<Agent[]>('/api/v1/agents');
