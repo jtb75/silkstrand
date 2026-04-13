@@ -158,8 +158,12 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 	}
 
 	// Build enriched directive message
+	var bundleURL string
+	if bundle.GCSPath != nil {
+		bundleURL = *bundle.GCSPath
+	}
 	msg := websocket.NewDirectiveMessage(
-		d.ScanID, d.BundleID, bundle.Name, bundle.Version,
+		d.ScanID, d.BundleID, bundle.Name, bundle.Version, bundleURL,
 		d.TargetID, target.Type, target.Identifier, target.Config, creds,
 	)
 

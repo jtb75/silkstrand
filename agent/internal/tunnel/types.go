@@ -53,6 +53,7 @@ type DirectivePayload struct {
 	BundleID         string          `json:"bundle_id"`
 	BundleName       string          `json:"bundle_name"`
 	BundleVersion    string          `json:"bundle_version"`
+	BundleURL        string          `json:"bundle_url,omitempty"` // HTTPS URL to a .tar.gz; agent fetches if not cached
 	TargetID         string          `json:"target_id"`
 	TargetType       string          `json:"target_type"`
 	TargetIdentifier string          `json:"target_identifier"`

@@ -164,14 +164,14 @@ func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunn
 	sendStarted(tun, d.ScanID)
 
 	// Resolve bundle from cache
-	bundlePath, err := c.Get(d.BundleName, d.BundleVersion)
+	bundlePath, err := c.GetOrFetch(d.BundleName, d.BundleVersion, d.BundleURL)
 	if err != nil {
 		if errors.Is(err, cache.ErrNotCached) {
 			slog.Error("bundle not found in cache", "bundle", d.BundleName, "version", d.BundleVersion)
 			sendError(tun, d.ScanID, "bundle not cached: "+d.BundleName+"@"+d.BundleVersion)
 		} else {
-			slog.Error("cache lookup failed", "error", err)
-			sendError(tun, d.ScanID, "cache error: "+err.Error())
+			slog.Error("bundle fetch failed", "error", err)
+			sendError(tun, d.ScanID, "bundle error: "+err.Error())
 		}
 		return
 	}

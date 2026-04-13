@@ -4,14 +4,14 @@ import "encoding/json"
 
 // Message type constants for the agent WebSocket protocol.
 const (
-	TypeDirective    = "directive"
-	TypeScanStarted  = "scan_started"
-	TypeScanResults  = "scan_results"
-	TypeScanError    = "scan_error"
-	TypeHeartbeat    = "heartbeat"
-	TypeUpgrade      = "upgrade"
-	TypeProbe        = "probe"
-	TypeProbeResult  = "probe_result"
+	TypeDirective   = "directive"
+	TypeScanStarted = "scan_started"
+	TypeScanResults = "scan_results"
+	TypeScanError   = "scan_error"
+	TypeHeartbeat   = "heartbeat"
+	TypeUpgrade     = "upgrade"
+	TypeProbe       = "probe"
+	TypeProbeResult = "probe_result"
 )
 
 // UpgradePayload tells the agent to fetch a new binary and restart.
@@ -44,6 +44,7 @@ type DirectivePayload struct {
 	BundleID         string          `json:"bundle_id"`
 	BundleName       string          `json:"bundle_name"`
 	BundleVersion    string          `json:"bundle_version"`
+	BundleURL        string          `json:"bundle_url,omitempty"`
 	TargetID         string          `json:"target_id"`
 	TargetType       string          `json:"target_type"`
 	TargetIdentifier string          `json:"target_identifier"`
@@ -69,12 +70,13 @@ type HeartbeatPayload struct {
 }
 
 // NewDirectiveMessage creates a Message containing an enriched scan directive.
-func NewDirectiveMessage(scanID, bundleID, bundleName, bundleVersion, targetID, targetType, targetIdentifier string, targetConfig, credentials json.RawMessage) Message {
+func NewDirectiveMessage(scanID, bundleID, bundleName, bundleVersion, bundleURL, targetID, targetType, targetIdentifier string, targetConfig, credentials json.RawMessage) Message {
 	payload := DirectivePayload{
 		ScanID:           scanID,
 		BundleID:         bundleID,
 		BundleName:       bundleName,
 		BundleVersion:    bundleVersion,
+		BundleURL:        bundleURL,
 		TargetID:         targetID,
 		TargetType:       targetType,
 		TargetIdentifier: targetIdentifier,
