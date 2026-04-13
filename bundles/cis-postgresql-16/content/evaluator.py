@@ -236,7 +236,15 @@ def _id_key(control: dict):
 def _load_controls(controls_dir: Path) -> list[dict]:
     out = []
     for p in controls_dir.glob("*.yaml"):
-        with p.open() as f:
+        # Skip macOS AppleDouble companion files (._*.yaml). macOS `tar`
+        # writes these alongside real files when the source has any
+        # extended attribute; the binary metadata bombs the YAML loader.
+        if p.name.startswith("._"):
+            continue
+        # Force UTF-8. launchd-spawned agents on macOS inherit no locale,
+        # which flips open()'s default encoding away from UTF-8 and bombs
+        # on em-dashes in rationale/remediation text.
+        with p.open(encoding="utf-8") as f:
             doc = yaml.safe_load(f)
             doc["_source_file"] = p.name
             out.append(doc)

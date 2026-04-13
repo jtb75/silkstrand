@@ -236,7 +236,11 @@ def _id_key(control: dict):
 def _load_controls(controls_dir: Path) -> list[dict]:
     out = []
     for p in controls_dir.glob("*.yaml"):
-        with p.open() as f:
+        # Skip macOS AppleDouble companion files (._*.yaml).
+        if p.name.startswith("._"):
+            continue
+        # Force UTF-8 — launchd-spawned services don't inherit a locale.
+        with p.open(encoding="utf-8") as f:
             doc = yaml.safe_load(f)
             doc["_source_file"] = p.name
             out.append(doc)

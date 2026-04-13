@@ -1,5 +1,5 @@
 name: cis-mongodb-8
-version: 0.1.0
+version: 0.1.2
 framework: python
 runtime_version: ">=3.9"
 target_type: database
