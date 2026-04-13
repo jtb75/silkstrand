@@ -282,6 +282,8 @@ jobs:
             -var="backoffice_encryption_key=${{ secrets.BACKOFFICE_ENCRYPTION_KEY }}" \
             -var="tenant_jwt_secret=${{ secrets.TENANT_JWT_SECRET }}" \
             -var="github_actions_sa_email=${{ vars.WIF_SA_PROD }}" \
+            -var="resend_api_key=${{ secrets.RESEND_API_KEY }}" \
+            -var="bootstrap_admin_password=${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}" \
             -out=tfplan 2>&1 | tee plan-output.txt
         continue-on-error: true
 
