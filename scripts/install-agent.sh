@@ -125,12 +125,31 @@ bootstrap_agent() {
     agent_version=$("$INSTALL_DIR/silkstrand-agent" version 2>/dev/null || echo "")
     log "Registering agent '$NAME' (version $agent_version)"
     payload=$(printf '{"install_token":"%s","name":"%s","version":"%s"}' "$TOKEN" "$NAME" "$agent_version")
-    resp=$(curl -fsS -X POST \
+
+    # Capture HTTP status + body separately so we can surface the server's
+    # JSON error message (rather than curl's generic '(22) 401').
+    resp_file=$(mktemp)
+    http_code=$(curl -sS -o "$resp_file" -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' \
         -d "$payload" \
-        "${API_URL}/api/v1/agents/bootstrap")
+        "${API_URL}/api/v1/agents/bootstrap" 2>/dev/null || echo "000")
+    resp=$(cat "$resp_file")
+    rm -f "$resp_file"
 
-    # Minimal JSON parse without jq: extract agent_id and api_key by key.
+    if [ "$http_code" = "000" ]; then
+        fail "bootstrap request failed to reach the server (network error). Verify --api-url is reachable."
+    fi
+    if [ "$http_code" -ge 400 ]; then
+        # Pull the "error" field from the JSON body if present.
+        server_msg=$(printf '%s' "$resp" | sed -n 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+        if [ -z "$server_msg" ]; then server_msg="${resp:-<empty body>}"; fi
+        case "$http_code" in
+            401) fail "install token rejected (HTTP 401): $server_msg
+Tokens are single-use and expire after 1 hour — generate a new one in the SilkStrand UI." ;;
+            *)   fail "bootstrap failed (HTTP $http_code): $server_msg" ;;
+        esac
+    fi
+
     agent_id=$(printf '%s' "$resp" | sed -n 's/.*"agent_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
     api_key=$(printf '%s' "$resp" | sed -n 's/.*"api_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
     [ -n "$agent_id" ] || fail "server did not return agent_id (response: $resp)"
@@ -274,6 +293,16 @@ do_uninstall() {
     log "Uninstalled silkstrand-agent"
 }
 
+cleanup_partial_install() {
+    # Roll back anything a failing install left behind. Called from the
+    # EXIT trap when the script exits non-zero mid-install.
+    [ "${INSTALL_SUCCEEDED:-0}" -eq 1 ] && return 0
+    [ -z "${INSTALL_STARTED:-}" ] && return 0
+    printf 'error: install failed — rolling back partial install\n' >&2
+    rm -f "$INSTALL_DIR/silkstrand-agent" 2>/dev/null || true
+    rm -rf "$CONFIG_DIR" 2>/dev/null || true
+}
+
 main() {
     parse_args "$@"
     need curl
@@ -282,6 +311,10 @@ main() {
         return 0
     fi
     need_root
+
+    INSTALL_STARTED=1
+    trap cleanup_partial_install EXIT
+
     download_binary
     if [ -n "$TOKEN" ] || [ -n "$API_URL" ]; then
         bootstrap_agent
@@ -300,6 +333,7 @@ Generate an install token in the SilkStrand UI and re-run:
     --token=<token> --api-url=<DC url> --name=\$(hostname) --as-service
 EOF
     fi
+    INSTALL_SUCCEEDED=1
 }
 
 main "$@"
