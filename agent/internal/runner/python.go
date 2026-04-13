@@ -51,6 +51,19 @@ func (r *PythonRunner) Run(ctx context.Context, req RunRequest) (json.RawMessage
 	env := os.Environ()
 	env = append(env, "SILKSTRAND_TARGET_CONFIG="+targetConfigPath)
 
+	// If the manifest declares a vendor directory, prepend it to PYTHONPATH so
+	// the bundle's pure-Python dependencies are importable without touching
+	// system site-packages.
+	if req.Manifest.VendorDir != "" {
+		vendorPath := filepath.Join(bundlePath, req.Manifest.VendorDir)
+		existing := os.Getenv("PYTHONPATH")
+		if existing != "" {
+			env = append(env, "PYTHONPATH="+vendorPath+string(os.PathListSeparator)+existing)
+		} else {
+			env = append(env, "PYTHONPATH="+vendorPath)
+		}
+	}
+
 	// Write credentials if provided
 	if len(req.Credentials) > 0 && string(req.Credentials) != "null" {
 		credentialsPath := filepath.Join(tmpDir, "credentials.json")

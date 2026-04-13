@@ -7,6 +7,7 @@
 *.test
 *.out
 vendor/
+!bundles/**/vendor/
 bin/
 
 # React / Node
