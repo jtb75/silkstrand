@@ -1,0 +1,45 @@
+id: "3.1.21"
+title: "Ensure 'log_disconnections' is enabled"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  Enabling the log_disconnections setting logs the end of each
+  session, including session duration. This parameter cannot be
+  changed after the session start.
+
+rationale: >
+  PostgreSQL does not maintain the beginning or ending of a connection
+  internally for later review. It is only by enabling the logging of
+  these that one can examine connections for failed attempts, 'over
+  long' duration, or other anomalies. Note that enabling this without
+  also enabling log_connections provides little value. Generally, you
+  would enable/disable the pair together.
+
+check:
+  type: sql_configuration
+  query: "SHOW log_disconnections;"
+  assertions:
+    - field: log_disconnections
+      op: equals
+      value: "on"
+
+remediation: |
+  ALTER SYSTEM SET log_disconnections = 'on';
+  SELECT pg_reload_conf();
+
+default_value: "off"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.3"
+      title: "Enable Detailed Logging"

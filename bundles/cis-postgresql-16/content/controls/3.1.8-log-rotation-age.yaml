@@ -1,0 +1,47 @@
+id: "3.1.8"
+title: "Ensure the maximum log file lifetime is set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  When logging_collector is enabled, the log_rotation_age parameter
+  determines the maximum lifetime of an individual log file (depending
+  on the value of log_filename). After this many minutes have elapsed,
+  a new log file will be created via automatic log file rotation.
+  Current best practices advise log rotation at least daily, but your
+  organization's logging policy should dictate your rotation schedule.
+
+rationale: >
+  Log rotation is a standard best practice for log management.
+
+check:
+  # log_rotation_age is reported in minutes via SHOW (e.g. "1d", "1h").
+  # Any non-zero value means rotation is configured. The setting is
+  # returned as a human-friendly unit string; use pattern_match to
+  # accept any value other than literal "0".
+  type: sql_configuration
+  query: "SHOW log_rotation_age;"
+  assertions:
+    - field: log_rotation_age
+      op: not_equals
+      value: "0"
+
+remediation: |
+  ALTER SYSTEM SET log_rotation_age='1h';
+  SELECT pg_reload_conf();
+
+default_value: "1d (one day)"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.3"
+      title: "Ensure Adequate Audit Log Storage"
+  cis_controls_v7:
+    - id: "6.4"
+      title: "Ensure adequate storage for logs"

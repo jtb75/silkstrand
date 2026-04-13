@@ -1,0 +1,54 @@
+id: "6.9"
+title: "Ensure the TLSv1.0 and TLSv1.1 Protocols are Disabled"
+section: "PostgreSQL Settings"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: HIGH
+
+description: >
+  Transport Layer Security (TLS), and its predecessor Secure Sockets
+  Layer (SSL) are cryptographic protocols which can be used to
+  encrypt data sent between client and server.
+
+rationale: >
+  The TLSv1.0 protocol is vulnerable to the BEAST attack when used in
+  CBC mode (October 2011). TLSv1.0 uses CBC modes for all of the
+  block mode ciphers, which only leaves the RC4 streaming cipher
+  which is also weak and therefore not recommended. Therefore, it is
+  recommended that the TLSv1.0 protocol is disabled. The TLSv1.1
+  protocol does not support Authenticated Encryption with Associated
+  Data (AEAD) which is designed to simultaneously provide
+  confidentiality, integrity, and authenticity. All major up-to-date
+  browsers support TLSv1.2, and most recent versions of Firefox and
+  Chrome support the newer TLSv1.3 protocol, since 2017. IETF
+  deprecated TLSv1.0 and TLSv1.1 in March 2021 (see RFC 8996).
+
+check:
+  type: sql_configuration
+  query: "SHOW ssl_min_protocol_version;"
+  assertions:
+    - field: ssl_min_protocol_version
+      op: in
+      value: ["TLSv1.2", "TLSv1.3"]
+
+remediation: |
+  Adjust the ssl_min_protocol_version to at least TLSv1.2:
+
+  ALTER SYSTEM SET ssl_min_protocol_version = 'TLSv1.2';
+
+  Or (preferred):
+
+  ALTER SYSTEM SET ssl_min_protocol_version = 'TLSv1.3';
+
+  Then reload:
+
+  SELECT pg_reload_conf();
+
+references:
+  - https://ssl-config.mozilla.org/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.10"
+      title: "Encrypt Sensitive Data in Transit"

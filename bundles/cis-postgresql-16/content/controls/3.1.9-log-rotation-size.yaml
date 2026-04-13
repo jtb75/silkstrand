@@ -1,0 +1,43 @@
+id: "3.1.9"
+title: "Ensure the maximum log file size is set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  The log_rotation_size setting determines the maximum size of an
+  individual log file. Once the maximum size is reached, automatic log
+  file rotation will occur.
+
+rationale: >
+  If this is set to zero, the size-triggered creation of new log files
+  is disabled. This will prevent automatic log file rotation when files
+  become too large, which could put log data at increased risk of loss
+  (unless age-based rotation is configured).
+
+check:
+  type: sql_configuration
+  query: "SHOW log_rotation_size;"
+  assertions:
+    - field: log_rotation_size
+      op: not_equals
+      value: "0"
+
+remediation: |
+  ALTER SYSTEM SET log_rotation_size = '1GB';
+  SELECT pg_reload_conf();
+
+default_value: "0"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.3"
+      title: "Ensure Adequate Audit Log Storage"
+  cis_controls_v7:
+    - id: "6.4"
+      title: "Ensure adequate storage for logs"

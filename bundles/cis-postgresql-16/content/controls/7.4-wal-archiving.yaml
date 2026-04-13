@@ -1,0 +1,70 @@
+id: "7.4"
+title: "Ensure WAL archiving is configured and functional"
+section: "Replication"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL on Linux"
+severity: MEDIUM
+
+description: >
+  Write Ahead Log (WAL) Archiving, or Log Shipping, is the process of
+  sending transaction log files from the PRIMARY host either to one or
+  more STANDBY hosts or to be archived on a remote storage device for
+  later use, e.g. PITR. There are several utilities that can copy
+  WALs including, but not limited to, cp, scp, sftp, and rynsc.
+  Basically, the server follows a set of runtime parameters which
+  define when the WAL should be copied using one of the aforementioned
+  utilities.
+
+rationale: >
+  Unless the server has been correctly configured, one runs the risk
+  of sending WALs in an unsecured, unencrypted fashion.
+
+check:
+  # archive_mode must be 'on' and one of archive_command or
+  # archive_library must have a non-empty, non-placeholder value.
+  # The CIS audit query filters out unset / disabled values and
+  # passes when at least one row survives.
+  type: sql_configuration
+  query: |
+    SELECT name, setting
+    FROM pg_settings
+    WHERE name IN ('archive_mode','archive_command','archive_library')
+      AND setting IS NOT NULL
+      AND setting <> 'off'
+      AND setting <> '(disabled)'
+      AND setting <> '';
+  existence: at_least_one_row
+  aggregation: any_row_matches
+  assertions:
+    - field: name
+      op: equals
+      value: archive_mode
+
+remediation: |
+  Set archive_mode to 'on' and configure archive_command or
+  archive_library in postgresql.conf:
+
+  ALTER SYSTEM SET archive_mode = 'on';
+  ALTER SYSTEM SET archive_command = 'cp %p /path/to/archive/%f';
+
+  Restart the server as required.
+
+  To verify WAL archiving is functioning successfully:
+
+  SELECT * FROM pg_stat_archiver;
+
+  Ensure that archived_count, last_archived_wal, and last_archived_time
+  are changing while failed_count, last_failed_wal, and
+  last_failed_time are not changing.
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-wal.html#RUNTIME-CONFIG-WAL-ARCHIVING
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.10"
+      title: "Encrypt Sensitive Data in Transit"
+  cis_controls_v7:
+    - id: "14.4"
+      title: "Encrypt All Sensitive Information in Transit"

@@ -1,0 +1,76 @@
+id: "6.2"
+title: "Ensure 'backend' runtime parameters are configured correctly"
+section: "PostgreSQL Settings"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  In order to serve multiple clients efficiently, the PostgreSQL
+  server launches a new "backend" process for each client. The
+  runtime parameters in this benchmark section are controlled by the
+  backend process. The server's performance, in the form of slow
+  queries causing a denial of service, and the RDBM's auditing
+  abilities for determining root cause analysis can be potentially
+  compromised via these parameters.
+
+rationale: >
+  A denial of service is possible by denying the use of indexes and
+  by slowing down client access to an unreasonable level. Unsanctioned
+  behavior can be introduced by introducing rogue libraries which can
+  then be called in a database session. Logging can be altered and
+  obfuscated inhibiting root cause analysis.
+
+impact: >
+  All changes made on this level will affect the overall behavior of
+  the server. These changes can only be affected by a server restart
+  after the parameters have been altered in the configuration files.
+
+check:
+  # Query the backend-context settings and ensure every listed GUC is
+  # at the expected safe default. The audit lists six parameters; all
+  # must match their expected value.
+  type: sql_configuration
+  query: |
+    SELECT name, setting
+    FROM pg_settings
+    WHERE context IN ('backend','superuser-backend')
+    ORDER BY 1;
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: name
+      op: in
+      value:
+        - ignore_system_indexes
+        - jit_debugging_support
+        - jit_profiling_support
+        - log_connections
+        - log_disconnections
+        - post_auth_delay
+
+remediation: |
+  The exploit is made in the configuration files. Once detected, the
+  unauthorized/undesired change can be corrected by editing the
+  altered configuration file and executing a server restart.
+
+  Expected safe values:
+    ignore_system_indexes = off
+    jit_debugging_support = off
+    jit_profiling_support = off
+    log_connections       = on
+    log_disconnections    = on
+    post_auth_delay       = 0
+
+references:
+  - https://www.postgresql.org/docs/current/static/view-pg-settings.html
+  - https://www.postgresql.org/docs/current/static/runtime-config.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "16.7"
+      title: "Use Standard Hardening Configuration Templates for Application Infrastructure"
+  cis_controls_v7:
+    - id: "18.11"
+      title: "Use Standard Hardening Configuration Templates for Databases"

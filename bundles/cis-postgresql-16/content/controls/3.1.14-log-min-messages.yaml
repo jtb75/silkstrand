@@ -1,0 +1,48 @@
+id: "3.1.14"
+title: "Ensure the correct messages are written to the server log"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  The log_min_messages setting specifies the message levels that are
+  written to the server log. Each level includes all the levels that
+  follow it. The lower the level, the fewer messages are logged. Valid
+  values are DEBUG5, DEBUG4, DEBUG3, DEBUG2, DEBUG1, INFO, NOTICE,
+  WARNING, ERROR, LOG, FATAL, and PANIC. WARNING is considered the
+  best practice unless indicated otherwise by your organization's
+  logging policy.
+
+rationale: >
+  If this is not set to the correct value, too many or too few
+  messages may be written to the server log.
+
+check:
+  # Acceptable values are anything at or more verbose than warning
+  # (i.e. not error / log / fatal / panic which would suppress
+  # warnings). pg_settings reports the value lowercased.
+  type: sql_configuration
+  query: "SHOW log_min_messages;"
+  assertions:
+    - field: log_min_messages
+      op: in
+      value: ["debug5", "debug4", "debug3", "debug2", "debug1", "info", "notice", "warning"]
+
+remediation: |
+  ALTER SYSTEM SET log_min_messages = 'warning';
+  SELECT pg_reload_conf();
+
+default_value: "WARNING"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.3"
+      title: "Ensure Adequate Audit Log Storage"
+  cis_controls_v7:
+    - id: "6.4"
+      title: "Ensure adequate storage for logs"

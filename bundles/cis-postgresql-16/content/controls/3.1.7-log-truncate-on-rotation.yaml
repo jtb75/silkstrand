@@ -1,0 +1,47 @@
+id: "3.1.7"
+title: "Ensure 'log_truncate_on_rotation' is enabled"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  Enabling the log_truncate_on_rotation setting when logging_collector
+  is enabled causes PostgreSQL to truncate (overwrite) existing log
+  files with the same name during log rotation instead of appending to
+  them. Truncation will occur only when a new file is being opened due
+  to time-based rotation, not during server startup or size-based
+  rotation.
+
+rationale: >
+  If this setting is disabled, pre-existing log files will be appended
+  to if log_filename is configured in such a way that static or
+  recurring names are generated. Enabling or disabling the truncation
+  should only be decided when also considering the value of
+  log_filename and log_rotation_age/log_rotation_size.
+
+check:
+  type: sql_configuration
+  query: "SHOW log_truncate_on_rotation;"
+  assertions:
+    - field: log_truncate_on_rotation
+      op: equals
+      value: "on"
+
+remediation: |
+  ALTER SYSTEM SET log_truncate_on_rotation = 'on';
+  SELECT pg_reload_conf();
+
+default_value: "on"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.3"
+      title: "Ensure Adequate Audit Log Storage"
+  cis_controls_v7:
+    - id: "6.4"
+      title: "Ensure adequate storage for logs"

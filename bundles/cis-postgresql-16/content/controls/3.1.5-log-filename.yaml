@@ -1,0 +1,48 @@
+id: "3.1.5"
+title: "Ensure the filename pattern for log files is set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  The log_filename setting specifies the filename pattern for log files.
+  The value for log_filename should match your organization's logging
+  policy. The value is treated as a strftime pattern, so %-escapes can
+  be used to specify time-varying file names.
+
+rationale: >
+  If log_filename is not set, then the value of log_directory is
+  appended to an empty string and PostgreSQL will fail to start as it
+  will try to write to a directory instead of a file.
+
+check:
+  type: sql_configuration
+  query: "SHOW log_filename;"
+  assertions:
+    - field: log_filename
+      op: pattern_match
+      value: ".+"
+
+remediation: |
+  ALTER SYSTEM SET log_filename='postgresql-%Y%m%d.log';
+  SELECT pg_reload_conf();
+
+default_value: "postgresql-%a.log (creates a new log file for each day of the week)"
+
+references:
+  - https://man7.org/linux/man-pages/man3/strftime.3.html
+  - https://www.postgresql.org/docs/current/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.2"
+      title: "Collect Audit Logs"
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.2"
+      title: "Activate audit logging"
+    - id: "6.3"
+      title: "Enable Detailed Logging"

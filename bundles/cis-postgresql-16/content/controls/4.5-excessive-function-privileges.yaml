@@ -1,0 +1,74 @@
+id: "4.5"
+title: "Ensure excessive function privileges are revoked"
+section: "User Access and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: HIGH
+
+description: >
+  In certain situations, to provide the required functionality,
+  PostgreSQL needs to execute internal logic (stored procedures,
+  functions, triggers, etc.) and/or external code modules with
+  elevated privileges. However, if the privileges required for
+  execution are at a higher level than the privileges assigned to
+  organizational users invoking the functionality
+  applications/programs, those users are indirectly provided with
+  greater privileges than assigned by their organization. This is
+  known as privilege elevation. Privilege elevation must be utilized
+  only where necessary. Execute privileges for application functions
+  should be restricted to authorized users only.
+
+rationale: >
+  Ideally, all application source code should be vetted to validate
+  interactions between the application and the logic in the database,
+  but this is usually not possible or feasible with available
+  resources even if the source code is available. The DBA should
+  attempt to obtain assurances from the development organization that
+  this issue has been addressed and should document what has been
+  discovered. The DBA should also inspect all application logic
+  stored in the database (in the form of functions, rules, and
+  triggers) for excessive privileges.
+
+check:
+  # CIS audit: list SECURITY DEFINER functions and ensure any
+  # elevation is expected. The benchmark flags any function with
+  # prosecdef = true that is not built-in (excludes pgaudit% and the
+  # pg_catalog schema via proconfig IS NULL heuristic in the doc).
+  # We pass if no rows are returned — i.e. no user-created SECURITY
+  # DEFINER functions exist. Built-in pg_catalog entries are excluded.
+  type: sql_no_rows_match
+  query: |
+    SELECT n.nspname AS schema, p.proname AS function, r.rolname AS owner
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    JOIN pg_authid r ON r.oid = p.proowner
+    WHERE p.prosecdef = true
+      AND p.proname NOT LIKE 'pgaudit%'
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema');
+
+remediation: |
+  Where possible, revoke SECURITY DEFINER on PostgreSQL functions. To
+  change a SECURITY DEFINER function to SECURITY INVOKER, run:
+
+  ALTER FUNCTION [functionname] SECURITY INVOKER;
+
+  If it is not possible to revoke SECURITY DEFINER, ensure the
+  function can be executed by only the accounts that absolutely need
+  such functionality:
+
+  REVOKE EXECUTE ON FUNCTION <function>(<args>) FROM <role>;
+
+references:
+  - https://www.postgresql.org/docs/current/static/catalog-pg-proc.html
+  - https://www.postgresql.org/docs/current/static/sql-grant.html
+  - https://www.postgresql.org/docs/current/static/sql-revoke.html
+  - https://www.postgresql.org/docs/current/static/sql-createfunction.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "4.1"
+      title: "Establish and Maintain a Secure Configuration Process"
+  cis_controls_v7:
+    - id: "5.1"
+      title: "Establish Secure Configurations"

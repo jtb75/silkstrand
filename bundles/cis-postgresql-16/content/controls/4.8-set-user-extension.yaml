@@ -1,0 +1,69 @@
+id: "4.8"
+title: "Ensure the set_user extension is installed"
+section: "User Access and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  PostgreSQL access to the superuser database role must be controlled
+  and audited to prevent unauthorized access.
+
+rationale: >
+  Even when reducing and limiting the access to the superuser role as
+  described earlier in this benchmark, it is still difficult to
+  determine who accessed the superuser role and what actions were
+  taken using that role. As such, it is ideal to prevent anyone from
+  logging in as the superuser and forcing them to escalate their
+  role. This model is used at the OS level by the use of sudo and
+  should be emulated in the database. The set_user extension allows
+  for this setup.
+
+impact: >
+  Much like the venerable sudo does for the OS, set_user manages
+  superuser access for PostgreSQL. Note that some external tools
+  assume they can connect as the postgres user by default and this is
+  no longer true when set_user is deployed. You may find some tools
+  need different options, reconfigured, or even abandoned to
+  compensate for this.
+
+check:
+  # Only verify the extension is *available* to the cluster — the
+  # second half of the CIS audit (ensuring no unprivileged roles can
+  # log in as superuser) overlaps with 7.1 of the old hand-written
+  # checks and cannot be expressed concisely as a single primitive.
+  type: sql_configuration
+  query: |
+    SELECT name FROM pg_available_extensions WHERE name = 'set_user';
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: name
+      op: equals
+      value: "set_user"
+
+remediation: |
+  Install the set_user extension package for your PostgreSQL
+  distribution, add 'set_user' to shared_preload_libraries, restart
+  the server, then:
+
+  CREATE EXTENSION set_user;
+  GRANT EXECUTE ON FUNCTION set_user(text) TO <dba_user>;
+  GRANT EXECUTE ON FUNCTION set_user_u(text) TO <dba_user>;
+
+  Once all DBA normal user accounts have been GRANTed permission,
+  revoke the ability to login as the postgres (superuser) user:
+
+  ALTER USER postgres NOLOGIN;
+
+references:
+  - https://github.com/pgaudit/set_user
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "5.4"
+      title: "Restrict Administrator Privileges to Dedicated Administrator Accounts"
+  cis_controls_v7:
+    - id: "4.3"
+      title: "Ensure the Use of Dedicated Administrative Accounts"

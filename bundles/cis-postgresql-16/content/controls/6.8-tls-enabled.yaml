@@ -1,0 +1,61 @@
+id: "6.8"
+title: "Ensure TLS is enabled and configured correctly"
+section: "PostgreSQL Settings"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: HIGH
+
+description: >
+  TLS on a PostgreSQL server should be enabled and configured to
+  encrypt TCP traffic to and from the server.
+
+rationale: >
+  If TLS is not enabled and configured correctly, this increases the
+  risk of data being compromised in transit.
+
+impact: >
+  A self-signed certificate can be used for testing, but a
+  certificate signed by a certificate authority (CA) (either one of
+  the global CAs or a local one) should be used in production so
+  that clients can verify the server's identity. If all the database
+  clients are local to the organization, using a local CA is
+  recommended. To ultimately enable and enforce TLS authentication
+  for the server, appropriate hostssl records must be added to the
+  pg_hba.conf file. Be sure to reload PostgreSQL after any changes
+  (restart not required).
+
+check:
+  type: sql_configuration
+  query: "SHOW ssl;"
+  assertions:
+    - field: ssl
+      op: equals
+      value: "on"
+
+remediation: |
+  Edit the PostgreSQL configuration file postgresql.conf to enable ssl
+  (requires restart):
+
+  ssl = on
+  ssl_min_protocol_version = 'TLSv1.3'
+  ssl_cert_file = 'server.crt'
+  ssl_key_file  = 'server.key'
+
+  Restart PostgreSQL and confirm ssl is on via SHOW ssl;
+
+default_value: "off"
+
+references:
+  - https://www.postgresql.org/docs/current/static/ssl-tcp.html
+  - https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-52r2.pdf
+  - https://www.postgresql.org/docs/current/static/libpq-ssl.html
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.10"
+      title: "Encrypt Sensitive Data in Transit"
+  cis_controls_v7:
+    - id: "14.4"
+      title: "Encrypt All Sensitive Information in Transit"

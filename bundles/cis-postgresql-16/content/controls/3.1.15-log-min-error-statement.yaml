@@ -1,0 +1,47 @@
+id: "3.1.15"
+title: "Ensure the correct SQL statements generating errors are recorded"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  The log_min_error_statement setting causes all SQL statements
+  generating errors at or above the specified severity level to be
+  recorded in the server log. Each level includes all the levels that
+  follow it. The lower the level, the fewer messages are recorded.
+  Valid values are DEBUG5, DEBUG4, DEBUG3, DEBUG2, DEBUG1, INFO,
+  NOTICE, WARNING, ERROR, LOG, FATAL, and PANIC. ERROR is considered
+  the best practice setting.
+
+rationale: >
+  If this is not set to the correct value, too many erring or too few
+  erring SQL statements may be written to the server log.
+
+check:
+  # Acceptable values are at or more verbose than "error". Anything
+  # less verbose (log / fatal / panic) is a fail.
+  type: sql_configuration
+  query: "SHOW log_min_error_statement;"
+  assertions:
+    - field: log_min_error_statement
+      op: in
+      value: ["debug5", "debug4", "debug3", "debug2", "debug1", "info", "notice", "warning", "error"]
+
+remediation: |
+  ALTER SYSTEM SET log_min_error_statement = 'error';
+  SELECT pg_reload_conf();
+
+default_value: "ERROR"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.3"
+      title: "Ensure Adequate Audit Log Storage"
+  cis_controls_v7:
+    - id: "6.4"
+      title: "Ensure adequate storage for logs"

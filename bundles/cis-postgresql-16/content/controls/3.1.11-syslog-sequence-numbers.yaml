@@ -1,0 +1,47 @@
+id: "3.1.11"
+title: "Ensure syslog messages are not suppressed"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  When logging to Syslog and syslog_sequence_numbers is on, then each
+  message will be prefixed by an increasing sequence number.
+
+rationale: >
+  Many modern Syslog implementations perform a log optimization and
+  suppress repeated log entries while emitting "--- last message
+  repeated N times ---". In more modern Syslog implementations,
+  repeated message suppression can be configured (for example,
+  $RepeatedMsgReduction in rsyslog).
+
+impact: >
+  If disabled, messages sent to Syslog could be suppressed and not
+  logged. While a message is emitted stating that a given message was
+  repeated and suppressed, the timestamp associated with these
+  suppressed messages is lost, potentially damaging the recreation of
+  an incident timeline.
+
+check:
+  type: sql_configuration
+  query: "SHOW syslog_sequence_numbers;"
+  assertions:
+    - field: syslog_sequence_numbers
+      op: equals
+      value: "on"
+
+remediation: |
+  ALTER SYSTEM SET syslog_sequence_numbers = 'on';
+  SELECT pg_reload_conf();
+
+default_value: "on"
+
+references:
+  - https://www.postgresql.org/docs/current/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
