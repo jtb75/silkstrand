@@ -46,6 +46,16 @@ Committed direction: **woven-thread mark**. Three to five strands converging dia
 
 Asset work is a follow-up; until we have a final mark, plain wordmark (`SilkStrand`) in `--ss-text-primary` at the appropriate weight is the interim logo.
 
+### 1.4 Background texture
+
+One approved texture: [`graphics/texture-waves.jpeg`](graphics/texture-waves.jpeg) — thin blue wave/thread lines on deep navy. Use sparingly:
+
+- **Full-bleed** on auth pages (login, accept-invite, forgot-password, reset-password). Runs edge-to-edge behind the centered auth card.
+- **Low-opacity overlay** (≤ 20%) behind empty-state dashboards to suggest "something will be here".
+- **Never** behind tables, forms, modals, or inside the app chrome. The texture is quiet; UI chrome is quieter.
+
+Light-theme equivalent TBD. For now, auth pages use the texture regardless of theme (the dark texture reads fine on both — it sits outside the content panel).
+
 ---
 
 ## 2. Theme: light, dark, and system
