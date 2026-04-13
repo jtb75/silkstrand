@@ -26,7 +26,7 @@ jobs:
       sha: ${{ steps.tag.outputs.sha }}
       is_tag: ${{ steps.tag.outputs.is_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate-tag]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate-tag]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -103,7 +103,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate-tag]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate-tag]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -154,7 +154,7 @@ jobs:
     env:
       TF_WORKING_DIR: terraform/environments/prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: hashicorp/setup-terraform@v4
         with:
@@ -220,7 +220,7 @@ jobs:
     needs: [smoke-test, validate-tag]
     if: needs.validate-tag.outputs.is_tag == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
