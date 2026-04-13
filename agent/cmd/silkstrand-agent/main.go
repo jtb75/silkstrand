@@ -50,7 +50,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	// If no explicit credentials, try loading from disk or the install-token flow.
-	if err := bootstrap.EnsureCreds(cfg); err != nil {
+	if err := bootstrap.EnsureCreds(cfg, version); err != nil {
 		slog.Error("bootstrap", "error", err)
 		os.Exit(1)
 	}
@@ -203,7 +203,7 @@ func runUninstall() error {
 	if err != nil {
 		return err
 	}
-	if err := bootstrap.EnsureCreds(cfg); err != nil {
+	if err := bootstrap.EnsureCreds(cfg, version); err != nil {
 		// No creds to call with — nothing to deregister.
 		slog.Warn("no credentials available; skipping server deregister", "error", err)
 		return nil

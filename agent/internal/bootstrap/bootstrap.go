@@ -28,7 +28,11 @@ type storedCreds struct {
 //   1. Explicit env vars (SILKSTRAND_AGENT_ID + _KEY) — already on cfg.
 //   2. Previously-persisted credentials at cfg.CredsPath.
 //   3. Exchange cfg.InstallToken for fresh credentials; persist to disk.
-func EnsureCreds(cfg *config.Config) error {
+//
+// version is the agent binary's version string; passed through to the
+// bootstrap request so the DC records it from the start (before the first
+// heartbeat).
+func EnsureCreds(cfg *config.Config, version string) error {
 	if cfg.AgentID != "" && cfg.AgentKey != "" {
 		return nil
 	}
@@ -41,10 +45,10 @@ func EnsureCreds(cfg *config.Config) error {
 	if cfg.InstallToken == "" {
 		return fmt.Errorf("no credentials and no install token available")
 	}
-	return bootstrapViaToken(cfg)
+	return bootstrapViaToken(cfg, version)
 }
 
-func bootstrapViaToken(cfg *config.Config) error {
+func bootstrapViaToken(cfg *config.Config, version string) error {
 	name := cfg.Name
 	if name == "" {
 		name, _ = os.Hostname()
@@ -58,6 +62,7 @@ func bootstrapViaToken(cfg *config.Config) error {
 	body, _ := json.Marshal(map[string]string{
 		"install_token": cfg.InstallToken,
 		"name":          name,
+		"version":       version,
 	})
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {

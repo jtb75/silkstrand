@@ -122,8 +122,9 @@ bootstrap_agent() {
     [ -n "$API_URL" ] || fail "--api-url is required"
 
     # POST bootstrap with the install token; server returns agent_id + api_key.
-    log "Registering agent '$NAME'"
-    payload=$(printf '{"install_token":"%s","name":"%s"}' "$TOKEN" "$NAME")
+    agent_version=$("$INSTALL_DIR/silkstrand-agent" version 2>/dev/null || echo "")
+    log "Registering agent '$NAME' (version $agent_version)"
+    payload=$(printf '{"install_token":"%s","name":"%s","version":"%s"}' "$TOKEN" "$NAME" "$agent_version")
     resp=$(curl -fsS -X POST \
         -H 'Content-Type: application/json' \
         -d "$payload" \
