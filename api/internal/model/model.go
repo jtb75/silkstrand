@@ -192,8 +192,167 @@ func IsValidTargetType(t string) bool {
 	case TargetTypePostgreSQL, TargetTypeAuroraPostgreSQL,
 		TargetTypeMSSQL, TargetTypeMongoDB,
 		TargetTypeMySQL, TargetTypeAuroraMySQL,
-		TargetTypeHost, TargetTypeCIDR, TargetTypeCloud:
+		TargetTypeHost, TargetTypeCIDR, TargetTypeCloud,
+		TargetTypeNetworkRange:
 		return true
 	}
 	return false
+}
+
+// ADR 003 R0 — recon pipeline types. Application code (handlers,
+// store methods consuming these types) lands in subsequent PRs.
+
+const TargetTypeNetworkRange = "network_range"
+
+// Scan types (added by ADR 003).
+const (
+	ScanTypeCompliance = "compliance"
+	ScanTypeDiscovery  = "discovery"
+)
+
+// DiscoveredAsset is a single (tenant, ip, port) row in the inventory.
+type DiscoveredAsset struct {
+	ID                string          `json:"id"`
+	TenantID          string          `json:"tenant_id"`
+	IP                string          `json:"ip"`
+	Port              int             `json:"port"`
+	Hostname          *string         `json:"hostname,omitempty"`
+	Service           *string         `json:"service,omitempty"`
+	Version           *string         `json:"version,omitempty"`
+	Technologies      json.RawMessage `json:"technologies"`
+	CVEs              json.RawMessage `json:"cves"`
+	ComplianceStatus  *string         `json:"compliance_status,omitempty"`
+	Source            string          `json:"source"` // 'manual' | 'discovered'
+	Environment       *string         `json:"environment,omitempty"`
+	FirstSeen         time.Time       `json:"first_seen"`
+	LastSeen          time.Time       `json:"last_seen"`
+	LastScanID        *string         `json:"last_scan_id,omitempty"`
+	MissedScanCount   int             `json:"missed_scan_count"`
+	Metadata          json.RawMessage `json:"metadata"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+}
+
+const (
+	AssetSourceManual     = "manual"
+	AssetSourceDiscovered = "discovered"
+)
+
+// AssetEvent is one append-only row in asset_events.
+type AssetEvent struct {
+	ID         string          `json:"id"`
+	TenantID   string          `json:"tenant_id"`
+	AssetID    string          `json:"asset_id"`
+	ScanID     *string         `json:"scan_id,omitempty"`
+	EventType  string          `json:"event_type"`
+	Severity   *string         `json:"severity,omitempty"`
+	Payload    json.RawMessage `json:"payload"`
+	OccurredAt time.Time       `json:"occurred_at"`
+}
+
+// AssetEventType enumerations (ADR 003 D4).
+const (
+	AssetEventNewAsset         = "new_asset"
+	AssetEventAssetGone        = "asset_gone"
+	AssetEventAssetReappeared  = "asset_reappeared"
+	AssetEventNewCVE           = "new_cve"
+	AssetEventCVEResolved      = "cve_resolved"
+	AssetEventVersionChanged   = "version_changed"
+	AssetEventPortOpened       = "port_opened"
+	AssetEventPortClosed       = "port_closed"
+	AssetEventCompliancePass   = "compliance_pass"
+	AssetEventComplianceFail   = "compliance_fail"
+)
+
+// AssetSet is a saved predicate over discovered_assets (D13).
+type AssetSet struct {
+	ID          string          `json:"id"`
+	TenantID    string          `json:"tenant_id"`
+	Name        string          `json:"name"`
+	Description *string         `json:"description,omitempty"`
+	Predicate   json.RawMessage `json:"predicate"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// CorrelationRule is a versioned `match → action` rule (D2).
+type CorrelationRule struct {
+	ID              string          `json:"id"`
+	TenantID        string          `json:"tenant_id"`
+	Name            string          `json:"name"`
+	Version         int             `json:"version"`
+	Enabled         bool            `json:"enabled"`
+	Trigger         string          `json:"trigger"`
+	EventTypeFilter *string         `json:"event_type_filter,omitempty"`
+	Body            json.RawMessage `json:"body"`
+	CreatedAt       time.Time       `json:"created_at"`
+	CreatedBy       *string         `json:"created_by,omitempty"`
+}
+
+const (
+	RuleTriggerAssetDiscovered = "asset_discovered"
+	RuleTriggerAssetEvent      = "asset_event"
+)
+
+// NotificationChannel is a per-tenant outbound channel (D12).
+// Sensitive fields inside Config (webhook secret, slack webhook URL,
+// pagerduty routing key) are stored as base64-encoded AES-256-GCM
+// ciphertext, mirroring credential_sources.config.
+type NotificationChannel struct {
+	ID        string          `json:"id"`
+	TenantID  string          `json:"tenant_id"`
+	Name      string          `json:"name"`
+	Type      string          `json:"type"` // webhook | slack | email | pagerduty
+	Config    json.RawMessage `json:"config"`
+	Enabled   bool            `json:"enabled"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+const (
+	ChannelTypeWebhook   = "webhook"
+	ChannelTypeSlack     = "slack"
+	ChannelTypeEmail     = "email"
+	ChannelTypePagerDuty = "pagerduty"
+)
+
+// NotificationDelivery is one append-only audit row (D12).
+type NotificationDelivery struct {
+	ID           string          `json:"id"`
+	TenantID     string          `json:"tenant_id"`
+	ChannelID    string          `json:"channel_id"`
+	RuleID       *string         `json:"rule_id,omitempty"`
+	EventID      *string         `json:"event_id,omitempty"`
+	Severity     *string         `json:"severity,omitempty"`
+	Status       string          `json:"status"`
+	Attempt      int             `json:"attempt"`
+	ResponseCode *int            `json:"response_code,omitempty"`
+	Error        *string         `json:"error,omitempty"`
+	Payload      json.RawMessage `json:"payload,omitempty"`
+	DispatchedAt time.Time       `json:"dispatched_at"`
+}
+
+const (
+	DeliveryStatusPending   = "pending"
+	DeliveryStatusSent      = "sent"
+	DeliveryStatusFailed    = "failed"
+	DeliveryStatusRetrying  = "retrying"
+)
+
+// OneShotScan is the parent record for a fan-out scan dispatch (D13).
+type OneShotScan struct {
+	ID               string          `json:"id"`
+	TenantID         string          `json:"tenant_id"`
+	BundleID         string          `json:"bundle_id"`
+	AssetSetID       *string         `json:"asset_set_id,omitempty"`
+	InlinePredicate  json.RawMessage `json:"inline_predicate,omitempty"`
+	MaxConcurrency   int             `json:"max_concurrency"`
+	RateLimitPPS     *int            `json:"rate_limit_pps,omitempty"`
+	TotalTargets     *int            `json:"total_targets,omitempty"`
+	CompletedTargets int             `json:"completed_targets"`
+	Status           string          `json:"status"`
+	TriggeredBy      *string         `json:"triggered_by,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	DispatchedAt     *time.Time      `json:"dispatched_at,omitempty"`
+	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
 }
