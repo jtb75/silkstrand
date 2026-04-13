@@ -322,6 +322,22 @@ func (s *PostgresStore) UpdateAgentStatus(ctx context.Context, id string, status
 	return nil
 }
 
+// UpdateAgentHeartbeat records a heartbeat: sets status=connected,
+// last_heartbeat=NOW(), and stores the reported agent version (empty
+// version leaves the existing value intact).
+func (s *PostgresStore) UpdateAgentHeartbeat(ctx context.Context, id, version string) error {
+	if version == "" {
+		return s.UpdateAgentStatus(ctx, id, "connected")
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET status = 'connected', last_heartbeat = NOW(), version = $1 WHERE id = $2`,
+		version, id)
+	if err != nil {
+		return fmt.Errorf("updating agent heartbeat: %w", err)
+	}
+	return nil
+}
+
 // GetAgentByID looks up an agent by ID without tenant scoping (for WSS auth).
 func (s *PostgresStore) GetAgentByID(ctx context.Context, id string) (*model.Agent, error) {
 	var a model.Agent

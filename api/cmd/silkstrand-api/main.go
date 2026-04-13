@@ -204,7 +204,12 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub) func(agentID string, msg w
 			slog.Warn("scan failed", "agent_id", agentID, "scan_id", payload.ScanID, "error", payload.Error)
 
 		case websocket.TypeHeartbeat:
-			if err := s.UpdateAgentStatus(ctx, agentID, model.AgentStatusConnected); err != nil {
+			var hb websocket.HeartbeatPayload
+			if err := json.Unmarshal(msg.Payload, &hb); err != nil {
+				// Tolerate missing payload — older agents may not send one.
+				slog.Debug("parsing heartbeat payload", "agent_id", agentID, "error", err)
+			}
+			if err := s.UpdateAgentHeartbeat(ctx, agentID, hb.Version); err != nil {
 				slog.Error("updating agent heartbeat", "agent_id", agentID, "error", err)
 			}
 

@@ -20,9 +20,16 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
 		if len(AllowedOrigins) == 0 {
-			return true // dev mode
+			return true // dev mode: allow all
 		}
 		origin := r.Header.Get("Origin")
+		// Non-browser clients (our CLI agent, HTTP libraries) don't send
+		// an Origin header. Allow them — agent-key auth is the real gate
+		// on this endpoint. The Origin check exists only to defend
+		// browsers against cross-site WebSocket hijacking.
+		if origin == "" {
+			return true
+		}
 		for _, allowed := range AllowedOrigins {
 			if origin == allowed {
 				return true
