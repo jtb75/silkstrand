@@ -43,10 +43,11 @@ fix/abc     ──PR──▶ main     │
 
 | Job | What it does |
 |-----|-------------|
-| `build-push-api` | Build + push API image to GHCR (tagged `sha-<commit>`) |
-| `build-push-web` | Build + push Web image to GHCR (tagged `sha-<commit>`) |
-| `terraform-apply` | `terraform apply` for stage environment |
-| `deploy-cloud-run` | Update Cloud Run services with new image SHA |
+| `build-push-api` | Build + push API image to Artifact Registry (tagged `sha-<commit>`) |
+| `build-push-web` | Build + push tenant web image to Artifact Registry |
+| `build-push-backoffice-api` | Build + push backoffice API image |
+| `build-push-backoffice-web` | Build + push backoffice web image |
+| `deploy` | `terraform apply` for stage with the new image SHAs |
 | `smoke-test` | Hit `/healthz` to verify deployment |
 
 ### `deploy-prod.yml` — Deploy to Prod
@@ -55,10 +56,9 @@ fix/abc     ──PR──▶ main     │
 
 | Job | What it does |
 |-----|-------------|
-| `validate-tag` | Extract version, verify images exist in GHCR for that SHA |
-| `terraform-apply` | `terraform apply` for prod environment |
-| `deploy-cloud-run` | Update Cloud Run services with same image SHA from stage |
-| `create-release` | Create GitHub Release with changelog |
+| `validate-tag` | Extract version, verify images exist in Artifact Registry for that SHA |
+| `deploy` | `terraform apply` for prod with the same image SHAs from stage |
+| `smoke-test` | Hit prod `/healthz` to verify deployment |
 
 ### `release-agent.yml` — Agent Binary Release
 
@@ -92,14 +92,17 @@ These are output by `terraform/bootstrap/main.tf`.
 
 ## Container Images
 
-Images are stored in GitHub Container Registry (GHCR):
+Images are stored in **GCP Artifact Registry** (one repo per environment, since stage builds push to stage's project; prod's deploy reads the same SHA from prod's repo via the workflow's tag-validation step):
 
 ```
-ghcr.io/<owner>/silkstrand/api:sha-<commit>
-ghcr.io/<owner>/silkstrand/api:latest
-ghcr.io/<owner>/silkstrand/web:sha-<commit>
-ghcr.io/<owner>/silkstrand/web:latest
+us-central1-docker.pkg.dev/silkstrand-stage/silkstrand/api:sha-<commit>
+us-central1-docker.pkg.dev/silkstrand-stage/silkstrand/api:latest
+us-central1-docker.pkg.dev/silkstrand-stage/silkstrand/web:sha-<commit>
+us-central1-docker.pkg.dev/silkstrand-stage/silkstrand/backoffice-api:sha-<commit>
+us-central1-docker.pkg.dev/silkstrand-stage/silkstrand/backoffice-web:sha-<commit>
 ```
+
+(Same shape under `silkstrand-prod` for the prod-tagged builds.)
 
 - Images are tagged by git commit SHA — same SHA deploys to stage and prod
 - No rebuild for prod promotion — the exact image tested in stage is deployed

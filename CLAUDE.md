@@ -157,9 +157,9 @@ silkstrand/
   - Scan lifecycle: create → directive via Upstash Redis → agent executes → results via WSS → stored in Postgres
   - Credential encryption at rest (AES-256-GCM), decrypted before forwarding to agents
   - Stuck scan cleanup: running scans fail automatically on agent disconnect
-  - Dockerfile: multi-stage (golang:1.24-alpine → distroless)
+  - Dockerfile: multi-stage (golang:1.25-alpine → distroless)
 - **Edge Agent** — Go binary with WSS tunnel (exponential backoff reconnect), Python runner, bundle cache, heartbeat. Cross-compiled for 6 platforms on release.
-- **CIS PostgreSQL Bundle** — 8 CIS Benchmark controls (log_connections, ssl, password_encryption, pg_hba.conf, log_statement, pgaudit, superuser roles). End-to-end tested locally.
+- **Compliance Bundles** — three live: `cis-postgresql-16`, `cis-mssql-2022`, `cis-mongodb-8`. Per-engine probers (postgres, mssql, mongodb, mysql) wire credentials through to the Python runtime.
 - **Tenant Frontend** — React + TypeScript SPA: dashboard, targets CRUD, scan triggering, results viewer with summary bar. In-house auth (login / accept-invite / forgot-password / reset-password pages), Team page for admins to invite/remove users, `<TenantSwitcher />` in the topbar for multi-tenant users. Dockerfile with nginx that splits `/api/v1/tenant-auth/*` → backoffice and `/api/*` → DC API.
 - **Backoffice Manager** — Separate Go module + React frontend:
   - Data center registration with AES-256-GCM encrypted API key storage
@@ -175,30 +175,24 @@ silkstrand/
 - **Seed Tooling** — SQL seeds for DC + backoffice databases, runner script, JWT generator, bcrypt hash helper. `make seed`, `make jwt`.
 - **Terraform** — Backoffice services (API + web Cloud Run, second database) defined in prod environment alongside DC services. Shared Cloud SQL instance.
 
-### What's Deployed (Stage)
+### What's Deployed
 
-- **Cloud Run API** — `https://silkstrand-api-uy4v4rttgq-uc.a.run.app`
-- **Cloud SQL PostgreSQL 16** — `db-f1-micro`, private IP only
-- **Upstash Redis** — connected for pub/sub
-- **GCS Bucket** — `silkstrand-stage-bundles`
-- **VPC** — private services access, serverless VPC connector
-- **DNS** — `api-stage.silkstrand.io`, `agent-stage.silkstrand.io`
+Both stage and prod are live. Cloud Run services in each project:
+- `silkstrand-api`, `silkstrand-web` (DC API + tenant frontend, both envs)
+- `backoffice-api`, `backoffice-web` (prod only — one backoffice manages all DCs)
 
-### What's Not Deployed Yet
+Shared per-env infra: Cloud SQL Postgres 16 (private IP only), Upstash Redis, GCS bundles bucket, serverless VPC connector, DNS via Cloudflare.
 
-- Prod deployment (Terraform defined but not applied — needs `tofu apply` with secrets)
-- Backoffice Cloud Run services (Terraform in prod/main.tf, images not yet pushed)
-- Stage Cloud Run service crashes on startup (needs DB migration investigation in GCP console)
+All sensitive Cloud Run env vars (DATABASE_URL, REDIS_URL, JWT_SECRET, INTERNAL_API_KEY, CREDENTIAL_ENCRYPTION_KEY, backoffice JWT/ENCRYPTION_KEY/TENANT_JWT_SECRET/RESEND_API_KEY/BOOTSTRAP_ADMIN_PASSWORD) are mounted via `secret_key_ref` from GCP Secret Manager — values never appear in `gcloud run services describe` output. Provisioned by Terraform.
 
 ### What's Not Built Yet
 
-- GCS bundle pull (agent reads local filesystem only — production needs GCS download)
-- Bundle upload API (bundles registered in DB but no upload endpoint)
-- Additional compliance bundles (only CIS PostgreSQL 16 exists)
-- Vault/CyberArk credential integrations (post-MVP — currently AES-256-GCM at rest)
-- Tenant-configurable credential sources (each tenant will need pluggable integrations)
+- Bundle upload API (bundles registered in DB but no upload endpoint; currently seeded manually)
+- Vault/CyberArk credential integrations (ADR 004 Phase C1+, currently `static`-only via the credential_sources table introduced by C0)
+- Recon pipeline (ADR 003 — discovered_assets, asset_events, correlation rules, Assets page)
 - Frontend pagination for list endpoints
-- Agent WebSocket CORS restriction for production
+- Agent WebSocket origin restriction for production
+- Audit log surfacing (slog `credential.fetch` events emitted but not queryable in UI)
 
 ## DC API Routes
 
@@ -483,6 +477,13 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 | 001_initial | tenants, agents, targets, credentials, bundles, scans, scan_results |
 | 002_agent_auth | key_hash, next_key_hash, key_rotated_at on agents |
 | 003_tenant_status | status, config on tenants |
+| 004_target_credential_unique | unique index on credentials(target_id) |
+| 005_install_tokens | install_tokens table for agent bootstrap |
+| 006_targets_agent_set_null | targets.agent_id becomes ON DELETE SET NULL |
+| 007_scans_agent_set_null | scans.agent_id becomes ON DELETE SET NULL |
+| 008_cascade_target_deletes | credentials cascades on target delete |
+| 009_target_type_engines | per-engine target type constants (postgresql, mssql, mongodb, mysql, etc.) |
+| 010_credential_sources | ADR 004 C0: credential_sources table + targets.credential_source_id, backfill from credentials |
 
 ### Backoffice (`backoffice/internal/store/migrations/`)
 
@@ -495,3 +496,5 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 | 005_membership_status | status column on memberships (active/suspended) |
 | 006_user_status | status column on users (active/suspended) |
 | 007_drop_clerk_org_id | remove clerk_org_id column |
+| 008_user_display_name | display_name column on users |
+| 009_audit_log | audit_log table for backoffice admin actions |
