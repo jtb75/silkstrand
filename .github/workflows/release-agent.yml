@@ -71,13 +71,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-agent]
     steps:
+      # Checkout first — download-artifact puts files in the workspace and
+      # actions/checkout wipes it, so ordering matters.
+      - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: agent-*
           merge-multiple: true
-
-      - uses: actions/checkout@v4
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
