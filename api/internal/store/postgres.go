@@ -608,3 +608,45 @@ func (s *PostgresStore) GetDCStats(ctx context.Context) (*model.DCStats, error) 
 	}
 	return &stats, nil
 }
+
+// ListAgents returns this tenant's agents (scoped via context).
+func (s *PostgresStore) ListAgents(ctx context.Context) ([]model.Agent, error) {
+	tenantID := TenantID(ctx)
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant not set in context")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, name, status, last_heartbeat, version, created_at
+		   FROM agents WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing agents: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Agent
+	for rows.Next() {
+		var a model.Agent
+		if err := rows.Scan(&a.ID, &a.TenantID, &a.Name, &a.Status, &a.LastHeartbeat, &a.Version, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning agent: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// DeleteAgent removes an agent (tenant-scoped).
+func (s *PostgresStore) DeleteAgent(ctx context.Context, id string) error {
+	tenantID := TenantID(ctx)
+	if tenantID == "" {
+		return fmt.Errorf("tenant not set in context")
+	}
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM agents WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("deleting agent: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
