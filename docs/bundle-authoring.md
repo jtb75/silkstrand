@@ -149,6 +149,45 @@ check:
 cluster-wide (guest CONNECT, orphan users, contained-DB SQL auth, per-DB
 encryption checks).
 
+### `mongodb_command` *(Mongo bundles only)*
+
+Run an admin command against a Mongo instance; assert on fields of the
+response document using dotted-path access.
+
+```yaml
+check:
+  type: mongodb_command
+  database: admin                  # optional, default "admin"
+  command:
+    getParameter: 1
+    authenticationMechanisms: 1
+  assertions:
+    - field: authenticationMechanisms
+      op: contains
+      value: "SCRAM-SHA-256"
+```
+
+Field path is dotted: `serverStatus.security.authentication`. Additional
+operator available in Mongo contexts: `contains`, `not_contains`, `exists`
+(the last takes a boolean).
+
+### `mongodb_no_rows_match` *(Mongo bundles only)*
+
+Run a find() on a collection; PASS iff no documents match.
+
+```yaml
+check:
+  type: mongodb_no_rows_match
+  database: admin
+  collection: system.users
+  filter:
+    roles:
+      $elemMatch: { role: "root" }
+```
+
+**Use when** a CIS audit says "verify no user has X" or "find any collection
+without Y." Write the filter to surface violations.
+
 ### `custom`
 
 Escape hatch: name a Python function in the bundle's `custom.py`.

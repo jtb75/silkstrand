@@ -1,11 +1,11 @@
 name: cis-postgresql-16
-version: 1.0.2
+version: 1.0.0
 framework: python
 runtime_version: ">=3.9"
 target_type: database
 benchmark:
   name: "CIS PostgreSQL 16 Benchmark"
-  version: "1.0.0"
+  version: "1.1.0"
   cis_id: "CIS_PostgreSQL_16"
 entrypoint: content/checks.py
 vendor_dir: content/vendor

@@ -1,0 +1,87 @@
+id: "2.3"
+title: "Ensure authentication is enabled in the sharded cluster"
+section: "Authentication"
+assessment: automated
+profile:
+  - "Level 2 - MongoDB"
+severity: HIGH
+
+description: >
+  Authentication is enabled in a sharded cluster when the certificate or
+  key files are created and configured for all components. This ensures
+  that every client that accesses the cluster must provide credentials,
+  to include MongoDB instances that access each other within the
+  cluster.
+
+  With keyfile authentication, each mongod or mongos instance in the
+  sharded cluster uses the contents of the keyfile as the shared
+  password for authenticating other members in the deployment. Only
+  mongod or mongos instances with the correct keyfile can join the
+  sharded cluster.
+
+  For Production Environment: x.509 certificate authentication with
+  secure TSL/SSL connection must be used for authentication.
+
+  For Development Purpose: Key file can be used as an authentication
+  mechanism between the shared cluster. Keyfiles are bare-minimum forms
+  of security and are best suited for testing or development
+  environments.
+
+rationale: >
+  Enforcing a key or certificate on a sharded cluster prevents
+  unauthorized access to the MongoDB database and provides traceability
+  of database activities to a specific user or component. A MongoDB
+  sharded cluster can enforce user authentication as well as internal
+  authentication of its components to secure against unauthorized
+  access.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getCmdLineOpts: 1
+  assertions:
+    - field: parsed.security.clusterAuthMode
+      op: equals
+      value: "x509"
+
+remediation: |
+  To authenticate to servers, clients can use x.509 certificates instead
+  of usernames and passwords. MongoDB supports x.509 certificate
+  authentication for use with a secure TLS/SSL connection. The x.509
+  client authentication allows clients to authenticate to servers with
+  certificates rather than with a username and password.
+
+  Change the configuration file /etc/mongod.conf on each host, adding
+  the following rows:
+
+      net:
+         port: 27017
+         tls:
+            mode: requireSSL
+            PEMKeyFile: /etc/mongodb/ssl/server1.pem
+            CAFile: /etc/mongodb/ssl/mongoCA.crt
+            clusterFile: /etc/mongodb/ssl/server1.pem
+         security:
+            authorization: enabled
+            clusterAuthMode: x509
+
+  Restart the daemon:
+      sudo service mongodb restart
+
+default_value: "Not configured"
+
+references:
+  - https://www.mongodb.com/docs/v7.0/core/security-transport-encryption/
+  - https://www.mongodb.com/docs/v7.0/reference/security/
+  - https://www.mongodb.com/docs/v7.0/tutorial/deploy-shard-cluster/
+  - https://www.mongodb.com/docs/manual/tutorial/configure-x509-member-authentication/
+  - https://www.mongodb.com/docs/manual/tutorial/deploy-sharded-cluster-with-keyfile-access-control/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "6.6"
+      title: "Establish and Maintain an Inventory of Authentication and Authorization Systems"
+  cis_controls_v7:
+    - id: "1.8"
+      title: "Utilize Client Certificates to Authenticate Hardware Assets"

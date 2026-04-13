@@ -46,6 +46,23 @@ services:
       retries: 10
       start_period: 30s
 
+  mongodb:
+    # MongoDB 8 for local compliance-bundle development.
+    image: mongo:8
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: silkstrand
+      MONGO_INITDB_ROOT_PASSWORD: MongoLocal1!
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "--username", "silkstrand", "--password", "MongoLocal1!", "--authenticationDatabase", "admin"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
   postgres-backoffice:
     image: postgres:16-alpine
     ports:
@@ -110,3 +127,4 @@ volumes:
   pgdata:
   pgdata-backoffice:
   mssql-data:
+  mongo-data:

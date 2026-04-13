@@ -1,0 +1,61 @@
+id: "2.2"
+title: "Ensure that MongoDB does not bypass authentication via the localhost exception"
+section: "Authentication"
+assessment: automated
+profile:
+  - "Level 1- MongoDB"
+severity: HIGH
+
+description: >
+  MongoDB should not be set to bypass authentication via the localhost
+  exception. The localhost exception allows the user to enable
+  authorization before creating the first user in the system. When
+  active, the localhost exception allows all connections from the
+  localhost interface to have full access to that instance. The
+  exception applies only when there are no users created in the MongoDB
+  instance.
+
+  Note: This recommendation only applies when there are no users created
+  in the MongoDB instance.
+
+rationale: >
+  Disabling this exception will prevent unauthorized local access to the
+  MongoDB database. It will also ensure the traceability of each
+  database activity to a specific user. Localhost Exception allows
+  direct connect to Mongod's without any UN/PW.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getParameter: 1
+    enableLocalhostAuthBypass: 1
+  assertions:
+    - field: enableLocalhostAuthBypass
+      op: equals
+      value: false
+
+remediation: |
+  To disable local authentication on the MongoDB database.
+  Type OS Console Command:
+
+      mongod --setParameter enableLocalhostAuthBypass=0
+
+  or manually configure use the setParameter option in the mongo
+  configuration file to set it to false:
+
+      setParameter:
+        enableLocalhostAuthBypass: false
+
+default_value: "By default, localhost exception value (enableLocalhostAuthBypass) is true."
+
+references:
+  - https://www.mongodb.com/docs/v7.0/core/localhost-exception/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "6.3"
+      title: "Require MFA for Externally-Exposed Applications"
+  cis_controls_v7:
+    - id: "16.3"
+      title: "Require Multi-factor Authentication"
