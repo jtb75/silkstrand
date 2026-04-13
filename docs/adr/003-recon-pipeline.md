@@ -35,27 +35,71 @@ Two top-level scan types, not three. Clean separation at the seam that
 matches workflow cadence: discovery on a fast loop (daily/weekly),
 compliance on its own cadence (per-target, audit-driven).
 
-### D2. Promote to compliance — rule-based, suggest by default
+### D2. Rule engine — generalized `match → action`
 
-Every promote-to-compliance path goes through a **correlation rule**.
-Rules declaratively match discovered-asset attributes and map them to
-a bundle:
+A single declarative rule engine drives every reactive behavior in the
+recon pipeline. Rules match against asset attributes (and, for event-
+triggered rules, the event payload) and emit actions. Promote-to-
+compliance is one action; notification dispatch (D12) and one-shot
+scans (D13) are others. One grammar, one authoring surface, one
+evaluation pass per `asset_discovered` / `asset_event`.
 
 ```yaml
 rules:
-  - match: { service: postgresql, version: "16.*" }
-    bundle: cis-postgresql-16
-    mode: suggest           # suggest | auto
+  # Promote a discovered Postgres 16 to a compliance target.
+  - name: cis-postgres-16-suggest
+    match: { service: postgresql, version: "16.*" }
+    on: asset_discovered
+    actions:
+      - type: suggest_target
+        bundle: cis-postgresql-16
+
+  # Auto-create a compliance target for any RDS instance with a
+  # bound MasterUserSecret.
+  - name: rds-aurora-auto
+    match: { source: aws_rds, has_credential_binding: true }
+    on: asset_discovered
+    actions:
+      - type: auto_create_target
+        bundle: cis-postgresql-16
+
+  # Shadow IT: alert when RDP shows up on a segment it shouldn't.
+  - name: rdp-out-of-policy
+    match: { service: rdp, ip: "10.50.0.0/16", not_in: "10.50.10.0/24" }
+    on: asset_discovered
+    actions:
+      - type: notify
+        channel: slack-secops
+        severity: high
+
+  # Drift: alert when a host disappears from a known-critical segment.
+  - name: critical-host-gone
+    match: { ip: "10.0.0.0/24" }
+    on: asset_event
+    when: { event_type: asset_gone }
+    actions:
+      - type: notify
+        channel: pagerduty-oncall
+        severity: critical
 ```
 
-- `suggest` (default): a candidate target is surfaced in the UI for
-  admin approval.
-- `auto`: target created without confirmation, contingent on credentials
-  resolving (see ADR 004).
+Action types (initial set):
 
-Rules are the metadata that connects "discovered tech X" to "available
-bundle Y." Without them the Assets page cannot distinguish compliance
-candidates from general inventory.
+| `type`              | Effect                                                                                 |
+|---------------------|----------------------------------------------------------------------------------------|
+| `suggest_target`    | Candidate compliance target surfaced in UI for admin approval.                         |
+| `auto_create_target`| Target created without confirmation; depends on credentials resolving (ADR 004).       |
+| `notify`            | Dispatch via the channel abstraction (D12).                                            |
+| `run_one_shot_scan` | Schedule an immediate scan of a bundle against the matching asset set (D13).           |
+
+The `on` field selects the trigger. `asset_discovered` fires on every
+upsert into `discovered_assets`; `asset_event` fires on every row
+appended to `asset_events` (with an optional `when` filter on the
+event type).
+
+Rule evaluation is per-tenant. Rules are stored in `correlation_rules`
+(versioned, with audit trail) and authored via the admin UI or
+config-file import (early phases: file import only).
 
 ### D3. Asset visibility — single Assets page
 
@@ -275,24 +319,110 @@ product features that are out of scope for this ADR. If and when
 such a feature lands on the roadmap, first evaluate `pg_age`
 (openCypher on Postgres) before introducing a second database.
 
+### D12. Notifications — pluggable channels
+
+`asset_events` without an outbound channel is a query-only feature.
+For shadow-IT detection, drift alerting, and zero-day response signals
+to be useful, push notifications are required.
+
+A single `notification_channels` table per tenant holds channel
+configurations. Each channel has a `type` and a JSONB `config` shaped
+per type:
+
+| `type`        | `config` keys                                  | Phase |
+|---------------|------------------------------------------------|-------|
+| `webhook`     | `url`, `secret` (HMAC sig), optional headers   | R1c   |
+| `slack`       | `webhook_url` (Slack incoming webhook)         | R1c   |
+| `email`       | `to[]`, `from` (uses Resend, ADR-existing)     | R1c   |
+| `pagerduty`   | `routing_key`                                  | R1.1  |
+| `opsgenie`    | `api_key`, `team`                              | R2+   |
+
+The D2 rule engine's `notify` action references a channel by name and
+includes a severity (`info`/`low`/`medium`/`high`/`critical`) plus a
+templated message body.
+
+Delivery is best-effort with retry: 3 attempts with exponential
+backoff, then logged to a `notification_deliveries` table for audit
+and UI surfacing ("last 100 alerts" view). No on-call paging escalation
+inside SilkStrand — that's PagerDuty's job; we just hand off.
+
+Webhook signing: every webhook payload is HMAC-SHA256 signed with the
+channel's secret, header `X-SilkStrand-Signature`. Customers verify on
+their end. Same pattern as Stripe / GitHub webhooks.
+
+### D13. Asset sets and one-shot scans
+
+Today every scan addresses a single `target_id`. That doesn't fit
+either Shadow IT remediation ("scan all out-of-policy RDP hosts") or
+zero-day response ("run Log4Shell template against everything HTTP-
+ish"). We add two complementary primitives:
+
+**Asset sets** — saved queries over `discovered_assets`:
+
+```sql
+asset_sets (
+  id UUID PK,
+  tenant_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  predicate JSONB NOT NULL,    -- structured filter, same grammar as
+                               -- D2 rule `match` clauses
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+```
+
+A predicate evaluates against the asset table. Sets can be referenced
+by name in rules, in scheduled scans, and from the UI ("scan this
+set"). Sets are dynamic — membership is computed at scan dispatch
+time, not snapshotted at creation.
+
+**One-shot scans** — a single bundle dispatched against an asset set
+in one operation, distinct from per-target compliance scans:
+
+```
+POST /api/v1/scans/one-shot
+{
+  "bundle_id": "log4shell-response",
+  "asset_set_id": "set-uuid",            // OR
+  "asset_set_predicate": { ... },         // ad-hoc
+  "max_concurrency": 50,
+  "rate_limit_pps": 500
+}
+```
+
+Returns a parent `one_shot_scan_id`; the API fans out to per-asset
+scan rows so existing scan-result schemas, audit trails, and the
+agent WSS dispatch all reuse current code paths. A new
+`one_shot_scans` table holds the parent metadata (kicked off by /
+dispatched at / completion summary).
+
+The D2 `run_one_shot_scan` action is how a rule (e.g., "new CVE
+template uploaded for tag X") triggers this automatically.
+
 ## Schema summary
 
 ```
-discovered_assets       — current-state inventory, one row per (tenant, ip, port)
-asset_events            — append-only security-relevant changes
-targets                 — existing, refactored to reference assets
-correlation_rules       — new, drives promote-to-compliance
-credential_sources      — see ADR 004
+discovered_assets         — current-state inventory, one row per (tenant, ip, port)
+asset_events              — append-only security-relevant changes
+asset_sets                — D13: saved predicates over discovered_assets
+targets                   — existing, refactored to reference assets
+correlation_rules         — D2: generalized match → action engine
+notification_channels     — D12: pluggable outbound channel configs
+notification_deliveries   — D12: audit log of dispatches
+one_shot_scans            — D13: parent record for fan-out scans
+credential_sources        — see ADR 004
 ```
 
 ## Implementation phases
 
 | Phase | Scope | Prereq |
 |---|---|---|
-| **R0** | Asset/target schema migration; `credential_source_id` on targets | ADR 004 Phase C0 |
-| **R1** | L3 discovery (`target_type: network_range`), correlation rules, Assets page, manual/discovered unification, customer-controlled scan allowlist (D11), evidence redaction (see Open items) | R0 |
-| **R1.1** | Host list import target source | R1 |
-| **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential binding | R1, ADR 004 Phase C1 |
+| **R0** | Asset/target schema migration; `credential_source_id` on targets; `asset_sets`, `correlation_rules`, `notification_channels`, `notification_deliveries`, `one_shot_scans` tables | ADR 004 Phase C0 |
+| **R1a** | L3 discovery (`target_type: network_range`); recon runner in agent; Assets page (read-only); manual/discovered unification; customer-controlled scan allowlist (D11); evidence redaction | R0 |
+| **R1b** | Generalized D2 rule engine (`suggest_target` + `auto_create_target` actions); promote-to-compliance flow end-to-end | R1a |
+| **R1c** | D12 notification channels (webhook, slack, email); D13 asset sets; `notify` and `run_one_shot_scan` rule actions; one-shot scan dispatcher | R1b |
+| **R1.1** | Host list import target source; PagerDuty channel | R1c |
+| **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential binding; **orphaned-resource detection** (idea B — last_observed_traffic, tag-based filters on Assets page) | R1c, ADR 004 Phase C1 |
 | **R3+** | Vault credential resolution (ADR 004 Phase C3); DNS zone enumeration; Azure/GCP cloud discovery | Demand-driven |
 
 ## What we are not building
