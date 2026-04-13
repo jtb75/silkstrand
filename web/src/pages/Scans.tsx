@@ -12,6 +12,7 @@ export default function Scans() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [showForm, setShowForm] = useState(false);
+  const [selectedTargetId, setSelectedTargetId] = useState('');
 
   const { data: scans, isLoading, error } = useQuery<Scan[]>({
     queryKey: ['scans'],
@@ -43,6 +44,7 @@ export default function Scans() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scans'] });
       setShowForm(false);
+      setSelectedTargetId('');
     },
   });
 
@@ -80,7 +82,13 @@ export default function Scans() {
     <div>
       <div className="page-header">
         <h1>Scans</h1>
-        <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
+        <button
+          className="btn btn-primary"
+          onClick={() => {
+            setShowForm(!showForm);
+            setSelectedTargetId('');
+          }}
+        >
           {showForm ? 'Cancel' : 'New Scan'}
         </button>
       </div>
@@ -89,7 +97,13 @@ export default function Scans() {
         <form className="form-card" onSubmit={handleCreate}>
           <div className="form-group">
             <label htmlFor="target_id">Target</label>
-            <select id="target_id" name="target_id" required>
+            <select
+              id="target_id"
+              name="target_id"
+              required
+              value={selectedTargetId}
+              onChange={(e) => setSelectedTargetId(e.target.value)}
+            >
               <option value="">Select a target...</option>
               {targets?.map((t) => (
                 <option key={t.id} value={t.id}>
@@ -99,22 +113,38 @@ export default function Scans() {
               ))}
             </select>
           </div>
-          <div className="form-group">
-            <label htmlFor="bundle_id">Bundle</label>
-            <select id="bundle_id" name="bundle_id" required>
-              <option value="">Select a bundle…</option>
-              {bundles?.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} v{b.version} ({b.target_type})
-                </option>
-              ))}
-            </select>
-            {bundles && bundles.length === 0 && (
-              <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-                No bundles available. Contact your SilkStrand administrator.
-              </p>
-            )}
-          </div>
+          {(() => {
+            const selectedTarget = targets?.find((t) => t.id === selectedTargetId);
+            const compatibleBundles = selectedTarget
+              ? bundles?.filter((b) => b.target_type === selectedTarget.type)
+              : [];
+            return (
+              <div className="form-group">
+                <label htmlFor="bundle_id">Bundle</label>
+                <select
+                  id="bundle_id"
+                  name="bundle_id"
+                  required
+                  disabled={!selectedTarget}
+                  key={selectedTargetId}
+                >
+                  <option value="">
+                    {selectedTarget ? 'Select a bundle…' : 'Select a target first'}
+                  </option>
+                  {compatibleBundles?.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} v{b.version}
+                    </option>
+                  ))}
+                </select>
+                {selectedTarget && compatibleBundles?.length === 0 && (
+                  <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+                    No bundles available for target type “{selectedTarget.type}”.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
           <button
             type="submit"
             className="btn btn-primary"
