@@ -172,12 +172,24 @@ module "database" {
 }
 
 # --- Storage ---
+variable "github_actions_sa_email" {
+  description = "Service account email used by GitHub Actions (WIF). Granted write access to the agent-releases bucket."
+  type        = string
+  default     = ""
+}
+
 module "storage" {
   source = "../../modules/storage"
 
-  project_id  = var.project_id
-  region      = var.region
-  environment = "prod"
+  project_id                   = var.project_id
+  region                       = var.region
+  environment                  = "prod"
+  create_agent_releases_bucket = true
+  agent_releases_writers = (
+    var.github_actions_sa_email != ""
+    ? ["serviceAccount:${var.github_actions_sa_email}"]
+    : []
+  )
 }
 
 # --- Cloud Run API ---

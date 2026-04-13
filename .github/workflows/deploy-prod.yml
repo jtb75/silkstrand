@@ -187,6 +187,7 @@ jobs:
             -var="tenant_jwt_secret=${{ secrets.TENANT_JWT_SECRET }}" \
             -var="resend_api_key=${{ secrets.RESEND_API_KEY }}" \
             -var="tenant_web_url=https://silkstrand-web-baglom43cq-uc.a.run.app" \
+            -var="github_actions_sa_email=${{ vars.WIF_SA_PROD }}" \
             -var="bootstrap_admin_email=${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}" \
             -var="bootstrap_admin_password=${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}"
 

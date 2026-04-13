@@ -16,11 +16,12 @@ import (
 // here get a one-time API key shown in the response; the hash is stored.
 // See api/internal/handler/agent.go for the WebSocket connect handler.
 type AgentsHandler struct {
-	store store.Store
+	store       store.Store
+	releasesURL string // base URL for agent binaries/installer, e.g. GCS bucket
 }
 
-func NewAgentsHandler(s store.Store) *AgentsHandler {
-	return &AgentsHandler{store: s}
+func NewAgentsHandler(s store.Store, releasesURL string) *AgentsHandler {
+	return &AgentsHandler{store: s, releasesURL: releasesURL}
 }
 
 // GET /api/v1/agents
@@ -109,6 +110,37 @@ func (h *AgentsHandler) RotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"api_key": rawKey})
+}
+
+// DownloadInfo describes where agent binaries and the installer script live.
+// The public GCS base URL is configured at the API level (AGENT_RELEASES_URL)
+// and surfaced here so the tenant frontend doesn't need to hardcode it.
+type DownloadInfo struct {
+	Version       string            `json:"version"`
+	InstallScript string            `json:"install_script"`
+	InstallCmd    string            `json:"install_cmd"`
+	Binaries      map[string]string `json:"binaries"`
+}
+
+// GET /api/v1/agents/downloads
+func (h *AgentsHandler) Downloads(w http.ResponseWriter, r *http.Request) {
+	base := h.releasesURL
+	if base == "" {
+		base = "https://storage.googleapis.com/silkstrand-agent-releases"
+	}
+	info := DownloadInfo{
+		Version:       "latest",
+		InstallScript: base + "/install.sh",
+		InstallCmd:    "curl -sSL " + base + "/install.sh | sh",
+		Binaries: map[string]string{
+			"linux-amd64":       base + "/latest/silkstrand-agent-linux-amd64",
+			"linux-arm64":       base + "/latest/silkstrand-agent-linux-arm64",
+			"darwin-amd64":      base + "/latest/silkstrand-agent-darwin-amd64",
+			"darwin-arm64":      base + "/latest/silkstrand-agent-darwin-arm64",
+			"windows-amd64.exe": base + "/latest/silkstrand-agent-windows-amd64.exe",
+		},
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 // DELETE /api/v1/agents/{id}
