@@ -139,6 +139,7 @@ func run() error {
 	apiMux.HandleFunc("POST /api/v1/scans", scanH.Create)
 	apiMux.HandleFunc("GET /api/v1/scans", scanH.List)
 	apiMux.HandleFunc("GET /api/v1/scans/{id}", scanH.Get)
+	apiMux.HandleFunc("DELETE /api/v1/scans/{id}", scanH.Delete)
 
 	// Apply auth + tenant middleware to API routes
 	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))

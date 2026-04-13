@@ -102,6 +102,8 @@ export const createScan = (targetId: string, bundleId: string) =>
     body: JSON.stringify({ target_id: targetId, bundle_id: bundleId }),
   });
 export const getScan = (id: string) => request<Scan>(`/api/v1/scans/${id}`);
+export const deleteScan = (id: string) =>
+  request<void>(`/api/v1/scans/${id}`, { method: 'DELETE' });
 export const listBundles = () => request<Bundle[]>('/api/v1/bundles');
 
 // Agents

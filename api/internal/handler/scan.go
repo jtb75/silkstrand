@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -115,4 +117,37 @@ func (h *ScanHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, scan)
+}
+
+// Delete removes a scan (and its results via CASCADE) for the caller's
+// tenant. Running scans are refused — they need to complete or be failed
+// by the agent-disconnect cleanup path first, to avoid orphaning the
+// agent's in-flight work.
+func (h *ScanHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	scan, err := h.store.GetScan(r.Context(), id)
+	if err != nil {
+		slog.Error("getting scan for delete", "error", err, "scan_id", id)
+		writeError(w, http.StatusInternalServerError, "failed to load scan")
+		return
+	}
+	if scan == nil {
+		writeError(w, http.StatusNotFound, "scan not found")
+		return
+	}
+	if scan.Status == model.ScanStatusRunning {
+		writeError(w, http.StatusConflict,
+			"running scans cannot be deleted; wait for completion or agent disconnect")
+		return
+	}
+	if err := h.store.DeleteScan(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "scan not found")
+			return
+		}
+		slog.Error("deleting scan", "error", err, "scan_id", id)
+		writeError(w, http.StatusInternalServerError, "failed to delete scan")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
