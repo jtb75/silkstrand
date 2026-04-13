@@ -399,6 +399,44 @@ dispatched at / completion summary).
 The D2 `run_one_shot_scan` action is how a rule (e.g., "new CVE
 template uploaded for tag X") triggers this automatically.
 
+### D14. Template catalog — SilkStrand-curated, tenant-selectable (added 2026-04-13)
+
+Two-layer model for nuclei template management, mirroring the
+customer-control principle from D11:
+
+**Layer 1 — SilkStrand catalog (operational hygiene).** SilkStrand
+maintains the set of templates available to all tenants. Curation
+defaults: drop `fuzzing/`, `headless/`, `dns/`, `ssl/`; drop tags
+`intrusive`, `dast`, and any template requiring third-party API keys
+we don't ship (`shodan`, `censys`, `virustotal`, `chaos`, `github`).
+Categories kept: `cves/`, `vulnerabilities/`, `exposures/`,
+`misconfiguration/`, `network/`, `default-logins/`, `exposed-panels/`,
+`technologies/`. The signed bundle distribution from D7 ships the
+curated subset; `info`-severity templates are kept for fingerprint
+enrichment (the run-time `-severity` flag, not bundle contents, gates
+what produces alerts).
+
+**Layer 2 — Tenant selection (deferred to R1.5+).** Each tenant
+chooses which catalog categories / packs are active for their
+discovery scans. Default for new tenants: all categories enabled. The
+tenant's selection is carried in the discovery directive and
+translated to nuclei `-tags` / `-itags` / `-it` flags at scan time.
+Out of R1a scope; ships in a follow-on phase with:
+
+- New `tenant_recon_config` JSONB on `tenants` (or its own table),
+  shape `{enabled_categories: [...], severity_floor: "low",
+  extra_tags: [...]}`.
+- Backoffice "Catalog" surface (super-admin curates the available
+  catalog, retires deprecated packs).
+- Tenant settings page "Recon Templates" with category toggles and a
+  severity-floor selector.
+- Discovery directive extension (agent contract) — list of enabled
+  tags/categories.
+
+R1a ships with all-enabled defaults so the product is functional out
+of the box; per-tenant selection becomes an upgrade, not a release
+blocker.
+
 ## Schema summary
 
 ```
@@ -422,6 +460,7 @@ credential_sources        — see ADR 004
 | **R1b** | Generalized D2 rule engine (`suggest_target` + `auto_create_target` actions); promote-to-compliance flow end-to-end | R1a |
 | **R1c** | D12 notification channels (webhook, slack, email); D13 asset sets; `notify` and `run_one_shot_scan` rule actions; one-shot scan dispatcher | R1b |
 | **R1.1** | Host list import target source; PagerDuty channel | R1c |
+| **R1.5** | D14 tenant template selection: `tenant_recon_config`, backoffice catalog UI, tenant settings page, directive carries enabled tags | R1c |
 | **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential binding; **orphaned-resource detection** (idea B — last_observed_traffic, tag-based filters on Assets page) | R1c, ADR 004 Phase C1 |
 | **R3+** | Vault credential resolution (ADR 004 Phase C3); DNS zone enumeration; Azure/GCP cloud discovery | Demand-driven |
 
