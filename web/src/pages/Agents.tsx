@@ -1,13 +1,18 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listAgents, createAgent, rotateAgentKey, deleteAgent } from '../api/client';
-import type { Agent } from '../api/types';
+import { listAgents, createAgent, rotateAgentKey, deleteAgent, getAgentDownloads } from '../api/client';
+import type { Agent, AgentDownloads } from '../api/types';
 
 export default function Agents() {
   const qc = useQueryClient();
   const { data: agents, isLoading, error } = useQuery<Agent[]>({
     queryKey: ['agents'],
     queryFn: listAgents,
+  });
+
+  const { data: downloads } = useQuery<AgentDownloads>({
+    queryKey: ['agent-downloads'],
+    queryFn: getAgentDownloads,
   });
 
   const [name, setName] = useState('');
@@ -47,6 +52,29 @@ export default function Agents() {
       <div className="page-header">
         <h1>Agents</h1>
       </div>
+
+      {downloads && (
+        <div className="detail-card" style={{ marginBottom: 24 }}>
+          <h2 style={{ marginTop: 0 }}>Download agent</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            One-liner (Linux &amp; macOS):
+          </p>
+          <pre
+            style={{
+              background: '#111', color: '#eee', padding: 12, borderRadius: 6,
+              overflowX: 'auto', userSelect: 'all',
+            }}
+          >{downloads.install_cmd}</pre>
+          <p className="muted">Or grab a binary directly:</p>
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {Object.entries(downloads.binaries).map(([platform, url]) => (
+              <li key={platform}>
+                <a href={url}>{platform}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <form onSubmit={submit} className="form-card" style={{ marginBottom: 24 }}>
         <h2 style={{ marginTop: 0 }}>Register a new agent</h2>

@@ -75,6 +75,13 @@ export interface CreateAgentResponse {
   api_key: string; // plaintext, shown once
 }
 
+export interface AgentDownloads {
+  version: string;
+  install_script: string;
+  install_cmd: string;
+  binaries: Record<string, string>;
+}
+
 export interface Bundle {
   id: string;
   name: string;

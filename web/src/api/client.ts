@@ -5,6 +5,7 @@ import type {
   Scan,
   Agent,
   CreateAgentResponse,
+  AgentDownloads,
 } from './types';
 
 // DC API base URL is resolved at call time from the active tenant context.
@@ -112,3 +113,5 @@ export const rotateAgentKey = (id: string) =>
   request<{ api_key: string }>(`/api/v1/agents/${id}/rotate-key`, { method: 'POST' });
 export const deleteAgent = (id: string) =>
   request<void>(`/api/v1/agents/${id}`, { method: 'DELETE' });
+export const getAgentDownloads = () =>
+  request<AgentDownloads>('/api/v1/agents/downloads');

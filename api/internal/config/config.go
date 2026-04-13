@@ -15,6 +15,7 @@ type Config struct {
 	InternalAPIKey          string
 	CredentialEncryptionKey []byte   // 32 bytes for AES-256-GCM
 	AllowedOrigins         []string // Allowed WebSocket origins (empty = allow all in dev)
+	AgentReleasesURL       string   // Public GCS base URL for agent binaries + install.sh
 }
 
 func Load() (*Config, error) {
@@ -38,6 +39,7 @@ func Load() (*Config, error) {
 		InternalAPIKey:          getEnv("INTERNAL_API_KEY", ""),
 		CredentialEncryptionKey: credKey,
 		AllowedOrigins:         parseOrigins(getEnv("ALLOWED_ORIGINS", "")),
+		AgentReleasesURL:       getEnv("AGENT_RELEASES_URL", "https://storage.googleapis.com/silkstrand-agent-releases"),
 	}
 
 	if getEnv("ENV", "dev") == "production" {

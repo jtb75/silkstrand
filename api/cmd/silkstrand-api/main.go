@@ -76,7 +76,7 @@ func run() error {
 	targetH := handler.NewTargetHandler(pgStore)
 	scanH := handler.NewScanHandler(pgStore, ps, hub)
 	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey)
-	agentsH := handler.NewAgentsHandler(pgStore)
+	agentsH := handler.NewAgentsHandler(pgStore, cfg.AgentReleasesURL)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 
 	// Router
@@ -110,6 +110,7 @@ func run() error {
 	apiMux.HandleFunc("PUT /api/v1/targets/{id}", targetH.Update)
 	apiMux.HandleFunc("DELETE /api/v1/targets/{id}", targetH.Delete)
 
+	apiMux.HandleFunc("GET /api/v1/agents/downloads", agentsH.Downloads)
 	apiMux.HandleFunc("GET /api/v1/agents", agentsH.List)
 	apiMux.HandleFunc("POST /api/v1/agents", agentsH.Create)
 	apiMux.HandleFunc("GET /api/v1/agents/{id}", agentsH.Get)
