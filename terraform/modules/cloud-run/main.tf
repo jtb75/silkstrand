@@ -107,6 +107,14 @@ resource "google_cloud_run_v2_service" "api" {
   template {
     service_account = google_service_account.api.email
 
+    # Agents hold long-lived WebSocket connections; Cloud Run's default
+    # 300s request timeout tears them down every 5 minutes and forces
+    # agents to reconnect (and pending scan directives published during
+    # the reconnect window are lost to Redis pub/sub). 3600s (60 min) is
+    # the Cloud Run max for HTTP services and substantially reduces the
+    # reconnect cadence.
+    timeout = "3600s"
+
     annotations = {
       "run.googleapis.com/vpc-access-connector" = "projects/${var.project_id}/locations/${var.region}/connectors/${var.vpc_connector_name}"
       "run.googleapis.com/vpc-access-egress"    = "private-ranges-only"
