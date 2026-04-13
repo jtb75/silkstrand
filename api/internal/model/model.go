@@ -147,10 +147,28 @@ const (
 	AgentStatusDisconnected = "disconnected"
 )
 
-// Target types
+// Target types — engine-specific. Historic value "database" was Postgres only
+// and is migrated to "postgresql" in migration 009.
 const (
-	TargetTypeDatabase = "database"
-	TargetTypeHost     = "host"
-	TargetTypeCIDR     = "cidr"
-	TargetTypeCloud    = "cloud"
+	TargetTypePostgreSQL       = "postgresql"
+	TargetTypeAuroraPostgreSQL = "aurora_postgresql"
+	TargetTypeMSSQL            = "mssql"
+	TargetTypeMongoDB          = "mongodb"
+	TargetTypeMySQL            = "mysql"
+	TargetTypeAuroraMySQL      = "aurora_mysql"
+	TargetTypeHost             = "host"
+	TargetTypeCIDR             = "cidr"
+	TargetTypeCloud            = "cloud"
 )
+
+// IsValidTargetType returns true for known engine/type identifiers.
+func IsValidTargetType(t string) bool {
+	switch t {
+	case TargetTypePostgreSQL, TargetTypeAuroraPostgreSQL,
+		TargetTypeMSSQL, TargetTypeMongoDB,
+		TargetTypeMySQL, TargetTypeAuroraMySQL,
+		TargetTypeHost, TargetTypeCIDR, TargetTypeCloud:
+		return true
+	}
+	return false
+}

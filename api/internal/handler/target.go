@@ -56,6 +56,11 @@ func (h *TargetHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "type and identifier are required")
 		return
 	}
+	if !model.IsValidTargetType(req.Type) {
+		writeError(w, http.StatusBadRequest,
+			"unsupported target type: "+req.Type)
+		return
+	}
 
 	target, err := h.store.CreateTarget(r.Context(), req)
 	if err != nil {

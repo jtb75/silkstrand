@@ -1,8 +1,19 @@
+export type TargetType =
+  | 'postgresql'
+  | 'aurora_postgresql'
+  | 'mssql'
+  | 'mongodb'
+  | 'mysql'
+  | 'aurora_mysql'
+  | 'host'
+  | 'cidr'
+  | 'cloud';
+
 export interface Target {
   id: string;
   tenant_id: string;
   agent_id?: string;
-  type: 'database' | 'host' | 'cidr' | 'cloud';
+  type: TargetType;
   identifier: string;
   config: Record<string, unknown>;
   environment?: string;
