@@ -8,10 +8,11 @@
 
 ## Context
 
-Today, compliance targets embed credentials directly — `targets.credential`
-holds an AES-GCM encrypted username/password blob in our database. This
-works for the manual-target, known-tenant-count world we built for
-compliance v1, but breaks down as we add:
+Today, compliance targets are paired 1:1 with a row in a separate
+`credentials` table (`credentials.target_id` has a unique index) holding
+an AES-GCM encrypted username/password blob. This works for the
+manual-target, known-tenant-count world we built for compliance v1, but
+breaks down as we add:
 
 - **Recon-driven promote-to-compliance.** Auto-creating targets from
   discovered assets requires auto-resolving credentials. Customers
@@ -44,7 +45,7 @@ credential_sources (
   updated_at TIMESTAMPTZ NOT NULL
 );
 
--- migrated from targets.credential:
+-- new FK on targets, backfilled from the existing credentials table:
 targets.credential_source_id UUID REFERENCES credential_sources(id);
 ```
 
@@ -56,7 +57,7 @@ discards at scan end.
 
 | Type | Config shape | Agent auth | Notes |
 |---|---|---|---|
-| `static` | `{encrypted_blob}` | — | Current behaviour, wrapped. Fallback for customers without a vault. |
+| `static` | `{type, encrypted_data}` | — | Current behaviour, wrapped. `type` preserves today's credential kind (e.g. `"database"`); `encrypted_data` is the AES-256-GCM blob. Fallback for customers without a vault. |
 | `aws_secrets_manager` | `{secret_arn}` | IAM role on agent | First non-static source (Phase C1). |
 | `gcp_secret_manager` | `{secret_path, version?}` | Service account on agent | |
 | `azure_key_vault` | `{vault_url, secret_name}` | Managed Identity / service principal | |
@@ -106,7 +107,7 @@ trust the chain.
 
 | Phase | Scope |
 |---|---|
-| **C0** *(prereq for ADR 003 R0)* | Refactor `targets` to use `credential_source_id`. Add `static` source type wrapping today's encrypted storage. One-time migration of existing `targets.credential` into a `static` credential_sources row per target. **No behaviour change.** Plumbing only. |
+| **C0** *(prereq for ADR 003 R0)* | Add `credential_sources` table and `targets.credential_source_id` FK. Add `static` source type wrapping today's encrypted storage. One-time backfill: one `static` credential_sources row per existing `credentials` row, with `targets.credential_source_id` set to match. Legacy `credentials` table is kept read-only through the transition and dropped in a follow-up migration once rollback window closes. **No behaviour change** at the agent / prober / runner interface. Plumbing only. |
 | **C1** *(with recon R2)* | AWS Secrets Manager resolver. Cloud-native auto-binding for RDS / Aurora / DocumentDB. Agent IAM role model. Validates the abstraction end-to-end with one provider. |
 | **C2** *(continuous)* | `static` remains the universal escape hatch. Manual credential entry UI stays functional for customers without a vault integration. Do not gate the product on integrations. |
 | **C3** *(demand-driven)* | HashiCorp Vault — KV engine first, DB secrets engine second. Token renewal strategy. Tag-match and naming-rule resolvers. |
@@ -129,8 +130,9 @@ CREATE INDEX idx_credential_sources_tenant ON credential_sources(tenant_id);
 ALTER TABLE targets
   ADD COLUMN credential_source_id UUID REFERENCES credential_sources(id);
 
--- Post-backfill, drop the legacy column:
--- ALTER TABLE targets DROP COLUMN credential;
+-- One follow-up migration after the rollback window closes drops the
+-- legacy table:
+-- DROP TABLE credentials;
 ```
 
 Per-type `config` JSON schemas are defined in the resolver plugin for
@@ -168,6 +170,18 @@ need per-CIDR or per-tag routing.
   short atomic operation relative to rotation cadence.
 - **Audit logging.** Every credential fetch must be logged (source, target,
   scan_id, outcome). Drives compliance reporting and incident response.
+  C0 is the right time to add the structured slog event at the single
+  fetch site — retrofitting is more expensive once multiple resolver
+  types share the path.
+- **Resolver execution boundary.** C0 resolves `static` server-side
+  (API decrypts the blob and embeds plaintext in the WSS directive, as
+  today). C1+ non-static types (AWS Secrets Manager, Vault, etc.)
+  resolve **agent-side** — the API forwards an opaque resolver context
+  (`{type, config}`) and the agent performs the fetch using its own
+  IAM / token material. C0 must leave this seam clean: even though no
+  agent-side resolution is wired yet, the directive payload should
+  already carry a typed field that future resolver dispatches can slot
+  into without another schema break.
 
 ## Consequences
 
