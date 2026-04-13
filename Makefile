@@ -1,4 +1,4 @@
-.PHONY: dev dev-deps build test lint docker run migrate-up migrate-down clean seed jwt hash-password
+.PHONY: dev dev-deps build test lint docker run migrate-up migrate-down clean seed seed-mssql seed-mongo jwt hash-password
 
 # Start local dependencies (Postgres + Redis)
 dev-deps:
@@ -51,6 +51,14 @@ lint-backoffice:
 # Seed local databases with test data (requires docker compose up)
 seed:
 	bash scripts/seed.sh
+
+# Seed the local SQL Server 2022 container with a read-only scan user.
+seed-mssql:
+	bash scripts/seed-mssql.sh
+
+# Seed the local MongoDB 8 container with a read-only scan user.
+seed-mongo:
+	bash scripts/seed-mongo.sh
 
 # Generate a dev JWT token for the default test tenant
 jwt:

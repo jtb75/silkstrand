@@ -1,0 +1,79 @@
+id: "2.1"
+title: "Ensure Authentication is configured"
+section: "Authentication"
+assessment: automated
+profile:
+  - "Level 1- MongoDB"
+severity: HIGH
+
+description: >
+  This setting ensures that all clients, users, servers are required to
+  authenticate before being granted access to the MongoDB database.
+
+  Authentication is the process of verifying the identity of a client.
+  When access control, i.e. authorization, is enabled, MongoDB requires
+  all clients to authenticate themselves in order to determine their
+  access.
+
+  MongoDB supports multiple authentication mechanisms: SCRAM (Default),
+  x.509 Certificate Authentication. In addition to supporting the
+  aforementioned mechanisms, MongoDB Enterprise also supports LDAP proxy
+  authentication and Kerberos authentication.
+
+rationale: >
+  Failure to authenticate clients, users, servers can enable unauthorized
+  access to the MongoDB database and can prevent tracing actions back to
+  their sources.
+
+  It's highly recommended that password length and complexity also be
+  in-place. When performing the traditional user/password authentication
+  against MongoDB there is not in-place intrinsic password complexity
+  check and there is no LOCKING mechanism with multiple failure logins.
+  So, MongoDB is prone to brute force attacks compared to other database
+  systems.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getCmdLineOpts: 1
+  assertions:
+    - field: parsed.security.authorization
+      op: equals
+      value: "enabled"
+
+remediation: |
+  The authentication mechanism should be implemented before anyone
+  accesses the MongoDB Server.
+
+  - Start the MongoDB instance without authentication.
+      mongod --port 27017 --dbpath /data/db1
+  - Create the system user administrator:
+      use admin
+      db.createUser(
+        {
+          user: "MongoAdmin",
+          pwd: "password",
+          roles: [ { role: "root", db: "admin" } ]
+        }
+      )
+  - Open mongod.conf and change authorization value to enabled:
+      security:
+        authorization: "enabled"
+  - Restart the MongoDB instance:
+      service mongod restart
+
+default_value: "By default, authorization is set to disable."
+
+references:
+  - https://www.mongodb.com/docs/v7.0/core/authentication/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "5.2"
+      title: "Use Unique Passwords"
+    - id: "6.3"
+      title: "Require MFA for Externally-Exposed Applications"
+  cis_controls_v7:
+    - id: "16.3"
+      title: "Require Multi-factor Authentication"

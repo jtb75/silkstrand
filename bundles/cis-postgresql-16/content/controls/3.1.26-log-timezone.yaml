@@ -1,0 +1,48 @@
+id: "3.1.26"
+title: "Ensure 'log_timezone' is set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  The log_timezone setting specifies the time zone to use in
+  timestamps within log messages. This value is cluster-wide, so that
+  all sessions will report timestamps consistently. Unless directed
+  otherwise by your organization's logging policy, set this to either
+  GMT or UTC. Note that this setting affects only the timestamps
+  present in the logs. It does not affect the time zone in use by the
+  database itself (for example, select now()), nor does it affect the
+  host's time zone.
+
+rationale: >
+  Log entry timestamps should be configured for an appropriate time
+  zone as defined by your organization's logging policy to ensure a
+  lack of confusion around when a logged event occurred.
+
+check:
+  type: sql_configuration
+  query: "SHOW log_timezone;"
+  assertions:
+    - field: log_timezone
+      op: in
+      value: ["GMT", "UTC"]
+
+remediation: |
+  ALTER SYSTEM SET log_timezone = 'GMT';
+  SELECT pg_reload_conf();
+
+default_value: "By default, the PGDG packages will set this to match the server's timezone in the Operating System."
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+  - https://en.wikipedia.org/wiki/Time_zone
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.3"
+      title: "Enable Detailed Logging"

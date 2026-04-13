@@ -1,0 +1,51 @@
+id: "6.1"
+title: "Ensure that MongoDB uses a non-default port"
+section: "Operating System Hardening"
+assessment: automated
+profile:
+  - "Level 1- MongoDB"
+severity: LOW
+
+description: >
+  Changing the default port used by MongoDB makes it harder for
+  attackers to find the database and target it.
+
+rationale: >
+  Standard ports are used in automated attacks and by attackers to
+  verify which applications are running on a server.
+
+impact: >
+  Hackers frequently scan IP addresses for commonly used ports, so it's
+  not uncommon to use a different port to "fly under the radar". This
+  is just to avoid detection, other than that there is no added safety
+  by using a different port.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getCmdLineOpts: 1
+  assertions:
+    - field: parsed.net.port
+      op: not_equals
+      value: 27017
+
+remediation: |
+  Change the port for MongoDB server to a number other than 27017.
+  In mongod.conf edit the below lines:
+
+      # network interfaces
+      net:
+        port: $Orginasation Defined port
+        bindIp: $Orginasation Defined IP
+
+references:
+  - https://docs.mongodb.com/v5.0/reference/default-mongodb-port/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "4.8"
+      title: "Uninstall or Disable Unnecessary Services on Enterprise Assets and Software"
+  cis_controls_v7:
+    - id: "9.2"
+      title: "Ensure Only Approved Ports, Protocols and Services Are Running"

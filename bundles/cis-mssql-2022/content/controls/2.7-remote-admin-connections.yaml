@@ -1,0 +1,64 @@
+id: "2.7"
+title: "Ensure 'Remote Admin Connections' Server Configuration Option is set to '0'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+severity: MEDIUM
+
+description: >
+  The remote admin connections option controls whether a client
+  application on a remote computer can use the Dedicated Administrator
+  Connection (DAC).
+
+rationale: >
+  The Dedicated Administrator Connection (DAC) lets an administrator
+  access a running server to execute diagnostic functions or Transact-SQL
+  statements, or to troubleshoot problems on the server, even when the
+  server is locked or running in an abnormal state. In a cluster
+  scenario, the administrator may not actually be logged on to the same
+  node that is currently hosting the SQL Server instance and thus is
+  considered "remote". Therefore, this setting should usually be enabled
+  (1) for SQL Server failover clusters; otherwise it should be disabled
+  (0) which is the default.
+
+check:
+  # Clustered installations must leave this enabled — CIS treats the
+  # recommendation as N/A in that case.
+  precondition:
+    type: sql_scalar
+    query: |
+      SELECT CAST(SERVERPROPERTY('IsClustered') as int) as value;
+    if_matches:
+      status: NOT_APPLICABLE
+      reason: "clustered installation — DAC must remain reachable remotely"
+    assertions:
+      - field: value
+        op: equals
+        value: 1
+  type: sql_configuration
+  query: |
+    SELECT name,
+           CAST(value as int) as value_configured,
+           CAST(value_in_use as int) as value_in_use
+    FROM sys.configurations
+    WHERE name = 'remote admin connections';
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: value_configured
+      op: equals
+      value: 0
+    - field: value_in_use
+      op: equals
+      value: 0
+
+remediation: |
+  EXECUTE sp_configure 'remote admin connections', 0;
+  RECONFIGURE;
+  GO
+
+default_value: "0 (local DAC only)"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/remote-admin-connections-server-configuration-option

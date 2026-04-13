@@ -1,0 +1,66 @@
+id: "3.2"
+title: "Ensure the PostgreSQL Audit Extension (pgAudit) is enabled"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  The PostgreSQL Audit Extension (pgAudit) provides detailed session
+  and/or object audit logging via the standard PostgreSQL logging
+  facility. The goal of pgAudit is to provide PostgreSQL users with
+  the capability to produce audit logs often required to comply with
+  government, financial, or ISO certifications.
+
+rationale: >
+  Basic statement logging can be provided by the standard logging
+  facility with log_statement = all. This is acceptable for monitoring
+  and other uses but does not provide the level of detail generally
+  required for an audit. It is not enough to have a list of all the
+  operations performed against the database, it must also be possible
+  to find particular statements that are of interest to an auditor.
+  The standard logging facility shows what the user requested, while
+  pgAudit focuses on the details of what happened while the database
+  was satisfying the request.
+
+impact: >
+  Depending on settings, it is possible for pgAudit to generate an
+  enormous volume of logging. Be careful to determine exactly what
+  needs to be audit logged in your environment to avoid logging too
+  much.
+
+check:
+  # pgaudit must be loaded via shared_preload_libraries — which is
+  # exposed as a comma-delimited string via SHOW.
+  type: sql_configuration
+  query: "SHOW shared_preload_libraries;"
+  assertions:
+    - field: shared_preload_libraries
+      op: pattern_match
+      value: "pgaudit"
+
+remediation: |
+  To install and enable pgAudit, install the appropriate rpm from the PGDG repo:
+
+  # dnf -y install pgaudit_16
+
+  Alter postgresql.conf to enable pgAudit as an extension in the
+  shared_preload_libraries parameter and indicate which classes of
+  statements to log via pgaudit.log, then restart the PostgreSQL service:
+
+  shared_preload_libraries = 'pgaudit'
+  pgaudit.log='ddl,write'
+
+default_value: "(not loaded)"
+
+references:
+  - https://www.pgaudit.org/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.2"
+      title: "Collect Audit Logs"
+  cis_controls_v7:
+    - id: "6.2"
+      title: "Activate audit logging"

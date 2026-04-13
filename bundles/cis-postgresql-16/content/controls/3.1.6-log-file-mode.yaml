@@ -1,0 +1,46 @@
+id: "3.1.6"
+title: "Ensure the log file permissions are set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  The log_file_mode setting determines the file permissions for log
+  files when logging_collector is enabled. The parameter value is
+  expected to be a numeric mode specification in the form accepted by
+  the chmod and umask system calls. The permissions should be set to
+  allow only the necessary access to authorized personnel. In most
+  cases, the best setting is 0600, so that only the server owner can
+  read or write the log files.
+
+rationale: >
+  Log files often contain sensitive data. Allowing unnecessary access
+  to log files may inadvertently expose sensitive data to unauthorized
+  personnel.
+
+check:
+  type: sql_configuration
+  query: "SHOW log_file_mode;"
+  assertions:
+    - field: log_file_mode
+      op: in
+      value: ["0600", "0640"]
+
+remediation: |
+  ALTER SYSTEM SET log_file_mode = '0600';
+  SELECT pg_reload_conf();
+
+default_value: "0600"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.3"
+      title: "Configure Data Access Control Lists"
+  cis_controls_v7:
+    - id: "14.6"
+      title: "Protect Information through Access Control Lists"

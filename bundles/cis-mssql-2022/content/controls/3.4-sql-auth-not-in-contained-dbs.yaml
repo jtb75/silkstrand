@@ -1,0 +1,49 @@
+id: "3.4"
+title: "Ensure SQL Authentication is not used in contained databases"
+section: "Authentication and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  Contained databases do not enforce password complexity rules for SQL
+  Authenticated users.
+
+rationale: >
+  The absence of an enforced password policy may increase the likelihood
+  of a weak credential being established in a contained database.
+
+impact: >
+  While contained databases provide flexibility in relocating databases
+  to different instances and different environments, this must be
+  balanced with the consideration that no password policy mechanism
+  exists for SQL Authenticated users in contained databases.
+
+check:
+  type: sql_no_rows_match_per_database
+  query: |
+    SELECT name AS DBUser
+    FROM sys.database_principals
+    WHERE name NOT IN ('dbo','Information_Schema','sys','guest')
+    AND type IN ('U','S','G')
+    AND authentication_type = 2;
+
+remediation: |
+  Leverage Windows Authenticated users in contained databases.
+
+default_value: >
+  SQL Authenticated users (USER WITH PASSWORD authentication) are
+  allowed in contained databases.
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/databases/security-best-practices-with-contained-databases
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "5.6"
+      title: "Centralize Account Management"
+  cis_controls_v7:
+    - id: "16.2"
+      title: "Configure Centralized Point of Authentication"

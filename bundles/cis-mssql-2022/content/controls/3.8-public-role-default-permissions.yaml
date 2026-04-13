@@ -1,0 +1,63 @@
+id: "3.8"
+title: "Ensure only the default permissions specified by Microsoft are granted to the public server role"
+section: "Authentication and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  public is a special fixed server role containing all logins. Unlike
+  other fixed server roles, permissions can be changed for the public
+  role. In keeping with the principle of least privileges, the public
+  server role should not be used to grant permissions at the server
+  scope as these would be inherited by all users.
+
+rationale: >
+  Every SQL Server login belongs to the public role and cannot be
+  removed from this role. Therefore, any permissions granted to this
+  role will be available to all logins unless they have been explicitly
+  denied to specific logins or user-defined server roles.
+
+impact: >
+  When the extraneous permissions are revoked from the public server
+  role, access may be lost unless the permissions are granted to the
+  explicit logins or to user-defined server roles containing the logins
+  which require the access.
+
+check:
+  type: sql_no_rows_match
+  query: |
+    SELECT *
+    FROM master.sys.server_permissions
+    WHERE (grantee_principal_id = SUSER_SID(N'public') AND state_desc LIKE 'GRANT%')
+    AND NOT (state_desc = 'GRANT' AND [permission_name] = 'VIEW ANY DATABASE' AND class_desc = 'SERVER')
+    AND NOT (state_desc = 'GRANT' AND [permission_name] = 'CONNECT' AND class_desc = 'ENDPOINT' AND major_id = 2)
+    AND NOT (state_desc = 'GRANT' AND [permission_name] = 'CONNECT' AND class_desc = 'ENDPOINT' AND major_id = 3)
+    AND NOT (state_desc = 'GRANT' AND [permission_name] = 'CONNECT' AND class_desc = 'ENDPOINT' AND major_id = 4)
+    AND NOT (state_desc = 'GRANT' AND [permission_name] = 'CONNECT' AND class_desc = 'ENDPOINT' AND major_id = 5);
+
+remediation: |
+  -- Revoke the extraneous permission_name from the public role:
+  USE [master]
+  GO
+  REVOKE <permission_name> FROM public;
+  GO
+
+default_value: >
+  The public server role is granted VIEW ANY DATABASE permission and the
+  CONNECT permission on the default endpoints (TSQL Local Machine, TSQL
+  Named Pipes, TSQL Default TCP, TSQL Default VIA).
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/authentication-access/server-level-roles
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/authentication-access/server-level-roles#permissions-of-fixed-server-roles
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.3"
+      title: "Configure Data Access Control Lists"
+  cis_controls_v7:
+    - id: "14.6"
+      title: "Protect Information through Access Control Lists"

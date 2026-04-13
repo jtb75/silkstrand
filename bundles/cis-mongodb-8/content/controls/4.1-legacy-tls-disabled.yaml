@@ -1,0 +1,65 @@
+id: "4.1"
+title: "Ensure legacy TLS protocols are disabled"
+section: "Data Encryption"
+assessment: automated
+profile:
+  - "Level 2 - MongoDB"
+severity: MEDIUM
+
+description: >
+  Only modern TLS protocols should be enabled in MongoDB for all client
+  connections and upstream connections. Removing legacy TLS and SSL
+  protocols (SSL 3.0, TLS 1.0 and 1.1), and enabling emerging and stable
+  TLS protocols (TLS 1.2, and TLS 1.3), ensures users are able to take
+  advantage of strong security capabilities and protects them from
+  insecure legacy protocols.
+
+rationale: >
+  Why disable TLS 1.0: TLS 1.0 was deprecated from use when PCI DSS
+  Compliance mandated that it not be used for any applications
+  processing credit card numbers in June 2018.
+
+  Why disable TLS 1.1: Because of the increased security associated with
+  higher versions of TLS, TLS 1.0 should be disabled.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getCmdLineOpts: 1
+  assertions:
+    - field: parsed.net.tls.disabledProtocols
+      op: pattern_match
+      value: "TLS1_0"
+    - field: parsed.net.tls.disabledProtocols
+      op: pattern_match
+      value: "TLS1_1"
+
+remediation: |
+  Make changes to configuration file, to configure your mongod or
+  mongos instance to disable legacy protocols, shut down the instance
+  and update the configuration file with the following setting:
+
+      net:
+        tls:
+          mode: requireTLS
+          certificateKeyFile: /etc/ssl/mongodb.pem
+          CAFile: /etc/ssl/caToValidateClientCertificates.pem
+          disabledProtocols: TLS1_0,TLS1_1
+
+  Start mongod or mongos instance with the configuration file.
+
+      mongod --config /etc/mongod.conf
+
+default_value: "TLS1_0, TLS1_1, TLS1_2 (Starting in version 4.0.4 and 3.6.9 TLS1_3 is added to the default value.)"
+
+references:
+  - https://www.mongodb.com/docs/v7.0/core/security-transport-encryption/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "4.1"
+      title: "Establish and Maintain a Secure Configuration Process"
+  cis_controls_v7:
+    - id: "18.11"
+      title: "Use Standard Hardening Configuration Templates for Databases"

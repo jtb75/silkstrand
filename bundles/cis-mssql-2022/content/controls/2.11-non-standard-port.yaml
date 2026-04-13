@@ -1,0 +1,49 @@
+id: "2.11"
+title: "Ensure SQL Server is configured to use non-standard ports"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  If installed, a default SQL Server instance will be assigned a default
+  port of TCP:1433 for TCP/IP communication. Administrators can also
+  manually configure named instances to use TCP:1433 for communication.
+  TCP:1433 is a widely known SQL Server port and this port assignment
+  should be changed.
+
+rationale: >
+  Using a non-default port helps protect the database from attacks
+  directed to the default port.
+
+check:
+  # If ListenOnAllIPs=1, count rows where IPAll/Tcp uses 1433; else count
+  # rows where Tcp uses 1433. A count of 0 is compliant.
+  type: sql_scalar
+  query: |
+    IF (SELECT value_data FROM sys.dm_server_registry WHERE value_name = 'ListenOnAllIPs') = 1
+      SELECT count(*) AS listen_on_default_port
+      FROM sys.dm_server_registry
+      WHERE registry_key LIKE '%IPAll%'
+      AND value_name LIKE '%Tcp%'
+      AND value_data = '1433'
+    ELSE
+      SELECT count(*) AS listen_on_default_port
+      FROM sys.dm_server_registry
+      WHERE value_name LIKE '%Tcp%'
+      AND value_data = '1433';
+  assertions:
+    - field: value
+      op: equals
+      value: 0
+
+remediation: |
+  Use SQL Server Configuration Manager to move the instance off TCP:1433.
+  See the Microsoft reference for the full GUI procedure.
+
+default_value: "Default instance listens on TCP:1433"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/configure-a-server-to-listen-on-a-specific-tcp-port

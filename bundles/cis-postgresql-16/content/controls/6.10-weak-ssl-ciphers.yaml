@@ -1,0 +1,64 @@
+id: "6.10"
+title: "Ensure Weak SSL/TLS Ciphers Are Disabled"
+section: "PostgreSQL Settings"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL on Linux"
+severity: MEDIUM
+
+description: >
+  The PostgreSQL ssl_ciphers directive specifies which Cipher Suites
+  are allowed in the negotiation with the client. In cryptography,
+  perfect forward secrecy (PFS), also known as forward secrecy (FS),
+  is a feature of specific key exchange protocols that give assurance
+  that the session keys will not be compromised even if the private
+  key of the server is compromised. For instance, RSA does not
+  provide PFS, while the ECDHE (Elliptic-Curve Diffie-Hellman
+  Ephemeral) and DHE (Diffie-Hellman Ephemeral) provides PFS. ECDHE
+  is the stronger protocol and should be preferred, while DHE may be
+  allowed for greater compatibility with older clients. Only Cipher
+  Suites with either the ECDHE or the DHE key exchange are allowed.
+
+rationale: >
+  The SSL/TLS protocols support a large number of Cipher Suites
+  including many weak and medium strength algorithms that are
+  subject to man-in-the-middle attacks and information disclosure.
+  Some implementations even support the NULL Cipher Suite which
+  allows a TLS connection without any cryptographic protection.
+  Therefore, it is critical to ensure the configuration only allows
+  strong algorithms greater than or equal to 128-bit to be
+  negotiated with the client. Stronger 256-bit algorithms should be
+  allowed and preferred.
+
+check:
+  # The ssl_ciphers GUC is exposed via SHOW. We fail if it is empty,
+  # the OpenSSL default cipher string, or explicitly allows anonymous
+  # or NULL suites. A fully-authoritative cipher validation requires
+  # comparison to the long allow-list in the benchmark; this check is
+  # conservative — rejecting the most egregious configurations.
+  type: sql_configuration
+  query: "SHOW ssl_ciphers;"
+  assertions:
+    - field: ssl_ciphers
+      op: pattern_not_match
+      value: "(NULL|aNULL|ADH|eNULL|EXPORT|DES|RC4|MD5)"
+    - field: ssl_ciphers
+      op: pattern_match
+      value: "(ECDHE|DHE|TLS_AES|TLS_CHACHA20)"
+
+remediation: |
+  Add or modify the ssl_ciphers directive to restrict the cipher
+  suite in the PostgreSQL configuration file (postgresql.conf):
+
+  ssl_ciphers = 'TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_AES_128_CCM_SHA256,TLS_CHACHA20_POLY1305_SHA256,ECDHE-ECDSA-AES256-CCM,ECDHE-ECDSA-AES128-CCM,DHE-RSA-AES256-CCM,DHE-RSA-AES128-CCM,ECDHE-RSA-AES256-GCM-SHA384,ECDHE-RSA-AES128-GCM-SHA256,ECDHE-ECDSA-AES256-GCM-SHA384,ECDHE-ECDSA-AES128-GCM-SHA256,DHE-DSS-AES256-GCM-SHA384,DHE-DSS-AES128-GCM-SHA256,DHE-RSA-AES256-GCM-SHA384,DHE-RSA-AES128-GCM-SHA256'
+
+references:
+  - https://ssl-config.mozilla.org/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.10"
+      title: "Encrypt Sensitive Data in Transit"
+  cis_controls_v7:
+    - id: "14.4"
+      title: "Encrypt All Sensitive Information in Transit"

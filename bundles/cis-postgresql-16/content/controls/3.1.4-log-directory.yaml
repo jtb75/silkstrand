@@ -1,0 +1,56 @@
+id: "3.1.4"
+title: "Ensure the log file destination directory is set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  The log_directory setting specifies the destination directory for log
+  files when log_destination is stderr or csvlog. It can be specified
+  as relative to the cluster data directory ($PGDATA) or as an absolute
+  path. log_directory should be set according to your organization's
+  logging policy.
+
+rationale: >
+  If log_directory is not set, it is interpreted as the absolute path
+  '/' and PostgreSQL will attempt to write its logs there (and
+  typically fail due to a lack of permissions to that directory). This
+  parameter should be set to direct the logs into the appropriate
+  directory location as defined by your organization's logging policy.
+
+check:
+  # A non-empty log_directory is the requirement. Any value is
+  # acceptable; only unset / empty is a fail.
+  type: sql_configuration
+  query: "SHOW log_directory;"
+  assertions:
+    - field: log_directory
+      op: pattern_match
+      value: ".+"
+
+remediation: |
+  ALTER SYSTEM SET log_directory='/var/log/postgres';
+  SELECT pg_reload_conf();
+
+  The use of /var/log/postgres, above, is an example. This should be set
+  to an appropriate path as defined by your organization's logging
+  requirements.
+
+default_value: "log (relative to the cluster's data directory, e.g. /var/lib/pgsql/<pgmajorversion>/data/log)"
+
+references:
+  - https://www.postgresql.org/docs/current/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.2"
+      title: "Collect Audit Logs"
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.2"
+      title: "Activate audit logging"
+    - id: "6.3"
+      title: "Enable Detailed Logging"

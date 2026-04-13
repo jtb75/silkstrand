@@ -1,0 +1,44 @@
+id: "2.16"
+title: "Ensure no login exists with the name 'sa'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: HIGH
+
+description: >
+  The sa login is a widely known and often widely used SQL Server
+  account. Therefore, there should not be a login called sa even when
+  the original sa login (principal_id = 1) has been renamed.
+
+rationale: >
+  Enforcing this control reduces the probability of an attacker
+  executing brute force attacks against a well-known principal name.
+
+impact: >
+  Some third-party applications check for the existence of a login named
+  sa and if it doesn't exist, create one. Removing the sa login will
+  prevent these scripts and applications from authenticating to the
+  database server and executing required tasks or functions.
+
+check:
+  type: sql_no_rows_match
+  query: |
+    SELECT principal_id, name
+    FROM sys.server_principals
+    WHERE name = 'sa';
+
+remediation: |
+  USE [master]
+  GO
+  -- If principal_id = 1 or the login owns database objects, rename the sa login.
+  ALTER LOGIN [sa] WITH NAME = <different_name>;
+  GO
+  -- Otherwise, drop the login named sa:
+  -- DROP LOGIN [sa];
+
+default_value: "Login with principal_id = 1 is named 'sa' by default"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/choose-an-authentication-mode

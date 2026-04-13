@@ -1,0 +1,63 @@
+id: "3.9"
+title: "Ensure Windows BUILTIN groups are not SQL Logins"
+section: "Authentication and Authorization"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: HIGH
+
+description: >
+  Prior to SQL Server 2008, the BUILTIN\Administrators group was added
+  as a SQL Server login with sysadmin privileges during installation by
+  default. Best practices promote creating an Active Directory level
+  group containing approved DBA staff accounts and using this controlled
+  AD group as the login with sysadmin privileges. The AD group should be
+  specified during SQL Server installation and the BUILTIN\Administrators
+  group would therefore have no need to be a login.
+
+rationale: >
+  The BUILTIN groups (Administrators, Everyone, Authenticated Users,
+  Guests, etc.) generally contain very broad memberships which would not
+  meet the best practice of ensuring only the necessary users have been
+  granted access to a SQL Server instance. These groups should not be
+  used for any level of access into a SQL Server Database Engine
+  instance.
+
+impact: >
+  Before dropping the BUILTIN group logins, ensure that alternative AD
+  Groups or Windows logins have been added with equivalent permissions.
+  Otherwise, the SQL Server instance may become totally inaccessible.
+
+check:
+  type: sql_no_rows_match
+  query: |
+    SELECT pr.[name], pe.[permission_name], pe.[state_desc]
+    FROM sys.server_principals pr
+    JOIN sys.server_permissions pe
+      ON pr.principal_id = pe.grantee_principal_id
+    WHERE pr.name LIKE 'BUILTIN%';
+
+remediation: |
+  -- 1. For each BUILTIN login, if needed create a more restrictive AD
+  --    group containing only the required user accounts.
+  -- 2. Add the AD group or individual Windows accounts as a SQL Server
+  --    login and grant it the permissions required.
+  -- 3. Drop the BUILTIN login:
+  USE [master]
+  GO
+  DROP LOGIN [BUILTIN\<name>]
+  GO
+
+default_value: "No BUILTIN groups are added as SQL logins by default."
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/authentication-access/server-level-roles
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.3"
+      title: "Configure Data Access Control Lists"
+  cis_controls_v7:
+    - id: "14.6"
+      title: "Protect Information through Access Control Lists"

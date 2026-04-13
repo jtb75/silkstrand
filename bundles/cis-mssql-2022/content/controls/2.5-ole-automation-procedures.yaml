@@ -1,0 +1,50 @@
+id: "2.5"
+title: "Ensure 'Ole Automation Procedures' Server Configuration Option is set to '0'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+severity: MEDIUM
+
+description: >
+  The Ole Automation Procedures option controls whether OLE Automation
+  objects can be instantiated within Transact-SQL batches. These are
+  extended stored procedures that allow SQL Server users to execute
+  functions external to SQL Server.
+
+rationale: >
+  Enabling this option will increase the attack surface of SQL Server
+  and allow users to execute functions in the security context of SQL
+  Server.
+
+check:
+  type: sql_configuration
+  query: |
+    SELECT name,
+           CAST(value as int) as value_configured,
+           CAST(value_in_use as int) as value_in_use
+    FROM sys.configurations
+    WHERE name = 'Ole Automation Procedures';
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: value_configured
+      op: equals
+      value: 0
+    - field: value_in_use
+      op: equals
+      value: 0
+
+remediation: |
+  EXECUTE sp_configure 'show advanced options', 1;
+  RECONFIGURE;
+  EXECUTE sp_configure 'Ole Automation Procedures', 0;
+  RECONFIGURE;
+  GO
+  EXECUTE sp_configure 'show advanced options', 0;
+  RECONFIGURE;
+
+default_value: "0 (disabled)"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/ole-automation-procedures-server-configuration-option

@@ -1,0 +1,73 @@
+id: "4.3"
+title: "Ensure Encryption of Data in Transit TLS or SSL (Transport Encryption)"
+section: "Data Encryption"
+assessment: automated
+profile:
+  - "Level 1- MongoDB"
+severity: HIGH
+
+description: >
+  Use TLS or SSL to protect all incoming and outgoing connections. This
+  should include using TLS or SSL to encrypt communication between the
+  mongod and mongos components of a MongoDB client as well as between
+  all applications and MongoDB.
+
+  MongoDB supports TLS/SSL (Transport Layer Security/Secure Sockets
+  Layer) to encrypt all of MongoDB's network traffic. TLS/SSL ensures
+  that MongoDB network traffic is only readable by the intended client.
+
+  Please note: As of MongoDB version 4.2 SSL has been deprecated.
+
+  Also, starting in MongoDB version 4.0, MongoDB disables support for
+  TLS 1.0 encryption on systems where TLS 1.1+ is available.
+
+rationale: >
+  This prevents sniffing of cleartext traffic between MongoDB components
+  or performing a man-in-the-middle attack for MongoDB.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getCmdLineOpts: 1
+  assertions:
+    - field: parsed.net.tls.mode
+      op: equals
+      value: "requireTLS"
+
+remediation: |
+  Configure MongoDB servers to require the use of SSL or TLS to encrypt
+  all MongoDB network communications.
+
+  To implement SSL or TLS to encrypt all MongoDB network communication,
+  perform the following steps:
+
+  For mongod ("Primary daemon process for the MongoDB system")
+  In the configuration file /etc/mongod.conf, set the PEMKeyFile option
+  to the certificate file's path and then start the component with this
+  command:
+
+      net:
+         tls:
+            mode: requireTLS
+            certificateKeyFile: /etc/ssl/mongodb.pem
+            CAFile: /etc/ssl/caToValidateClientCertificates.pem
+
+  And restart monogdb instance with:
+      mongod --config /etc/mongod.conf
+
+default_value: "Not configured"
+
+references:
+  - https://www.mongodb.com/docs/v7.0/tutorial/configure-ssl/
+  - https://www.mongodb.com/docs/v7.0/tutorial/configure-ssl-clients/
+  - https://www.mongodb.com/docs/v7.0/tutorial/upgrade-cluster-to-ssl/
+  - https://www.mongodb.com/docs/v7.0/reference/configuration-options/#mongodb-setting-net.tls.clusterAuthX509.attributes
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.10"
+      title: "Encrypt Sensitive Data in Transit"
+  cis_controls_v7:
+    - id: "14.4"
+      title: "Encrypt All Sensitive Information in Transit"

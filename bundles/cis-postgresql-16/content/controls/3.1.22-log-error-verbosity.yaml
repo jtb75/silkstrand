@@ -1,0 +1,48 @@
+id: "3.1.22"
+title: "Ensure 'log_error_verbosity' is set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  The log_error_verbosity setting specifies the verbosity (amount of
+  detail) of logged messages. Valid values are TERSE, DEFAULT, and
+  VERBOSE, with each containing the fields of the level above it as
+  well as additional fields. TERSE excludes the logging of DETAIL,
+  HINT, QUERY, and CONTEXT error information. VERBOSE output includes
+  the SQLSTATE, error code, and the source code file name, function
+  name, and line number that generated the error. The appropriate
+  value should be set based on your organization's logging policy.
+
+rationale: >
+  If this is not set to the correct value, too many details or too
+  few details may be logged.
+
+check:
+  # The benchmark's "fail if not verbose" rule is the stated best
+  # practice. DEFAULT and TERSE are both fail per the audit.
+  type: sql_configuration
+  query: "SHOW log_error_verbosity;"
+  assertions:
+    - field: log_error_verbosity
+      op: equals
+      value: "verbose"
+
+remediation: |
+  ALTER SYSTEM SET log_error_verbosity = 'verbose';
+  SELECT pg_reload_conf();
+
+default_value: "DEFAULT"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.3"
+      title: "Enable Detailed Logging"

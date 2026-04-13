@@ -1,0 +1,44 @@
+id: "3.1.16"
+title: "Ensure 'debug_print_parse' is disabled"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  The debug_print_parse setting enables printing the resulting parse
+  tree for each executed query. These messages are emitted at the LOG
+  message level. Unless directed otherwise by your organization's
+  logging policy, it is recommended this setting be disabled by
+  setting it to off.
+
+rationale: >
+  Enabling any of the DEBUG printing variables may cause the logging
+  of sensitive information that would otherwise be omitted based on
+  the configuration of the other logging settings.
+
+check:
+  type: sql_configuration
+  query: "SHOW debug_print_parse;"
+  assertions:
+    - field: debug_print_parse
+      op: equals
+      value: "off"
+
+remediation: |
+  ALTER SYSTEM SET debug_print_parse='off';
+  SELECT pg_reload_conf();
+
+default_value: "off"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "4.1"
+      title: "Establish and Maintain a Secure Configuration Process"
+  cis_controls_v7:
+    - id: "5.1"
+      title: "Establish Secure Configurations"

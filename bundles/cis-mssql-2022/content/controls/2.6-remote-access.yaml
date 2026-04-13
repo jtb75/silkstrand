@@ -1,0 +1,56 @@
+id: "2.6"
+title: "Ensure 'Remote Access' Server Configuration Option is set to '0'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  The remote access option controls the execution of local stored
+  procedures on remote servers or remote stored procedures on local
+  server.
+
+rationale: >
+  Functionality can be abused to launch a Denial-of-Service (DoS) attack
+  on remote servers by off-loading query processing to a target.
+
+impact: >
+  Per Microsoft: This feature may be removed in a future version of
+  Microsoft SQL Server. Do not use this feature in new development work,
+  and modify applications that currently use this feature as soon as
+  possible. Use sp_addlinkedserver instead.
+
+check:
+  type: sql_configuration
+  query: |
+    SELECT name,
+           CAST(value as int) as value_configured,
+           CAST(value_in_use as int) as value_in_use
+    FROM sys.configurations
+    WHERE name = 'remote access';
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: value_configured
+      op: equals
+      value: 0
+    - field: value_in_use
+      op: equals
+      value: 0
+
+remediation: |
+  EXECUTE sp_configure 'show advanced options', 1;
+  RECONFIGURE;
+  EXECUTE sp_configure 'remote access', 0;
+  RECONFIGURE;
+  GO
+  EXECUTE sp_configure 'show advanced options', 0;
+  RECONFIGURE;
+  -- Restart the Database Engine.
+
+default_value: "1 (enabled) — CIS recommends flipping to 0"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/configure-the-remote-access-server-configuration-option

@@ -1,0 +1,49 @@
+id: "3.1.12"
+title: "Ensure syslog messages are not lost due to size"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  PostgreSQL log messages can exceed 1024 bytes, which is a typical
+  size limit for traditional Syslog implementations. When
+  syslog_split_messages is off, PostgreSQL server log messages are
+  delivered to the Syslog service as is, and it is up to the Syslog
+  service to cope with the potentially bulky messages. When
+  syslog_split_messages is on, messages are split by lines, and long
+  lines are split so that they will fit into 1024 bytes.
+
+rationale: >
+  If syslog is ultimately logging to a text file, then the effect will
+  be the same either way, and it is best to leave the setting on,
+  since most syslog implementations either cannot handle large
+  messages or would need to be specially configured to handle them.
+
+impact: >
+  Depending on the Syslog server in use, log messages exceeding 1024
+  bytes may be lost or, potentially, cause the Syslog server processes
+  to abort.
+
+check:
+  type: sql_configuration
+  query: "SHOW syslog_split_messages;"
+  assertions:
+    - field: syslog_split_messages
+      op: equals
+      value: "on"
+
+remediation: |
+  ALTER SYSTEM SET syslog_split_messages = 'on';
+  SELECT pg_reload_conf();
+
+default_value: "on"
+
+references:
+  - https://www.postgresql.org/docs/current/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"

@@ -10,6 +10,9 @@ vendor/
 !bundles/**/vendor/
 bin/
 
+# Local reference material (pulled from third-party APIs, not shippable — do not commit)
+/reference/
+
 # React / Node
 node_modules/
 dist/

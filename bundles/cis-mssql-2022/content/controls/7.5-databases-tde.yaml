@@ -1,0 +1,54 @@
+id: "7.5"
+title: "Ensure Databases are Encrypted with TDE"
+section: "Encryption"
+assessment: automated
+profile:
+  - "Level 2 - Database Engine"
+severity: HIGH
+
+description: >
+  Ensure user databases are encrypted using Transparent Data Encryption
+  (TDE). Backups of databases encrypted with TDE are automatically
+  encrypted as well.
+
+rationale: >
+  A malicious party who steals physical media like drives or backup
+  tapes can restore or attach the database and browse its data.
+
+  One solution is to encrypt sensitive data in a database and use a
+  certificate to protect the keys that encrypt the data. This solution
+  prevents anyone without the keys from using the data.
+
+impact: >
+  A database datafile, logfile or backup accidentally exposed to the
+  Internet or transmitted outside a secure environment can be easily
+  copied/restored to a SQL Server anywhere and its contents discovered.
+
+check:
+  # Single global query lists user databases (database_id > 4) that are
+  # not TDE-encrypted. PASS iff no rows returned.
+  type: sql_no_rows_match
+  query: |
+    SELECT database_id, name, is_encrypted
+    FROM sys.databases
+    WHERE database_id > 4
+      AND is_encrypted != 1;
+
+remediation: |
+  Implement TDE encryption on each user database with sensitive data.
+  More info on how to do this is available here:
+  https://learn.microsoft.com/en-us/sql/relational-databases/security/encryption/transparent-data-encryption
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/encryption/transparent-data-encryption
+  - https://learn.microsoft.com/en-us/archive/blogs/sqlsecurity/feature-spotlight-transparent-data-encryption-tde
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.11"
+      title: "Encrypt Sensitive Data at Rest"
+    - id: "11.3"
+      title: "Protect Recovery Data"
+  cis_controls_v7:
+    - id: "14.8"
+      title: "Encrypt Sensitive Information at Rest"

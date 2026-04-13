@@ -1,0 +1,51 @@
+id: "3.1.3"
+title: "Ensure the logging collector is enabled"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  The logging collector is a background process that captures log
+  messages sent to stderr and redirects them into log files. The
+  logging_collector setting must be enabled in order for this process
+  to run. It can only be set at the server start.
+
+rationale: >
+  The logging collector approach is often more useful than logging to
+  syslog, since some types of messages might not appear in syslog
+  output. One common example is dynamic-linker failure messages;
+  another may be error messages produced by scripts such as
+  archive_command. This setting must be enabled when log_destination
+  is either stderr or csvlog or logs will be lost.
+
+check:
+  type: sql_configuration
+  query: "SHOW logging_collector;"
+  assertions:
+    - field: logging_collector
+      op: equals
+      value: "on"
+
+remediation: |
+  ALTER SYSTEM SET logging_collector = 'on';
+  -- This setting can only be changed at the server (re)start.
+  -- Restart the PostgreSQL service for this change to take effect.
+
+default_value: "on"
+
+references:
+  - https://www.postgresql.org/docs/current/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.2"
+      title: "Collect Audit Logs"
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.2"
+      title: "Activate audit logging"
+    - id: "6.3"
+      title: "Enable Detailed Logging"

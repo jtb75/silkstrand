@@ -1,0 +1,59 @@
+id: "3.1.24"
+title: "Ensure 'log_line_prefix' is set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  The log_line_prefix setting specifies a printf-style string that is
+  prefixed to each log line. If blank, no prefix is used. You should
+  configure this as recommended by the pgBadger development team
+  unless directed otherwise by your organization's logging policy.
+  %-characters begin "escape sequences" that are replaced with status
+  information as outlined in the PostgreSQL documentation.
+
+rationale: >
+  Properly setting log_line_prefix allows for adding additional
+  information to each log entry (such as the user, or the database).
+  Said information may then be of use in auditing or security reviews.
+
+check:
+  # The audit requires the prefix include (at minimum) the user, db,
+  # application and client host escapes — their presence is what makes
+  # the log parseable/attributable. We pattern_match against the core
+  # required escapes.
+  type: sql_configuration
+  query: "SHOW log_line_prefix;"
+  assertions:
+    - field: log_line_prefix
+      op: pattern_match
+      value: "%u"
+    - field: log_line_prefix
+      op: pattern_match
+      value: "%d"
+    - field: log_line_prefix
+      op: pattern_match
+      value: "%a"
+    - field: log_line_prefix
+      op: pattern_match
+      value: "%h"
+
+remediation: |
+  ALTER SYSTEM SET log_line_prefix = '%m [%p]: [%l-1] db=%d,user=%u,app=%a,client=%h ';
+  SELECT pg_reload_conf();
+
+default_value: "%m [%p]"
+
+references:
+  - https://pgbadger.darold.net/
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.3"
+      title: "Enable Detailed Logging"

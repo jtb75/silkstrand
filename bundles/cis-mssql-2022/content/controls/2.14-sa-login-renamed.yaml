@@ -1,0 +1,34 @@
+id: "2.14"
+title: "Ensure the 'sa' Login Account has been renamed"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+severity: HIGH
+
+description: >
+  The sa account is a widely known and often widely used SQL Server
+  login with sysadmin privileges. The sa login is the original login
+  created during installation and always has principal_id=1 and
+  sid=0x01.
+
+rationale: >
+  It is more difficult to launch password-guessing and brute-force
+  attacks against the sa login if the name is not known.
+
+check:
+  # sid=0x01 with name='sa' means the account has not been renamed.
+  type: sql_no_rows_match
+  query: |
+    SELECT name
+    FROM sys.server_principals
+    WHERE sid = 0x01
+    AND name = 'sa';
+
+remediation: |
+  ALTER LOGIN sa WITH NAME = <different_user>;
+
+default_value: "Login name is 'sa'"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/choose-an-authentication-mode

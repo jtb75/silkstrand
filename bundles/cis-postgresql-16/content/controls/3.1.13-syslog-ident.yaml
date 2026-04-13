@@ -1,0 +1,42 @@
+id: "3.1.13"
+title: "Ensure the program name for PostgreSQL syslog messages is correct"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  The syslog_ident setting specifies the program name used to identify
+  PostgreSQL messages in syslog logs. An example of a possible program
+  name is postgres.
+
+rationale: >
+  If this is not set correctly, it may be difficult or impossible to
+  distinguish PostgreSQL messages from other messages in Syslog logs.
+
+check:
+  type: sql_configuration
+  query: "SHOW syslog_ident;"
+  assertions:
+    - field: syslog_ident
+      op: pattern_match
+      value: ".+"
+
+remediation: |
+  ALTER SYSTEM SET syslog_ident = 'proddb';
+  SELECT pg_reload_conf();
+
+default_value: "postgres"
+
+references:
+  - https://tools.ietf.org/html/rfc3164#section-4.1.3
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.3"
+      title: "Enable Detailed Logging"

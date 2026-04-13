@@ -1,0 +1,61 @@
+id: "7.4"
+title: "Ensure Network Encryption is Configured and Enabled"
+section: "Encryption"
+assessment: automated
+profile:
+  - "Level 2 - Database Engine"
+severity: HIGH
+
+description: >
+  Configuring and enabling network encryption ensures traffic between
+  the application and the database system is encrypted. This will
+  ensure compliance to security standards such as PCI DSS, which is
+  required if connections are through a public network.
+
+  Network encryption can be configured in SQL Server either with
+  self-signed certificates or TLS certificates.
+
+rationale: >
+  Network encryption will ensure data transmitted over the network is
+  protected, so attackers can't ex-filtrate passwords, and confidential
+  data. This protects against man in the middle attack, and network
+  sniffing attacks to ex-filtrate data transmitted between the database
+  system and applications.
+
+check:
+  # A response of TRUE (encrypt_option = TRUE) implies a pass; every
+  # non-shared-memory, non-mirroring connection must be encrypted.
+  type: sql_configuration
+  query: |
+    SELECT DISTINCT CAST(encrypt_option AS varchar(10)) AS encrypt_option
+    FROM sys.dm_exec_connections c
+    WHERE net_transport <> 'Shared memory'
+      AND c.endpoint_id NOT IN (
+        SELECT endpoint_id
+        FROM sys.database_mirroring_endpoints
+        WHERE encryption_algorithm IS NOT NULL
+      );
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: encrypt_option
+      op: equals
+      value: "TRUE"
+
+remediation: |
+  Refer to Microsoft SQL Server Encryption Documentation:
+  https://learn.microsoft.com/en-us/sql/relational-databases/security/encryption/sql-server-encryption
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/configure-sql-server-encryption
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/encryption/sql-server-encryption
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/certificate-requirements
+  - https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-exec-connections-transact-sql
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.10"
+      title: "Encrypt Sensitive Data in Transit"
+  cis_controls_v7:
+    - id: "14.4"
+      title: "Encrypt All Sensitive Information in Transit"

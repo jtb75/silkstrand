@@ -1,0 +1,63 @@
+id: "4.4"
+title: "Ensure Federal Information Processing Standard (FIPS) is enabled"
+section: "Data Encryption"
+assessment: automated
+profile:
+  - "Level 2 - MongoDB"
+severity: MEDIUM
+
+description: >
+  The Federal Information Processing Standard (FIPS) is a computer
+  security standard used to certify software modules and libraries that
+  encrypt and decrypt data securely. You can configure MongoDB to run
+  with a FIPS 140-2 certified library for OpenSSL.
+
+  FIPS is a property of the encryption system and not the access
+  control system. However, the environment requires FIPS compliant
+  encryption and access control. Organizations must ensure that the
+  access control system uses only FIPS-compliant encryption.
+
+rationale: >
+  FIPS is an industry standard which dictates how data should be
+  encrypted at rest and during transmission.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getCmdLineOpts: 1
+  assertions:
+    - field: parsed.net.tls.FIPSMode
+      op: equals
+      value: true
+
+remediation: |
+  Configuring FIPS mode, ensure that your certificate is FIPS compliant.
+  Run mongod or mongos instance in FIPS mode.
+
+  Make changes to configuration file, to configure your mongod or
+  mongos instance to use FIPS mode, shut down the instance and update
+  the configuration file with the following setting:
+
+      net:
+         tls:
+            FIPSMode: true
+
+  Start mongod or mongos instance with a configuration file.
+
+      mongod --config /etc/mongod.conf
+
+default_value: "Not configured"
+
+references:
+  - https://www.mongodb.com/docs/v7.0/tutorial/configure-fips/
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.10"
+      title: "Encrypt Sensitive Data in Transit"
+  cis_controls_v7:
+    - id: "14.4"
+      title: "Encrypt All Sensitive Information in Transit"
+    - id: "14.8"
+      title: "Encrypt Sensitive Information at Rest"

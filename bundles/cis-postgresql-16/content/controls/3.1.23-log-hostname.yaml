@@ -1,0 +1,48 @@
+id: "3.1.23"
+title: "Ensure 'log_hostname' is set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  Enabling the log_hostname setting causes the hostname of the
+  connecting host to be logged in addition to the host's IP address
+  for connection log messages. Disabling the setting causes only the
+  connecting host's IP address to be logged, and not the hostname.
+  Unless your organization's logging policy requires hostname logging,
+  it is best to disable this setting so as not to incur the overhead
+  of DNS resolution for each statement that is logged.
+
+rationale: >
+  Depending on your hostname resolution setup, enabling this setting
+  might impose a non-negligible performance penalty. Additionally,
+  the IP addresses that are logged can be resolved to their DNS names
+  when reviewing the logs (unless dynamic hostnames are being used as
+  part of your DHCP setup).
+
+check:
+  type: sql_configuration
+  query: "SHOW log_hostname;"
+  assertions:
+    - field: log_hostname
+      op: equals
+      value: "off"
+
+remediation: |
+  ALTER SYSTEM SET log_hostname='off';
+  SELECT pg_reload_conf();
+
+default_value: "off"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "4.1"
+      title: "Establish and Maintain a Secure Configuration Process"
+  cis_controls_v7:
+    - id: "5.1"
+      title: "Establish Secure Configurations"

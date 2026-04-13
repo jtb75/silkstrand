@@ -1,0 +1,47 @@
+id: "3.1.19"
+title: "Ensure 'debug_pretty_print' is enabled"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  Enabling debug_pretty_print indents the messages produced by
+  debug_print_parse, debug_print_rewritten, or debug_print_plan making
+  them significantly easier to read.
+
+rationale: >
+  If this setting is disabled, the "compact" format is used instead,
+  significantly reducing the readability of the DEBUG statement log
+  messages.
+
+impact: >
+  Be advised that the aforementioned DEBUG printing options are
+  disabled, but if your organizational logging policy requires them to
+  be on then this option comes into play.
+
+check:
+  type: sql_configuration
+  query: "SHOW debug_pretty_print;"
+  assertions:
+    - field: debug_pretty_print
+      op: equals
+      value: "on"
+
+remediation: |
+  ALTER SYSTEM SET debug_pretty_print = 'on';
+  SELECT pg_reload_conf();
+
+default_value: "on"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.3"
+      title: "Enable Detailed Logging"

@@ -1,0 +1,47 @@
+id: "2.13"
+title: "Ensure the 'sa' Login Account is set to 'Disabled'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: HIGH
+
+description: >
+  The sa account is a widely known and often widely used SQL Server
+  account with sysadmin privileges. This is the original login created
+  during installation and always has the principal_id=1 and sid=0x01.
+
+rationale: >
+  Enforcing this control reduces the probability of an attacker executing
+  brute force attacks against a well-known principal.
+
+impact: >
+  It is not a good security practice to code applications or scripts to
+  use the sa account. However, if this has been done, disabling the sa
+  account will prevent scripts and applications from authenticating to
+  the database server and executing required tasks or functions.
+
+check:
+  # The sa principal (sid=0x01) must be disabled; a row returned with
+  # is_disabled=0 means the login is still enabled.
+  type: sql_no_rows_match
+  query: |
+    SELECT name, is_disabled
+    FROM sys.server_principals
+    WHERE sid = 0x01
+    AND is_disabled = 0;
+
+remediation: |
+  USE [master]
+  GO
+  DECLARE @tsql nvarchar(max)
+  SET @tsql = 'ALTER LOGIN ' + SUSER_NAME(0x01) + ' DISABLE'
+  EXEC (@tsql)
+  GO
+
+default_value: "Disabled at install time when Windows Authentication Mode is selected; enabled under Mixed Mode"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-server-principals-transact-sql
+  - https://learn.microsoft.com/en-us/sql/t-sql/statements/alter-login-transact-sql

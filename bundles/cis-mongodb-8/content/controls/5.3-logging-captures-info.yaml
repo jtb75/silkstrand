@@ -1,0 +1,56 @@
+id: "5.3"
+title: "Ensure that logging captures as much information as possible"
+section: "Audit Logging"
+assessment: automated
+profile:
+  - "Level 2 - MongoDB"
+severity: MEDIUM
+
+description: >
+  The SystemLog.quiet option stops logging of information such as:
+
+  - connection events
+  - authentication events
+  - replication sync activities
+  - evidence of some potentially impactful commands being run (eg:
+    drop, dropIndexes, validate)
+
+  This information should be logged whenever possible. This check is
+  only for Enterprise editions.
+
+rationale: >
+  The use of SystemLog.quiet makes troubleshooting problems and
+  investigating possible security incidents much more difficult.
+
+check:
+  type: mongodb_command
+  database: admin
+  command:
+    getCmdLineOpts: 1
+  assertions:
+    - field: parsed.systemLog.quiet
+      op: equals
+      value: false
+
+remediation: |
+  Set
+
+      SystemLog:
+           quiet: false
+
+  to false in the /etc/mongod.conf file to disable it.
+
+references:
+  - https://docs.mongodb.com/manual/reference/configuration-options/#systemLog.quiet
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.2"
+      title: "Collect Audit Logs"
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.2"
+      title: "Activate audit logging"
+    - id: "6.3"
+      title: "Enable Detailed Logging"

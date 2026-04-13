@@ -1,0 +1,17 @@
+name: cis-mongodb-8
+version: 0.1.0
+framework: python
+runtime_version: ">=3.9"
+target_type: database
+benchmark:
+  name: "CIS MongoDB 8 Benchmark"
+  version: "1.0.0"
+  cis_id: "CIS_MongoDB_8"
+entrypoint: content/checks.py
+vendor_dir: content/vendor
+inputs:
+  - name: target_config
+    type: json
+    description: "MongoDB connection parameters"
+outputs:
+  format: silkstrand-v1

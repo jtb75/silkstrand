@@ -1,0 +1,56 @@
+id: "2.3"
+title: "Ensure 'Cross DB Ownership Chaining' Server Configuration Option is set to '0'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  The cross db ownership chaining option controls cross-database ownership
+  chaining across all databases at the instance (or server) level.
+
+rationale: >
+  When enabled, this option allows a member of the db_owner role in a
+  database to gain access to objects owned by a login in any other
+  database, causing an unnecessary information disclosure. When required,
+  cross-database ownership chaining should only be enabled for the
+  specific databases requiring it instead of at the instance level for
+  all databases.
+
+check:
+  type: sql_configuration
+  query: |
+    SELECT name,
+           CAST(value as int) as value_configured,
+           CAST(value_in_use as int) as value_in_use
+    FROM sys.configurations
+    WHERE name = 'cross db ownership chaining';
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: value_configured
+      op: equals
+      value: 0
+    - field: value_in_use
+      op: equals
+      value: 0
+
+remediation: |
+  EXECUTE sp_configure 'cross db ownership chaining', 0;
+  RECONFIGURE;
+  GO
+
+default_value: "0 (disabled)"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/cross-db-ownership-chaining-server-configuration-option
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "3.3"
+      title: "Configure Data Access Control Lists"
+  cis_controls_v7:
+    - id: "14.6"
+      title: "Protect Information through Access Control Lists"

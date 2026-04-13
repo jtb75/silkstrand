@@ -1,0 +1,40 @@
+id: "5.5"
+title: "Ensure per-account connection limits are used"
+section: "Connection and Login"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: LOW
+
+description: >
+  Limiting concurrent connections to a PostgreSQL server can be used
+  to reduce the risk of Denial of Service (DoS) attacks.
+
+rationale: >
+  Limiting the number of concurrent sessions at the user level helps
+  to reduce the risk of DoS attacks.
+
+check:
+  # Any non-pg_-prefixed role with rolconnlimit = -1 (unlimited) is a
+  # failure per the CIS audit.
+  type: sql_no_rows_match
+  query: |
+    SELECT rolname, rolconnlimit
+    FROM pg_roles
+    WHERE rolname NOT LIKE 'pg_%'
+      AND rolconnlimit = -1;
+
+remediation: |
+  Set a per-user connection limit by running:
+
+  ALTER USER <dbuser> CONNECTION LIMIT <reasonable concurrent connection count>;
+
+default_value: "-1 (unlimited)"
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "4.1"
+      title: "Establish and Maintain a Secure Configuration Process"
+  cis_controls_v7:
+    - id: "5.1"
+      title: "Establish Secure Configurations"

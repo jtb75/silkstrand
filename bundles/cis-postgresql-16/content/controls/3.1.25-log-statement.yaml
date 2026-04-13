@@ -1,0 +1,46 @@
+id: "3.1.25"
+title: "Ensure 'log_statement' is set correctly"
+section: "Logging And Auditing"
+assessment: automated
+profile:
+  - "Level 1 - PostgreSQL"
+severity: MEDIUM
+
+description: >
+  The log_statement setting specifies the types of SQL statements that
+  are logged. Valid values are none (off), ddl, mod, and all (all
+  statements). It is recommended this be set to ddl unless otherwise
+  directed by your organization's logging policy. ddl logs all data
+  definition statements (CREATE, ALTER, DROP); mod logs all ddl
+  statements plus data-modifying statements (INSERT, UPDATE, DELETE,
+  TRUNCATE, COPY FROM).
+
+rationale: >
+  Setting log_statement to align with your organization's security and
+  logging policies facilitates later auditing and review of database
+  activities.
+
+check:
+  type: sql_configuration
+  query: "SHOW log_statement;"
+  assertions:
+    - field: log_statement
+      op: in
+      value: ["ddl", "mod", "all"]
+
+remediation: |
+  ALTER SYSTEM SET log_statement='ddl';
+  SELECT pg_reload_conf();
+
+default_value: "none"
+
+references:
+  - https://www.postgresql.org/docs/current/static/runtime-config-logging.html
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "8.5"
+      title: "Collect Detailed Audit Logs"
+  cis_controls_v7:
+    - id: "6.3"
+      title: "Enable Detailed Logging"
