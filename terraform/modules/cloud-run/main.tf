@@ -44,7 +44,6 @@ variable "internal_api_key" {
   description = "Shared secret for the backoffice to call /internal/v1/ routes"
   type        = string
   sensitive   = true
-  default     = ""
 }
 
 variable "credential_encryption_key" {
@@ -75,22 +74,54 @@ variable "max_instances" {
   default = 2
 }
 
-# Secret Manager — credential encryption key.
-# Mounted into Cloud Run via secret_key_ref so the value never appears in
-# `gcloud run services describe` output. Rotation: add a new
-# secret_version, then redeploy (or wait for the next deploy).
-resource "google_secret_manager_secret" "credential_encryption_key" {
+# Secret Manager — every sensitive env var is mounted via secret_key_ref so
+# its value never appears in `gcloud run services describe` output. The
+# Cloud Run service account already has roles/secretmanager.secretAccessor
+# (granted below) and so can read all of these.
+#
+# Rotation: bump the secret_data, terraform apply (creates a new version);
+# Cloud Run picks up `latest` on next instance start. Force a roll with a
+# new revision if you need immediate effect.
+
+locals {
+  api_secrets = {
+    credential_encryption_key = {
+      env_name = "CREDENTIAL_ENCRYPTION_KEY"
+      data     = var.credential_encryption_key
+    }
+    database_url = {
+      env_name = "DATABASE_URL"
+      data     = var.database_url
+    }
+    redis_url = {
+      env_name = "REDIS_URL"
+      data     = var.redis_url
+    }
+    jwt_secret = {
+      env_name = "JWT_SECRET"
+      data     = var.jwt_secret
+    }
+    internal_api_key = {
+      env_name = "INTERNAL_API_KEY"
+      data     = var.internal_api_key
+    }
+  }
+}
+
+resource "google_secret_manager_secret" "api" {
+  for_each  = local.api_secrets
   project   = var.project_id
-  secret_id = "credential-encryption-key-${var.environment}"
+  secret_id = "${replace(each.key, "_", "-")}-${var.environment}"
 
   replication {
     auto {}
   }
 }
 
-resource "google_secret_manager_secret_version" "credential_encryption_key" {
-  secret      = google_secret_manager_secret.credential_encryption_key.id
-  secret_data = var.credential_encryption_key
+resource "google_secret_manager_secret_version" "api" {
+  for_each    = local.api_secrets
+  secret      = google_secret_manager_secret.api[each.key].id
+  secret_data = each.value.data
 }
 
 # Service account for Cloud Run
@@ -170,36 +201,19 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
-        name  = "DATABASE_URL"
-        value = var.database_url
-      }
-
-      env {
-        name  = "REDIS_URL"
-        value = var.redis_url
-      }
-
-      env {
-        name  = "JWT_SECRET"
-        value = var.jwt_secret
-      }
-
-      env {
-        name  = "INTERNAL_API_KEY"
-        value = var.internal_api_key
-      }
-
-      env {
         name  = "ALLOWED_ORIGINS"
         value = var.allowed_origins
       }
 
-      env {
-        name = "CREDENTIAL_ENCRYPTION_KEY"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.credential_encryption_key.secret_id
-            version = "latest"
+      dynamic "env" {
+        for_each = local.api_secrets
+        content {
+          name = env.value.env_name
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.api[env.key].secret_id
+              version = "latest"
+            }
           }
         }
       }
@@ -235,9 +249,9 @@ resource "google_cloud_run_v2_service" "api" {
     }
   }
 
-  # Ensure the secret version exists before Cloud Run tries to mount it.
-  # The secret_key_ref above only depends on the secret, not the version.
-  depends_on = [google_secret_manager_secret_version.credential_encryption_key]
+  # Ensure all secret versions exist before Cloud Run tries to mount them.
+  # The secret_key_refs above only depend on the secret, not the version.
+  depends_on = [google_secret_manager_secret_version.api]
 
   lifecycle {
     # Image is updated via Terraform -var="image=..." during CI/CD deploys.

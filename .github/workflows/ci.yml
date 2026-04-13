@@ -206,6 +206,7 @@ jobs:
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
             -var="redis_url=${{ secrets.UPSTASH_REDIS_URL_STAGE }}" \
             -var="jwt_secret=${{ secrets.JWT_SECRET_STAGE }}" \
+            -var="internal_api_key=${{ secrets.INTERNAL_API_KEY_STAGE }}" \
             -var="credential_encryption_key=${{ secrets.CREDENTIAL_ENCRYPTION_KEY_STAGE }}" \
             -out=tfplan 2>&1 | tee plan-output.txt
         continue-on-error: true
