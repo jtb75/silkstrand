@@ -262,6 +262,56 @@ resource "google_project_iam_member" "backoffice_api_secrets" {
   member  = "serviceAccount:${google_service_account.backoffice_api.email}"
 }
 
+# Backoffice secrets in Secret Manager. Same pattern as the DC API secrets
+# in the cloud-run module: every sensitive env var is mounted via
+# secret_key_ref so its value never appears in `gcloud run services
+# describe` output.
+locals {
+  # Non-sensitive metadata, safe for for_each.
+  backoffice_secret_envs_all = {
+    database_url             = "DATABASE_URL"
+    jwt_secret               = "JWT_SECRET"
+    encryption_key           = "ENCRYPTION_KEY"
+    tenant_jwt_secret        = "TENANT_JWT_SECRET"
+    resend_api_key           = "RESEND_API_KEY"
+    bootstrap_admin_password = "BOOTSTRAP_ADMIN_PASSWORD"
+  }
+  # Sensitive values — looked up by key inside resources.
+  backoffice_secret_values = {
+    database_url             = "postgres://${module.database.database_user}:${module.database.database_password}@${module.database.private_ip}:5432/silkstrand_backoffice?sslmode=disable"
+    jwt_secret               = var.backoffice_jwt_secret
+    encryption_key           = var.backoffice_encryption_key
+    tenant_jwt_secret        = var.tenant_jwt_secret
+    resend_api_key           = var.resend_api_key
+    bootstrap_admin_password = var.bootstrap_admin_password
+  }
+  # RESEND_API_KEY and BOOTSTRAP_ADMIN_PASSWORD are optional; we omit
+  # them entirely when blank instead of creating empty Secret Manager
+  # entries (the backoffice handles their absence: noop mailer / no
+  # bootstrap). nonsensitive() is needed because the comparison touches
+  # a sensitive value but the resulting boolean is safe to expose.
+  backoffice_secret_envs = {
+    for k, v in local.backoffice_secret_envs_all : k => v
+    if nonsensitive(local.backoffice_secret_values[k]) != ""
+  }
+}
+
+resource "google_secret_manager_secret" "backoffice" {
+  for_each  = local.backoffice_secret_envs
+  project   = var.project_id
+  secret_id = "${replace(each.key, "_", "-")}-backoffice"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "backoffice" {
+  for_each    = local.backoffice_secret_envs
+  secret      = google_secret_manager_secret.backoffice[each.key].id
+  secret_data = local.backoffice_secret_values[each.key]
+}
+
 # Backoffice API Cloud Run service
 resource "google_cloud_run_v2_service" "backoffice_api" {
   project  = var.project_id
@@ -296,41 +346,11 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
 
       # Cloud Run sets PORT automatically from container_port; cannot be set as env var
 
-      env {
-        name  = "DATABASE_URL"
-        value = "postgres://${module.database.database_user}:${module.database.database_password}@${module.database.private_ip}:5432/silkstrand_backoffice?sslmode=disable"
-      }
-
-      env {
-        name  = "JWT_SECRET"
-        value = var.backoffice_jwt_secret
-      }
-
-      env {
-        name  = "ENCRYPTION_KEY"
-        value = var.backoffice_encryption_key
-      }
-
-      # Bootstrap admin on first startup. After the first admin exists,
-      # these are ignored. Leave blank/unset to disable bootstrap.
+      # Bootstrap admin email is non-sensitive (an address, not a credential).
+      # Bootstrap admin password is mounted from Secret Manager below.
       env {
         name  = "BOOTSTRAP_ADMIN_EMAIL"
         value = var.bootstrap_admin_email
-      }
-
-      env {
-        name  = "BOOTSTRAP_ADMIN_PASSWORD"
-        value = var.bootstrap_admin_password
-      }
-
-      env {
-        name  = "TENANT_JWT_SECRET"
-        value = var.tenant_jwt_secret
-      }
-
-      env {
-        name  = "RESEND_API_KEY"
-        value = var.resend_api_key
       }
 
       env {
@@ -343,6 +363,19 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
         # service dependency cycle (backoffice → web → backoffice).
         name  = "TENANT_WEB_URL"
         value = var.tenant_web_url
+      }
+
+      dynamic "env" {
+        for_each = local.backoffice_secret_envs
+        content {
+          name = env.value
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.backoffice[env.key].secret_id
+              version = "latest"
+            }
+          }
+        }
       }
 
       resources {
@@ -370,6 +403,9 @@ resource "google_cloud_run_v2_service" "backoffice_api" {
       }
     }
   }
+
+  # Ensure secret versions exist before Cloud Run mounts them.
+  depends_on = [google_secret_manager_secret_version.backoffice]
 
   lifecycle {
     # Image updated via Terraform -var from CI deploys

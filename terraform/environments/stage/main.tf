@@ -74,7 +74,6 @@ variable "internal_api_key" {
   description = "Shared secret for the backoffice to call /internal/v1/ routes"
   type        = string
   sensitive   = true
-  default     = ""
 }
 
 variable "credential_encryption_key" {
