@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -64,13 +65,37 @@ func (r *PythonRunner) Run(ctx context.Context, req RunRequest) (json.RawMessage
 		}
 	}
 
-	// Write credentials if provided
+	// Pass credentials if provided. On Unix we hand the bundle a pipe via
+	// ExtraFiles so it can read from /dev/fd/3 — credentials never touch
+	// disk. On Windows (no /dev/fd) we fall back to a 0o600 temp file.
+	// In both cases the bundle consumes the same env-var contract:
+	// SILKSTRAND_CREDENTIALS points at a path it can open and read.
 	if len(req.Credentials) > 0 && string(req.Credentials) != "null" {
-		credentialsPath := filepath.Join(tmpDir, "credentials.json")
-		if err := os.WriteFile(credentialsPath, req.Credentials, 0o600); err != nil {
-			return nil, fmt.Errorf("writing credentials: %w", err)
+		if runtime.GOOS == "windows" {
+			credentialsPath := filepath.Join(tmpDir, "credentials.json")
+			if err := os.WriteFile(credentialsPath, req.Credentials, 0o600); err != nil {
+				return nil, fmt.Errorf("writing credentials: %w", err)
+			}
+			env = append(env, "SILKSTRAND_CREDENTIALS="+credentialsPath)
+		} else {
+			pr, pw, err := os.Pipe()
+			if err != nil {
+				return nil, fmt.Errorf("creating credential pipe: %w", err)
+			}
+			defer pr.Close()
+			// Credentials JSON fits comfortably in the kernel pipe buffer
+			// (default 64KiB on Linux), so a synchronous write + close
+			// before exec leaves the data buffered for the child to read.
+			if _, err := pw.Write(req.Credentials); err != nil {
+				pw.Close()
+				return nil, fmt.Errorf("writing credential pipe: %w", err)
+			}
+			if err := pw.Close(); err != nil {
+				return nil, fmt.Errorf("closing credential pipe: %w", err)
+			}
+			cmd.ExtraFiles = []*os.File{pr}
+			env = append(env, "SILKSTRAND_CREDENTIALS=/dev/fd/3")
 		}
-		env = append(env, "SILKSTRAND_CREDENTIALS="+credentialsPath)
 	}
 
 	cmd.Env = env
