@@ -1,10 +1,15 @@
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listAgents, createAgent, rotateAgentKey, deleteAgent, getAgentDownloads } from '../api/client';
+import { listAgents, rotateAgentKey, deleteAgent, getAgentDownloads, createInstallToken } from '../api/client';
 import type { Agent, AgentDownloads } from '../api/types';
+import { useAuth } from '../auth/useAuth';
 
 export default function Agents() {
   const qc = useQueryClient();
+  const { active } = useAuth();
+  const apiURL = active?.dc_api_url || '';
+  const installScriptURL = 'https://storage.googleapis.com/silkstrand-agent-releases/install.sh';
+
   const { data: agents, isLoading, error } = useQuery<Agent[]>({
     queryKey: ['agents'],
     queryFn: listAgents,
@@ -15,16 +20,12 @@ export default function Agents() {
     queryFn: getAgentDownloads,
   });
 
-  const [name, setName] = useState('');
+  const [installToken, setInstallToken] = useState<{ token: string; expiresAt: string } | null>(null);
   const [newKey, setNewKey] = useState<{ agent: Agent; apiKey: string } | null>(null);
 
-  const createMutation = useMutation({
-    mutationFn: (n: string) => createAgent(n),
-    onSuccess: (res) => {
-      setNewKey({ agent: res.agent, apiKey: res.api_key });
-      setName('');
-      qc.invalidateQueries({ queryKey: ['agents'] });
-    },
+  const tokenMutation = useMutation({
+    mutationFn: createInstallToken,
+    onSuccess: (res) => setInstallToken({ token: res.install_token, expiresAt: res.expires_at }),
   });
 
   const rotateMutation = useMutation({
@@ -41,11 +42,13 @@ export default function Agents() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
   });
 
-  function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!name.trim()) return;
-    createMutation.mutate(name.trim());
-  }
+  const oneLiner = installToken && apiURL
+    ? `curl -sSL ${installScriptURL} | sudo sh -s -- \\
+  --token=${installToken.token} \\
+  --api-url=${apiURL} \\
+  --name=$(hostname) \\
+  --as-service`
+    : '';
 
   return (
     <div>
@@ -53,76 +56,72 @@ export default function Agents() {
         <h1>Agents</h1>
       </div>
 
-      {downloads && (
-        <div className="detail-card" style={{ marginBottom: 24 }}>
-          <h2 style={{ marginTop: 0 }}>Download agent</h2>
-          <p className="muted" style={{ marginTop: 0 }}>
-            One-liner (Linux &amp; macOS):
-          </p>
-          <pre
-            style={{
-              background: '#111', color: '#eee', padding: 12, borderRadius: 6,
-              overflowX: 'auto', userSelect: 'all',
-            }}
-          >{downloads.install_cmd}</pre>
-          <p className="muted">Or grab a binary directly:</p>
-          <ul style={{ margin: 0, paddingLeft: 20 }}>
-            {Object.entries(downloads.binaries).map(([platform, url]) => (
-              <li key={platform}>
-                <a href={url}>{platform}</a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <form onSubmit={submit} className="form-card" style={{ marginBottom: 24 }}>
-        <h2 style={{ marginTop: 0 }}>Register a new agent</h2>
+      <div className="detail-card" style={{ marginBottom: 24 }}>
+        <h2 style={{ marginTop: 0 }}>Install a new agent</h2>
         <p className="muted" style={{ marginTop: 0 }}>
-          Creates an agent record + one-time API key. Install the silkstrand-agent
-          binary on your host and start it with <code>SILKSTRAND_AGENT_ID</code>
-          + <code>SILKSTRAND_AGENT_KEY</code> from the response.
+          Generates a one-time install token (valid 1 hour, single use). Paste
+          the command on the host that should run the agent. The agent
+          registers itself automatically.
         </p>
-        <div className="form-group">
-          <label htmlFor="name">Name</label>
-          <input
-            id="name" type="text" required placeholder="e.g. prod-db-01"
-            value={name} onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-        <button className="btn btn-primary" disabled={createMutation.isPending}>
-          {createMutation.isPending ? 'Registering…' : 'Register agent'}
+        <button
+          className="btn btn-primary"
+          disabled={tokenMutation.isPending || !apiURL}
+          onClick={() => tokenMutation.mutate()}
+        >
+          {tokenMutation.isPending ? 'Generating…' : 'Generate install command'}
         </button>
-        {createMutation.error && (
-          <p className="error">{(createMutation.error as Error).message}</p>
+        {tokenMutation.error && (
+          <p className="error">{(tokenMutation.error as Error).message}</p>
         )}
-      </form>
+
+        {installToken && (
+          <>
+            <p className="muted" style={{ marginTop: 16 }}>
+              Copy and run on the host (requires sudo). Expires{' '}
+              {new Date(installToken.expiresAt).toLocaleString()}.
+            </p>
+            <pre
+              style={{
+                background: '#111', color: '#eee', padding: 12, borderRadius: 6,
+                overflowX: 'auto', userSelect: 'all',
+              }}
+            >{oneLiner}</pre>
+            <p className="muted" style={{ fontSize: 13 }}>
+              Drop <code>--as-service</code> to install the binary + credentials only
+              (you run silkstrand-agent yourself).
+            </p>
+          </>
+        )}
+      </div>
+
+      {downloads && (
+        <details style={{ marginBottom: 24 }}>
+          <summary style={{ cursor: 'pointer', padding: '6px 0' }}>
+            Download binaries directly (advanced)
+          </summary>
+          <div className="detail-card" style={{ marginTop: 8 }}>
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {Object.entries(downloads.binaries).map(([platform, url]) => (
+                <li key={platform}><a href={url}>{platform}</a></li>
+              ))}
+            </ul>
+          </div>
+        </details>
+      )}
 
       {newKey && (
         <div
           className="detail-card"
           style={{ marginBottom: 24, borderColor: '#0f766e' }}
         >
-          <h3 style={{ marginTop: 0 }}>API key for {newKey.agent.name}</h3>
-          <p className="muted">
-            Copy this now — it will not be shown again. The key is stored
-            only as a hash.
-          </p>
+          <h3 style={{ marginTop: 0 }}>New API key for {newKey.agent.name}</h3>
+          <p className="muted">Copy this now — it will not be shown again.</p>
           <pre
             style={{
               background: '#f3f4f6', padding: 12, borderRadius: 6,
               userSelect: 'all', overflowX: 'auto',
             }}
           >{newKey.apiKey}</pre>
-          <p style={{ fontSize: 13 }}>
-            Start the agent with:
-          </p>
-          <pre style={{ background: '#111', color: '#eee', padding: 12, borderRadius: 6, overflowX: 'auto' }}>
-{`SILKSTRAND_AGENT_ID=${newKey.agent.id} \\
-SILKSTRAND_AGENT_KEY=${newKey.apiKey} \\
-SILKSTRAND_API_URL=wss://<your DC API host> \\
-silkstrand-agent`}
-          </pre>
           <button className="btn btn-sm" onClick={() => setNewKey(null)}>Dismiss</button>
         </div>
       )}

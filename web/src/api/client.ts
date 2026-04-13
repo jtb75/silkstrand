@@ -115,6 +115,11 @@ export const deleteAgent = (id: string) =>
   request<void>(`/api/v1/agents/${id}`, { method: 'DELETE' });
 export const getAgentDownloads = () =>
   request<AgentDownloads>('/api/v1/agents/downloads');
+export const createInstallToken = () =>
+  request<{ install_token: string; expires_at: string }>('/api/v1/agents/install-tokens', {
+    method: 'POST',
+    body: '{}',
+  });
 
 // Credentials (per-target)
 export const getTargetCredential = (targetId: string) =>

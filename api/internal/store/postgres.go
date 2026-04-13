@@ -697,3 +697,43 @@ func (s *PostgresStore) HasCredential(ctx context.Context, targetID string) (boo
 	}
 	return true, credType, nil
 }
+
+// --- Install tokens ---
+
+// CreateInstallToken stores the hash of a one-time bootstrap token for this tenant.
+func (s *PostgresStore) CreateInstallToken(ctx context.Context, tenantID string, tokenHash []byte, expiresAt time.Time, createdBy string) error {
+	var createdByArg interface{}
+	if createdBy != "" {
+		createdByArg = createdBy
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO install_tokens (token_hash, tenant_id, created_by, expires_at)
+		 VALUES ($1, $2, $3, $4)`,
+		tokenHash, tenantID, createdByArg, expiresAt)
+	if err != nil {
+		return fmt.Errorf("creating install token: %w", err)
+	}
+	return nil
+}
+
+// ConsumeInstallToken atomically marks the token used and returns the tenant
+// it belongs to. Fails with sql.ErrNoRows if the token doesn't exist, is
+// already used, or is expired.
+func (s *PostgresStore) ConsumeInstallToken(ctx context.Context, tokenHash []byte, agentID string) (string, error) {
+	var tenantID string
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE install_tokens
+		   SET used_at = NOW(), used_agent_id = $2
+		 WHERE token_hash = $1
+		   AND used_at IS NULL
+		   AND expires_at > NOW()
+		 RETURNING tenant_id`,
+		tokenHash, agentID).Scan(&tenantID)
+	if err == sql.ErrNoRows {
+		return "", sql.ErrNoRows
+	}
+	if err != nil {
+		return "", fmt.Errorf("consuming install token: %w", err)
+	}
+	return tenantID, nil
+}
