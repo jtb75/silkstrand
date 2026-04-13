@@ -1,0 +1,52 @@
+id: "2.12"
+title: "Ensure 'Hide Instance' option is set to 'Yes' for Production SQL Server instances"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+severity: MEDIUM
+
+description: >
+  Non-clustered SQL Server instances within production environments
+  should be designated as hidden to prevent advertisement by the SQL
+  Server Browser service.
+
+rationale: >
+  Designating production SQL Server instances as hidden leads to a more
+  secure installation because they cannot be enumerated. However,
+  clustered instances may break if this option is selected.
+
+impact: >
+  This method only prevents the instance from being listed on the
+  network. If the instance is hidden (not exposed by SQL Browser), then
+  connections will need to specify the server and port in order to
+  connect. It does not prevent users from connecting to server if they
+  know the instance name and port.
+
+check:
+  type: sql_scalar
+  query: |
+    DECLARE @getValue INT;
+    EXEC master.sys.xp_instance_regread
+      @rootkey    = N'HKEY_LOCAL_MACHINE',
+      @key        = N'SOFTWARE\Microsoft\Microsoft SQL Server\MSSQLServer\SuperSocketNetLib',
+      @value_name = N'HideInstance',
+      @value      = @getValue OUTPUT;
+    SELECT @getValue AS hide_instance;
+  assertions:
+    - field: value
+      op: equals
+      value: 1
+
+remediation: |
+  EXEC master.sys.xp_instance_regwrite
+    @rootkey    = N'HKEY_LOCAL_MACHINE',
+    @key        = N'SOFTWARE\Microsoft\Microsoft SQL Server\MSSQLServer\SuperSocketNetLib',
+    @value_name = N'HideInstance',
+    @type       = N'REG_DWORD',
+    @value      = 1;
+
+default_value: "SQL Server instances are not hidden by default"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/hide-an-instance-of-sql-server-database-engine

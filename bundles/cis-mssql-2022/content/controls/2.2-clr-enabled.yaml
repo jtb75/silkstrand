@@ -1,0 +1,72 @@
+id: "2.2"
+title: "Ensure 'CLR Enabled' Server Configuration Option is set to '0'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  The clr enabled option specifies whether user assemblies can be run by
+  SQL Server.
+
+rationale: >
+  Enabling use of CLR assemblies widens the attack surface of SQL Server
+  and puts it at risk from both inadvertent and malicious assemblies.
+
+impact: >
+  If CLR assemblies are in use, applications may need to be rearchitected
+  to eliminate their usage before disabling this setting.
+
+check:
+  type: sql_configuration
+  # Precondition: clr strict security = 1 makes this recommendation
+  # NOT_APPLICABLE (handled by precondition_check below).
+  precondition:
+    type: sql_configuration
+    query: |
+      SELECT name,
+             CAST(value as int) as value_configured,
+             CAST(value_in_use as int) as value_in_use
+      FROM sys.configurations
+      WHERE name = 'clr strict security';
+    if_matches:
+      status: NOT_APPLICABLE
+      reason: "clr strict security is enabled — treats SAFE/EXTERNAL_ACCESS as UNSAFE"
+    assertions:
+      - field: value_configured
+        op: equals
+        value: 1
+      - field: value_in_use
+        op: equals
+        value: 1
+  query: |
+    SELECT name,
+           CAST(value as int) as value_configured,
+           CAST(value_in_use as int) as value_in_use
+    FROM sys.configurations
+    WHERE name = 'clr enabled';
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: value_configured
+      op: equals
+      value: 0
+    - field: value_in_use
+      op: equals
+      value: 0
+
+remediation: |
+  EXECUTE sp_configure 'clr enabled', 0;
+  RECONFIGURE;
+
+default_value: "0 (disabled)"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/t-sql/statements/create-assembly-transact-sql
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "16.7"
+      title: "Use Standard Hardening Configuration Templates for Application Infrastructure"

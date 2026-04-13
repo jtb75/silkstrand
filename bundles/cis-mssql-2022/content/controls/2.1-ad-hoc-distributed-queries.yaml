@@ -1,0 +1,65 @@
+id: "2.1"
+title: "Ensure 'Ad Hoc Distributed Queries' Server Configuration Option is set to '0'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  Enabling Ad Hoc Distributed Queries allows users to query data and
+  execute statements on external data sources. This functionality should
+  be disabled.
+
+rationale: >
+  This feature can be used to remotely access and exploit vulnerabilities
+  on remote SQL Server instances and to run unsafe Visual Basic for
+  Application functions.
+
+check:
+  # `sql_configuration` is one of a handful of primitives the evaluator
+  # understands. It runs the query and asserts every returned row's
+  # listed fields match.
+  type: sql_configuration
+  query: |
+    SELECT name,
+           CAST(value as int) as value_configured,
+           CAST(value_in_use as int) as value_in_use
+    FROM sys.configurations
+    WHERE name = 'Ad Hoc Distributed Queries';
+  existence: at_least_one_row    # at_least_one_row | no_rows | exactly_one_row
+  aggregation: all_rows_match    # all_rows_match   | any_row_matches
+  assertions:
+    - field: value_configured
+      op: equals
+      value: 0
+    - field: value_in_use
+      op: equals
+      value: 0
+
+remediation: |
+  For AWS RDS instances, use Parameter Groups. Otherwise run:
+
+  EXECUTE sp_configure 'show advanced options', 1;
+  RECONFIGURE;
+  EXECUTE sp_configure 'Ad Hoc Distributed Queries', 0;
+  RECONFIGURE;
+  GO
+  EXECUTE sp_configure 'show advanced options', 0;
+  RECONFIGURE;
+
+default_value: "0 (disabled)"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/ad-hoc-distributed-queries-server-configuration-option
+
+framework_mappings:
+  cis_controls_v8:
+    - id: "4.4"
+      title: "Implement and Manage a Firewall on Servers"
+    - id: "4.5"
+      title: "Implement and Manage a Firewall on End-User Devices"
+  cis_controls_v7:
+    - id: "9.2"
+      title: "Ensure Only Approved Ports, Protocols and Services Are Running"

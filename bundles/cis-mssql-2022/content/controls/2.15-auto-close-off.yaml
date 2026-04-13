@@ -1,0 +1,38 @@
+id: "2.15"
+title: "Ensure 'AUTO_CLOSE' is set to 'OFF' on contained databases"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  AUTO_CLOSE determines if a given database is closed or not after a
+  connection terminates. If enabled, subsequent connections to the given
+  database will require the database to be reopened and relevant
+  procedure caches to be rebuilt.
+
+rationale: >
+  Because authentication of users for contained databases occurs within
+  the database not at the server\instance level, the database must be
+  opened every time to authenticate a user. The frequent opening/closing
+  of the database consumes additional server resources and may
+  contribute to a denial of service.
+
+check:
+  type: sql_no_rows_match
+  query: |
+    SELECT name, containment, containment_desc, is_auto_close_on
+    FROM sys.databases
+    WHERE containment <> 0
+    AND is_auto_close_on = 1;
+
+remediation: |
+  -- For each database returned by the audit:
+  ALTER DATABASE <database_name> SET AUTO_CLOSE OFF;
+
+default_value: "AUTO_CLOSE = OFF"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/databases/security-best-practices-with-contained-databases

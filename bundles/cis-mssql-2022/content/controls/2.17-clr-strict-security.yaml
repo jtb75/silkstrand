@@ -1,0 +1,52 @@
+id: "2.17"
+title: "Ensure 'clr strict security' Server Configuration Option is set to '1'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: HIGH
+
+description: >
+  The clr strict security option specifies whether the engine applies
+  the PERMISSION_SET on the assemblies.
+
+rationale: >
+  Enabling use of CLR assemblies widens the attack surface of SQL Server
+  and puts it at risk from both inadvertent and malicious assemblies.
+
+impact: >
+  If CLR assemblies are in use, applications may need to be
+  rearchitected to eliminate their usage before enabling this setting.
+
+check:
+  type: sql_configuration
+  query: |
+    SELECT name,
+           CAST(value as int) as value_configured,
+           CAST(value_in_use as int) as value_in_use
+    FROM sys.configurations
+    WHERE name = 'clr strict security';
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: value_configured
+      op: equals
+      value: 1
+    - field: value_in_use
+      op: equals
+      value: 1
+
+remediation: |
+  EXECUTE sp_configure 'show advanced options', 1;
+  RECONFIGURE;
+  EXECUTE sp_configure 'clr strict security', 1;
+  RECONFIGURE;
+  GO
+  EXECUTE sp_configure 'show advanced options', 0;
+  RECONFIGURE;
+
+default_value: "1 (enabled)"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/clr-strict-security

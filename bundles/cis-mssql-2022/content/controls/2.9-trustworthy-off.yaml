@@ -1,0 +1,34 @@
+id: "2.9"
+title: "Ensure 'Trustworthy' Database Property is set to 'Off'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+severity: MEDIUM
+
+description: >
+  The TRUSTWORTHY database option allows database objects to access
+  objects in other databases under certain circumstances.
+
+rationale: >
+  Provides protection from malicious CLR assemblies or extended
+  procedures.
+
+check:
+  # Query lists any databases with TRUSTWORTHY=ON (excluding msdb where
+  # it is required). PASS iff no rows returned.
+  type: sql_no_rows_match
+  query: |
+    SELECT name
+    FROM sys.databases
+    WHERE is_trustworthy_on = 1
+    AND name != 'msdb';
+
+remediation: |
+  -- For each database returned by the audit:
+  ALTER DATABASE [<database_name>] SET TRUSTWORTHY OFF;
+
+default_value: "OFF (except msdb, which requires ON)"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/security/trustworthy-database-property

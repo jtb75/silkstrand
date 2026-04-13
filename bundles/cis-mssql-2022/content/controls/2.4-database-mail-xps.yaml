@@ -1,0 +1,49 @@
+id: "2.4"
+title: "Ensure 'Database Mail XPs' Server Configuration Option is set to '0'"
+section: "Surface Area Reduction"
+assessment: automated
+profile:
+  - "Level 1 - Database Engine"
+  - "Level 1 - AWS RDS"
+severity: MEDIUM
+
+description: >
+  The Database Mail XPs option controls the ability to generate and
+  transmit email messages from SQL Server.
+
+rationale: >
+  Disabling the Database Mail XPs option reduces the SQL Server surface,
+  eliminates a DOS attack vector and channel to exfiltrate data from the
+  database server to a remote host.
+
+check:
+  type: sql_configuration
+  query: |
+    SELECT name,
+           CAST(value as int) as value_configured,
+           CAST(value_in_use as int) as value_in_use
+    FROM sys.configurations
+    WHERE name = 'Database Mail XPs';
+  existence: at_least_one_row
+  aggregation: all_rows_match
+  assertions:
+    - field: value_configured
+      op: equals
+      value: 0
+    - field: value_in_use
+      op: equals
+      value: 0
+
+remediation: |
+  EXECUTE sp_configure 'show advanced options', 1;
+  RECONFIGURE;
+  EXECUTE sp_configure 'Database Mail XPs', 0;
+  RECONFIGURE;
+  GO
+  EXECUTE sp_configure 'show advanced options', 0;
+  RECONFIGURE;
+
+default_value: "0 (disabled)"
+
+references:
+  - https://learn.microsoft.com/en-us/sql/relational-databases/database-mail/database-mail
