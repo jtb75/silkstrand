@@ -174,19 +174,40 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 		return
 	}
 
-	// Look up and decrypt credentials (may be nil)
+	// Look up and decrypt credentials (may be nil). Prefers
+	// credential_sources (type=static); falls back to legacy credentials
+	// table through the ADR 004 C0 rollback window.
 	var creds json.RawMessage
-	encryptedCreds, _ := h.store.GetCredentialsByTarget(ctx, d.TargetID)
-	if encryptedCreds != nil && len(h.credKey) > 0 {
-		decrypted, err := crypto.Decrypt(encryptedCreds, h.credKey)
-		if err != nil {
-			slog.Error("decrypting credentials for directive", "target_id", d.TargetID, "error", err)
+	encryptedCreds, _, credErr := h.store.GetStaticCredentialForTarget(ctx, d.TargetID)
+	switch {
+	case credErr != nil:
+		slog.Info("credential.fetch",
+			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+			"outcome", "error", "error", credErr)
+	case encryptedCreds == nil:
+		slog.Info("credential.fetch",
+			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+			"outcome", "miss")
+	default:
+		if len(h.credKey) > 0 {
+			decrypted, err := crypto.Decrypt(encryptedCreds, h.credKey)
+			if err != nil {
+				slog.Info("credential.fetch",
+					"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+					"outcome", "decrypt_error", "error", err)
+			} else {
+				creds = json.RawMessage(decrypted)
+				slog.Info("credential.fetch",
+					"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+					"outcome", "ok")
+			}
 		} else {
-			creds = json.RawMessage(decrypted)
+			// No encryption key configured — pass through as-is (local dev).
+			creds = encryptedCreds
+			slog.Info("credential.fetch",
+				"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+				"outcome", "ok_plaintext")
 		}
-	} else if encryptedCreds != nil {
-		// No encryption key configured — pass through as-is (local dev)
-		creds = encryptedCreds
 	}
 
 	// Build enriched directive message

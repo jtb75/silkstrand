@@ -50,7 +50,11 @@ func (h *ProbeHandler) Probe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var credsRaw json.RawMessage
-	if stored, err := h.store.GetCredentialsByTarget(r.Context(), targetID); err == nil && len(stored) > 0 {
+	stored, _, credErr := h.store.GetStaticCredentialForTarget(r.Context(), targetID)
+	switch {
+	case credErr != nil:
+		slog.Warn("probe: reading credential", "error", credErr, "target_id", targetID)
+	case len(stored) > 0:
 		plaintext, err := decryptIfPossible(stored, h.encKey)
 		if err != nil {
 			slog.Warn("probe: decrypting credential", "error", err)
@@ -58,6 +62,8 @@ func (h *ProbeHandler) Probe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		credsRaw = plaintext
+		slog.Info("credential.fetch",
+			"source_type", "static", "target_id", targetID, "probe", true, "outcome", "ok")
 	}
 
 	buf := make([]byte, 16)

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -609,6 +610,208 @@ func (s *PostgresStore) ClearTargetCredentialSource(ctx context.Context, targetI
 		targetID)
 	if err != nil {
 		return fmt.Errorf("clearing target credential source: %w", err)
+	}
+	return nil
+}
+
+// UpsertStaticCredentialSource ensures a `static`-type credential_sources row
+// exists for the target and is linked via targets.credential_source_id. If a
+// static source already exists for the target, its config is replaced in
+// place. Runs in a transaction so the FK and source row stay consistent.
+func (s *PostgresStore) UpsertStaticCredentialSource(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) error {
+	cfgJSON, err := json.Marshal(model.StaticCredentialConfig{
+		Type:          credType,
+		EncryptedData: base64.StdEncoding.EncodeToString(encryptedData),
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling static credential config: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var existingID sql.NullString
+	var existingType sql.NullString
+	err = tx.QueryRowContext(ctx,
+		`SELECT cs.id, cs.type
+		 FROM targets t
+		 LEFT JOIN credential_sources cs ON cs.id = t.credential_source_id
+		 WHERE t.id = $1`, targetID).
+		Scan(&existingID, &existingType)
+	if err != nil {
+		return fmt.Errorf("looking up existing source: %w", err)
+	}
+
+	switch {
+	case existingID.Valid && existingType.String == model.CredentialSourceTypeStatic:
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE credential_sources SET config = $1, updated_at = NOW() WHERE id = $2`,
+			cfgJSON, existingID.String); err != nil {
+			return fmt.Errorf("updating static credential source: %w", err)
+		}
+	case existingID.Valid && existingType.String != model.CredentialSourceTypeStatic:
+		return fmt.Errorf("target %s has non-static credential source; C0 cannot overwrite", targetID)
+	default:
+		var newID string
+		if err := tx.QueryRowContext(ctx,
+			`INSERT INTO credential_sources (tenant_id, type, config)
+			 VALUES ($1, $2, $3) RETURNING id`,
+			tenantID, model.CredentialSourceTypeStatic, cfgJSON).Scan(&newID); err != nil {
+			return fmt.Errorf("inserting static credential source: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE targets SET credential_source_id = $1, updated_at = NOW() WHERE id = $2`,
+			newID, targetID); err != nil {
+			return fmt.Errorf("linking target to credential source: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
+}
+
+// GetStaticCredentialForTarget returns (encryptedBytes, credType) for a
+// target. Prefers credential_sources via targets.credential_source_id when
+// present and of type `static`; falls back to the legacy credentials table.
+func (s *PostgresStore) GetStaticCredentialForTarget(ctx context.Context, targetID string) ([]byte, string, error) {
+	var (
+		srcType sql.NullString
+		cfgRaw  sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT cs.type, cs.config::text
+		 FROM targets t
+		 LEFT JOIN credential_sources cs ON cs.id = t.credential_source_id
+		 WHERE t.id = $1`, targetID).
+		Scan(&srcType, &cfgRaw)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, "", fmt.Errorf("looking up credential source: %w", err)
+	}
+
+	if srcType.Valid && srcType.String == model.CredentialSourceTypeStatic && cfgRaw.Valid {
+		var cfg model.StaticCredentialConfig
+		if err := json.Unmarshal([]byte(cfgRaw.String), &cfg); err != nil {
+			return nil, "", fmt.Errorf("decoding static credential config: %w", err)
+		}
+		data, err := base64.StdEncoding.DecodeString(cfg.EncryptedData)
+		if err != nil {
+			return nil, "", fmt.Errorf("decoding static credential data: %w", err)
+		}
+		return data, cfg.Type, nil
+	}
+
+	// Fallback to legacy table (handles rollback-window edge cases).
+	var (
+		legacyType string
+		legacyData []byte
+	)
+	err = s.db.QueryRowContext(ctx,
+		`SELECT type, encrypted_data FROM credentials WHERE target_id = $1 LIMIT 1`,
+		targetID).Scan(&legacyType, &legacyData)
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("legacy credential read: %w", err)
+	}
+	return legacyData, legacyType, nil
+}
+
+// HasCredentialForTarget is the presence-check equivalent of
+// GetStaticCredentialForTarget (credential_sources preferred, legacy fallback).
+func (s *PostgresStore) HasCredentialForTarget(ctx context.Context, targetID string) (bool, string, error) {
+	var (
+		srcType sql.NullString
+		cfgRaw  sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT cs.type, cs.config::text
+		 FROM targets t
+		 LEFT JOIN credential_sources cs ON cs.id = t.credential_source_id
+		 WHERE t.id = $1`, targetID).
+		Scan(&srcType, &cfgRaw)
+	if err != nil && err != sql.ErrNoRows {
+		return false, "", fmt.Errorf("checking credential source: %w", err)
+	}
+	if srcType.Valid && srcType.String == model.CredentialSourceTypeStatic && cfgRaw.Valid {
+		var cfg model.StaticCredentialConfig
+		if err := json.Unmarshal([]byte(cfgRaw.String), &cfg); err != nil {
+			return false, "", fmt.Errorf("decoding static credential config: %w", err)
+		}
+		return true, cfg.Type, nil
+	}
+
+	var legacyType string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT type FROM credentials WHERE target_id = $1 LIMIT 1`, targetID).
+		Scan(&legacyType)
+	if err == sql.ErrNoRows {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", fmt.Errorf("legacy credential presence check: %w", err)
+	}
+	return true, legacyType, nil
+}
+
+// DeleteCredentialForTarget removes both the credential_sources row (when
+// linked via static) and the legacy credentials row. Returns sql.ErrNoRows
+// only when neither surface had a credential to remove.
+func (s *PostgresStore) DeleteCredentialForTarget(ctx context.Context, tenantID, targetID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var sourceID sql.NullString
+	var sourceType sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT cs.id, cs.type
+		 FROM targets t
+		 LEFT JOIN credential_sources cs ON cs.id = t.credential_source_id
+		 WHERE t.id = $1`, targetID).Scan(&sourceID, &sourceType); err != nil {
+		return fmt.Errorf("looking up credential source: %w", err)
+	}
+
+	removedSource := false
+	if sourceID.Valid && sourceType.String == model.CredentialSourceTypeStatic {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE targets SET credential_source_id = NULL, updated_at = NOW() WHERE id = $1`,
+			targetID); err != nil {
+			return fmt.Errorf("clearing target credential source: %w", err)
+		}
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM credential_sources WHERE id = $1`, sourceID.String)
+		if err != nil {
+			return fmt.Errorf("deleting credential source: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			removedSource = true
+		}
+	}
+
+	legacyRes, err := tx.ExecContext(ctx,
+		`DELETE FROM credentials WHERE tenant_id = $1 AND target_id = $2`,
+		tenantID, targetID)
+	if err != nil {
+		return fmt.Errorf("deleting legacy credential: %w", err)
+	}
+	removedLegacy := false
+	if n, _ := legacyRes.RowsAffected(); n > 0 {
+		removedLegacy = true
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	if !removedSource && !removedLegacy {
+		return sql.ErrNoRows
 	}
 	return nil
 }
