@@ -9,7 +9,15 @@ const (
 	TypeScanResults  = "scan_results"
 	TypeScanError    = "scan_error"
 	TypeHeartbeat    = "heartbeat"
+	TypeUpgrade      = "upgrade"
 )
+
+// UpgradePayload tells the agent to fetch a new binary and restart.
+type UpgradePayload struct {
+	Version          string            `json:"version"`
+	BaseURL          string            `json:"base_url"`
+	SHA256ByPlatform map[string]string `json:"sha256_by_platform"`
+}
 
 // DirectivePayload is sent from server to agent with scan instructions.
 type DirectivePayload struct {

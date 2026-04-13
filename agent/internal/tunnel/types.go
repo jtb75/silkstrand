@@ -15,7 +15,17 @@ const (
 	TypeScanResults = "scan_results"
 	TypeScanError   = "scan_error"
 	TypeHeartbeat   = "heartbeat"
+	TypeUpgrade     = "upgrade"
 )
+
+// UpgradePayload instructs the agent to download a new binary version,
+// swap in place, and exit so the service manager restarts it.
+type UpgradePayload struct {
+	Version          string            `json:"version"`  // e.g. "v0.1.4" or "latest"
+	BaseURL          string            `json:"base_url"` // e.g. https://storage.googleapis.com/silkstrand-agent-releases
+	SHA256ByPlatform map[string]string `json:"sha256_by_platform"`
+	// Keys are "<os>-<arch>": linux-amd64, darwin-arm64, etc.
+}
 
 // DirectivePayload is received from the server with scan instructions.
 type DirectivePayload struct {
