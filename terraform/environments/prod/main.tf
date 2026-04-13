@@ -191,7 +191,13 @@ module "storage" {
   region                       = var.region
   environment                  = "prod"
   create_agent_releases_bucket = true
+  create_runtimes_bucket       = true
   agent_releases_writers = (
+    var.github_actions_sa_email != ""
+    ? ["serviceAccount:${var.github_actions_sa_email}"]
+    : []
+  )
+  runtimes_writers = (
     var.github_actions_sa_email != ""
     ? ["serviceAccount:${var.github_actions_sa_email}"]
     : []

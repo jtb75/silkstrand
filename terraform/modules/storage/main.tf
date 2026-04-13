@@ -96,3 +96,61 @@ output "agent_releases_bucket_name" {
 output "agent_releases_base_url" {
   value = var.create_agent_releases_bucket ? "https://storage.googleapis.com/${google_storage_bucket.agent_releases[0].name}" : ""
 }
+
+# --- Runtimes bucket (publicly readable) ---
+# Hosts ProjectDiscovery binaries (naabu, httpx, nuclei) and curated
+# nuclei-templates tarballs that the edge agent fetches at recon time
+# (ADR 003). Public-read because the binaries themselves are OSS and
+# non-sensitive — integrity comes from sha256 pins compiled into the
+# agent binary, not from access control. Single bucket in prod serves
+# both stage and prod agents (binaries are identical).
+
+resource "google_storage_bucket" "runtimes" {
+  count = var.create_runtimes_bucket ? 1 : 0
+
+  project  = var.project_id
+  name     = "silkstrand-runtimes"
+  location = var.region
+
+  uniform_bucket_level_access = true
+
+  versioning {
+    enabled = true
+  }
+}
+
+resource "google_storage_bucket_iam_member" "runtimes_public" {
+  count = var.create_runtimes_bucket ? 1 : 0
+
+  bucket = google_storage_bucket.runtimes[0].name
+  role   = "roles/storage.objectViewer"
+  member = "allUsers"
+}
+
+resource "google_storage_bucket_iam_member" "runtimes_writer" {
+  for_each = var.create_runtimes_bucket ? toset(var.runtimes_writers) : toset([])
+
+  bucket = google_storage_bucket.runtimes[0].name
+  role   = "roles/storage.objectAdmin"
+  member = each.value
+}
+
+variable "create_runtimes_bucket" {
+  description = "Whether to create the public runtimes bucket. Set true in prod only."
+  type        = bool
+  default     = false
+}
+
+variable "runtimes_writers" {
+  description = "Member identifiers granted write access to the runtimes bucket (CI service accounts that publish PD binaries + nuclei templates)."
+  type        = list(string)
+  default     = []
+}
+
+output "runtimes_bucket_name" {
+  value = var.create_runtimes_bucket ? google_storage_bucket.runtimes[0].name : ""
+}
+
+output "runtimes_base_url" {
+  value = var.create_runtimes_bucket ? "https://storage.googleapis.com/${google_storage_bucket.runtimes[0].name}" : ""
+}
