@@ -124,6 +124,20 @@ resource "google_secret_manager_secret_version" "api" {
   secret_data = each.value.data
 }
 
+# Refactor: the credential encryption key was previously declared as a
+# standalone resource (google_secret_manager_secret.credential_encryption_key).
+# These moved blocks let Terraform re-key the existing state into the new
+# for_each map address rather than destroy + recreate the secret.
+moved {
+  from = google_secret_manager_secret.credential_encryption_key
+  to   = google_secret_manager_secret.api["credential_encryption_key"]
+}
+
+moved {
+  from = google_secret_manager_secret_version.credential_encryption_key
+  to   = google_secret_manager_secret_version.api["credential_encryption_key"]
+}
+
 # Service account for Cloud Run
 resource "google_service_account" "api" {
   project      = var.project_id
