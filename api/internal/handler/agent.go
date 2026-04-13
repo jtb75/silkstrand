@@ -170,6 +170,49 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 	}
 }
 
+// SelfDelete is called by the agent itself during uninstall, authed with
+// its own API key (the same key/hash used for the WSS connection). Deletes
+// the agents row so the tenant admin UI no longer shows a ghost.
+//
+// Path: DELETE /api/v1/agents/self?agent_id={id}
+// Auth: Bearer {agent_api_key}
+func (h *AgentHandler) SelfDelete(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID == "" {
+		writeError(w, http.StatusBadRequest, "agent_id query parameter required")
+		return
+	}
+	key := extractBearerToken(r)
+	if key == "" {
+		writeError(w, http.StatusUnauthorized, "authorization required")
+		return
+	}
+	agent, err := h.store.GetAgentByID(r.Context(), agentID)
+	if err != nil {
+		slog.Error("looking up agent for self-delete", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if agent == nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+	if !verifyAgentKey(key, agent) {
+		writeError(w, http.StatusUnauthorized, "invalid agent key")
+		return
+	}
+	// store.DeleteAgent is tenant-scoped via context; set the tenant from the
+	// agent row so the DELETE query's WHERE tenant_id matches.
+	ctx := store.WithTenantID(r.Context(), agent.TenantID)
+	if err := h.store.DeleteAgent(ctx, agentID); err != nil {
+		slog.Error("self-deleting agent", "agent_id", agentID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to delete agent")
+		return
+	}
+	slog.Info("agent self-deleted", "agent_id", agentID, "tenant_id", agent.TenantID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func extractBearerToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {

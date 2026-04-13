@@ -23,6 +23,8 @@
 #   --name=NAME            Friendly name for this agent (default: hostname)
 #   --as-service           Install + start a system service
 #   --no-service           Skip service install (default)
+#   --uninstall            Remove the agent: notify server, stop service,
+#                          delete binary + /etc/silkstrand
 #   --install-dir=PATH     Where to install the binary (default /usr/local/bin)
 #   --version=TAG          Release to download (default "latest")
 #   --release-url=URL      Override the GCS base for binaries (dev / mirrors)
@@ -36,6 +38,7 @@ TOKEN=""
 API_URL=""
 NAME="$(uname -n 2>/dev/null || echo agent)"
 AS_SERVICE=0
+UNINSTALL=0
 CONFIG_DIR="/etc/silkstrand"
 CONFIG_FILE="/etc/silkstrand/agent.env"
 
@@ -53,6 +56,7 @@ parse_args() {
             --release-url=*) RELEASE_URL="${1#*=}" ;;
             --as-service)    AS_SERVICE=1 ;;
             --no-service)    AS_SERVICE=0 ;;
+            --uninstall)     UNINSTALL=1 ;;
             -h|--help)       grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
             *) fail "unknown flag: $1" ;;
         esac
@@ -221,9 +225,61 @@ Or re-run install.sh with --as-service to install a system service.
 EOF
 }
 
+uninstall_service_linux() {
+    if [ -f /etc/systemd/system/silkstrand-agent.service ]; then
+        systemctl disable --now silkstrand-agent 2>/dev/null || true
+        rm -f /etc/systemd/system/silkstrand-agent.service
+        systemctl daemon-reload
+        log "removed systemd unit"
+    fi
+}
+
+uninstall_service_darwin() {
+    if [ -f /Library/LaunchDaemons/io.silkstrand.agent.plist ]; then
+        launchctl bootout system/io.silkstrand.agent 2>/dev/null || true
+        rm -f /Library/LaunchDaemons/io.silkstrand.agent.plist
+        log "removed launchd plist"
+    fi
+}
+
+uninstall_self_delete() {
+    # Best-effort call to /api/v1/agents/self so the tenant UI doesn't show
+    # a ghost entry. Ignores failures (network, already-deleted, etc.).
+    if [ ! -f "$CONFIG_FILE" ]; then return 0; fi
+    # shellcheck disable=SC1090
+    . "$CONFIG_FILE" || return 0
+    [ -n "${SILKSTRAND_AGENT_ID:-}" ] || return 0
+    [ -n "${SILKSTRAND_AGENT_KEY:-}" ] || return 0
+    [ -n "${SILKSTRAND_API_URL:-}" ] || return 0
+
+    # Swap wss:// → https:// for the HTTP call.
+    http_url=$(printf '%s' "$SILKSTRAND_API_URL" | sed -e 's,^wss://,https://,' -e 's,^ws://,http://,')
+    log "Notifying server: agent ${SILKSTRAND_AGENT_ID}"
+    curl -fsS -X DELETE \
+        -H "Authorization: Bearer $SILKSTRAND_AGENT_KEY" \
+        "${http_url}/api/v1/agents/self?agent_id=${SILKSTRAND_AGENT_ID}" \
+        >/dev/null 2>&1 || log "server notify failed (continuing with local cleanup)"
+}
+
+do_uninstall() {
+    need_root
+    uninstall_self_delete
+    case "$(detect_os)" in
+        linux)  uninstall_service_linux ;;
+        darwin) uninstall_service_darwin ;;
+    esac
+    rm -f "$INSTALL_DIR/silkstrand-agent"
+    rm -rf "$CONFIG_DIR"
+    log "Uninstalled silkstrand-agent"
+}
+
 main() {
     parse_args "$@"
     need curl
+    if [ "$UNINSTALL" -eq 1 ]; then
+        do_uninstall
+        return 0
+    fi
     need_root
     download_binary
     if [ -n "$TOKEN" ] || [ -n "$API_URL" ]; then
