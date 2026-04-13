@@ -65,20 +65,51 @@ func TestLoad_MissingAgentID(t *testing.T) {
 	// Unset to avoid inheriting from parent
 	os.Unsetenv("SILKSTRAND_AGENT_ID")
 	t.Setenv("SILKSTRAND_AGENT_KEY", "test-key")
+	os.Unsetenv("SILKSTRAND_INSTALL_TOKEN")
 
 	_, err := Load()
 	if err == nil {
-		t.Fatal("expected error for missing SILKSTRAND_AGENT_ID")
+		t.Fatal("expected error for half-filled credential pair")
 	}
 }
 
 func TestLoad_MissingAgentKey(t *testing.T) {
 	t.Setenv("SILKSTRAND_AGENT_ID", "test-agent")
 	os.Unsetenv("SILKSTRAND_AGENT_KEY")
+	os.Unsetenv("SILKSTRAND_INSTALL_TOKEN")
 
 	_, err := Load()
 	if err == nil {
-		t.Fatal("expected error for missing SILKSTRAND_AGENT_KEY")
+		t.Fatal("expected error for half-filled credential pair")
+	}
+}
+
+// Install-token-only path (container / k8s bootstrap flow): Load must
+// succeed; the caller is responsible for running bootstrap to populate
+// the missing credential fields before use.
+func TestLoad_InstallTokenOnly(t *testing.T) {
+	os.Unsetenv("SILKSTRAND_AGENT_ID")
+	os.Unsetenv("SILKSTRAND_AGENT_KEY")
+	t.Setenv("SILKSTRAND_INSTALL_TOKEN", "sst_abc")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.InstallToken != "sst_abc" {
+		t.Errorf("InstallToken = %q, want %q", cfg.InstallToken, "sst_abc")
+	}
+}
+
+// Load with nothing at all should still fail — no credentials, no token.
+func TestLoad_NothingSet(t *testing.T) {
+	os.Unsetenv("SILKSTRAND_AGENT_ID")
+	os.Unsetenv("SILKSTRAND_AGENT_KEY")
+	os.Unsetenv("SILKSTRAND_INSTALL_TOKEN")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when nothing is set")
 	}
 }
 
