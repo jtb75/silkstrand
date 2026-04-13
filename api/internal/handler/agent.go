@@ -84,6 +84,7 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 
 	if h.ps != nil {
 		go h.subscribeDirectives(ctx, agentID)
+		go h.subscribeProbes(ctx, agentID)
 	}
 
 	// Update agent status to connected
@@ -116,6 +117,21 @@ func (h *AgentHandler) subscribeDirectives(ctx context.Context, agentID string) 
 	})
 	if err != nil && ctx.Err() == nil {
 		slog.Error("directive subscription error", "agent_id", agentID, "error", err)
+	}
+}
+
+// subscribeProbes forwards probe requests originating on any API instance
+// to the agent's WebSocket. The probe handler publishes via Redis; only
+// the instance that owns this WSS connection delivers it.
+func (h *AgentHandler) subscribeProbes(ctx context.Context, agentID string) {
+	err := h.ps.SubscribeProbes(ctx, agentID, func(payload []byte) {
+		msg := websocket.Message{Type: websocket.TypeProbe, Payload: payload}
+		if err := h.hub.Send(agentID, msg); err != nil {
+			slog.Warn("forwarding probe to agent", "agent_id", agentID, "error", err)
+		}
+	})
+	if err != nil && ctx.Err() == nil {
+		slog.Error("probe subscription error", "agent_id", agentID, "error", err)
 	}
 }
 

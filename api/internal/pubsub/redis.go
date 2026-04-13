@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -94,4 +95,88 @@ func (ps *PubSub) PublishScanProgress(ctx context.Context, scanID string, status
 	channel := fmt.Sprintf("scan:%s:progress", scanID)
 	data, _ := json.Marshal(map[string]string{"scan_id": scanID, "status": status})
 	return ps.client.Publish(ctx, channel, data).Err()
+}
+
+// --- Probes (request / response across multiple API instances) ---
+//
+// Cloud Run scales the API horizontally. An agent's WebSocket pins to one
+// instance, but a probe HTTP request can land on any instance. Probes
+// therefore route through Redis like directives do, and probe responses
+// come back over a per-probe-id channel that the originating instance
+// subscribes to BEFORE publishing the request (pub/sub has no durability;
+// late subscribers miss the reply).
+
+// PublishProbe sends a probe request to whichever instance owns the
+// agent's WSS. Payload is the websocket.ProbePayload JSON bytes.
+func (ps *PubSub) PublishProbe(ctx context.Context, agentID string, payload []byte) error {
+	channel := fmt.Sprintf("agent:%s:probes", agentID)
+	if err := ps.client.Publish(ctx, channel, payload).Err(); err != nil {
+		return fmt.Errorf("publishing probe: %w", err)
+	}
+	return nil
+}
+
+// SubscribeProbes subscribes to probe requests for an agent. Each WSS
+// connection handler runs one of these alongside SubscribeDirectives.
+func (ps *PubSub) SubscribeProbes(ctx context.Context, agentID string, callback func(payload []byte)) error {
+	channel := fmt.Sprintf("agent:%s:probes", agentID)
+	sub := ps.client.Subscribe(ctx, channel)
+	defer sub.Close()
+
+	ch := sub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case msg, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			callback([]byte(msg.Payload))
+		}
+	}
+}
+
+// PublishProbeResult is called by the WSS handler when an agent replies
+// with a probe_result message. The originating HTTP handler is listening
+// on probe:<id>:result.
+func (ps *PubSub) PublishProbeResult(ctx context.Context, probeID string, payload []byte) error {
+	channel := fmt.Sprintf("probe:%s:result", probeID)
+	if err := ps.client.Publish(ctx, channel, payload).Err(); err != nil {
+		return fmt.Errorf("publishing probe result: %w", err)
+	}
+	return nil
+}
+
+// AwaitProbeResult subscribes to the result channel for probe_id, then
+// runs `then` (which should publish the probe request) and waits up to
+// timeout for the agent's reply. Subscribe-before-publish is mandatory:
+// pub/sub doesn't queue, so a publish before the subscriber is connected
+// is dropped. Returns the raw payload bytes or an error.
+func (ps *PubSub) AwaitProbeResult(ctx context.Context, probeID string, timeout time.Duration, then func() error) ([]byte, error) {
+	channel := fmt.Sprintf("probe:%s:result", probeID)
+	sub := ps.client.Subscribe(ctx, channel)
+	defer sub.Close()
+
+	// Confirm the subscription is registered server-side before letting
+	// the caller publish — go-redis's Subscribe is async otherwise.
+	if _, err := sub.Receive(ctx); err != nil {
+		return nil, fmt.Errorf("registering probe result subscription: %w", err)
+	}
+
+	if err := then(); err != nil {
+		return nil, err
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case msg, ok := <-sub.Channel():
+		if !ok {
+			return nil, fmt.Errorf("probe result channel closed")
+		}
+		return []byte(msg.Payload), nil
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("agent did not reply in time")
+	}
 }
