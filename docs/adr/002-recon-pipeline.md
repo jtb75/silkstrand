@@ -1,6 +1,11 @@
 # ADR 002: Recon → inventory → compliance pipeline
 
-**Status:** Proposed (parked). Not for MVP.
+**Status:** Superseded by [ADR 003](./003-recon-pipeline.md) (2026-04-13).
+This document captures the original framing and initial design sketch;
+decisions have since been refined in ADR 003. Preserved for historical
+context.
+
+**Original status:** Proposed (parked). Not for MVP.
 **Date:** 2026-04-12
 **Context origin:** Discussion about whether to integrate Nuclei.
 
