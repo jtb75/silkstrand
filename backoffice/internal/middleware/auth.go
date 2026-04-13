@@ -15,11 +15,23 @@ type contextKey string
 
 const claimsKey contextKey = "admin_claims"
 
+// JWT iss/aud constants (audit 3.4). Issuer is the backoffice for every
+// token we mint. Audience varies by token kind so a token issued for the
+// backoffice admin UI cannot be replayed against the tenant DC API and
+// vice versa.
+const (
+	BackofficeIssuer = "silkstrand-backoffice"
+	AdminAudience    = "silkstrand-backoffice-admin"
+	TenantAudience   = "silkstrand-tenant-api"
+)
+
 // AdminClaims holds the JWT claims for backoffice admin users.
 type AdminClaims struct {
 	AdminID string `json:"admin_id"`
 	Email   string `json:"email"`
 	Role    string `json:"role"`
+	Iss     string `json:"iss,omitempty"`
+	Aud     string `json:"aud,omitempty"`
 	Exp     int64  `json:"exp"`
 }
 
@@ -92,6 +104,8 @@ func CreateAdminJWT(secret string, adminID, email, role string, expiry time.Dura
 		AdminID: adminID,
 		Email:   email,
 		Role:    role,
+		Iss:     BackofficeIssuer,
+		Aud:     AdminAudience,
 		Exp:     time.Now().Add(expiry).Unix(),
 	}
 	claimsJSON, err := json.Marshal(claims)
@@ -138,6 +152,18 @@ func validateJWT(token, secret string) (*AdminClaims, error) {
 	}
 
 	if claims.AdminID == "" {
+		return nil, errInvalidToken
+	}
+
+	// iss/aud validation (audit 3.4). Transitional: accept tokens that
+	// predate the iss/aud rollout (admin tokens have a 24h lifetime), but
+	// reject any token that carries an explicit mismatch. A follow-up PR
+	// will tighten this to require both fields once the rollover window
+	// has passed.
+	if claims.Iss != "" && claims.Iss != BackofficeIssuer {
+		return nil, errInvalidToken
+	}
+	if claims.Aud != "" && claims.Aud != AdminAudience {
 		return nil, errInvalidToken
 	}
 

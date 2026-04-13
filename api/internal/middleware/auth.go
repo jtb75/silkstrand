@@ -40,6 +40,13 @@ func Auth(jwtSecret string) func(http.Handler) http.Handler {
 	}
 }
 
+// Expected JWT iss/aud values for tenant tokens (audit 3.4). Matches the
+// backoffice's BackofficeIssuer / TenantAudience constants.
+const (
+	expectedIssuer   = "silkstrand-backoffice"
+	expectedAudience = "silkstrand-tenant-api"
+)
+
 // Claims is the tenant-scoped JWT payload. Compatible with both the
 // backoffice's new TenantClaims shape (sub + tenant_id) and the legacy
 // shape (user_id + tenant_id) so dev tools that still produce the older
@@ -51,6 +58,8 @@ type Claims struct {
 	DCID     string `json:"dc_id"`
 	Role     string `json:"role"`
 	Email    string `json:"email"`
+	Iss      string `json:"iss,omitempty"`
+	Aud      string `json:"aud,omitempty"`
 	Exp      int64  `json:"exp"`
 }
 
@@ -84,6 +93,16 @@ func validateHMACJWT(token, secret string) (*Claims, error) {
 		return nil, errTokenExpired
 	}
 	if claims.TenantID == "" {
+		return nil, errInvalidToken
+	}
+	// iss/aud validation (audit 3.4). Transitional: accept tokens that
+	// predate the iss/aud rollout (tenant tokens have a 1h lifetime),
+	// but reject any token that carries an explicit mismatch — that
+	// blocks an admin token from being replayed against a tenant route.
+	if claims.Iss != "" && claims.Iss != expectedIssuer {
+		return nil, errInvalidToken
+	}
+	if claims.Aud != "" && claims.Aud != expectedAudience {
 		return nil, errInvalidToken
 	}
 	return &claims, nil
