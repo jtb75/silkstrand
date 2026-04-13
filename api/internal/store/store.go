@@ -48,6 +48,8 @@ type Store interface {
 
 	// Bundles
 	GetBundle(ctx context.Context, id string) (*model.Bundle, error)
+	ListBundlesForTenant(ctx context.Context, tenantID string) ([]model.Bundle, error)
+	UpsertBundle(ctx context.Context, b model.Bundle) (*model.Bundle, error)
 
 	// Credentials
 	GetCredentialsByTarget(ctx context.Context, targetID string) (json.RawMessage, error)

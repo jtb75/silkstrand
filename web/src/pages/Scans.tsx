@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { listScans, listTargets, createScan } from '../api/client';
-import type { Scan, Target } from '../api/types';
+import { listScans, listTargets, createScan, listBundles } from '../api/client';
+import type { Scan, Target, Bundle } from '../api/types';
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{status}</span>;
@@ -28,6 +28,12 @@ export default function Scans() {
   const { data: targets } = useQuery<Target[]>({
     queryKey: ['targets'],
     queryFn: listTargets,
+    enabled: showForm,
+  });
+
+  const { data: bundles } = useQuery<Bundle[]>({
+    queryKey: ['bundles'],
+    queryFn: listBundles,
     enabled: showForm,
   });
 
@@ -74,14 +80,20 @@ export default function Scans() {
             </select>
           </div>
           <div className="form-group">
-            <label htmlFor="bundle_id">Bundle ID</label>
-            <input
-              id="bundle_id"
-              name="bundle_id"
-              type="text"
-              required
-              placeholder="e.g. cis-postgresql-16"
-            />
+            <label htmlFor="bundle_id">Bundle</label>
+            <select id="bundle_id" name="bundle_id" required>
+              <option value="">Select a bundle…</option>
+              {bundles?.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name} v{b.version} ({b.target_type})
+                </option>
+              ))}
+            </select>
+            {bundles && bundles.length === 0 && (
+              <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+                No bundles available. Contact your SilkStrand administrator.
+              </p>
+            )}
           </div>
           <button
             type="submit"
