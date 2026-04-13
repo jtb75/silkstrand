@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { listScans, listTargets, createScan, listBundles } from '../api/client';
+import { listScans, listTargets, createScan, listBundles, deleteScan } from '../api/client';
 import type { Scan, Target, Bundle } from '../api/types';
 
 function StatusBadge({ status }: { status: string }) {
@@ -45,6 +45,26 @@ export default function Scans() {
       setShowForm(false);
     },
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteScan(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['scans'] });
+    },
+  });
+
+  function handleDelete(e: React.MouseEvent, scan: Scan) {
+    // Prevent the row-click navigation handler from firing.
+    e.stopPropagation();
+    if (scan.status === 'running') {
+      alert("Can't delete a running scan. Wait for it to finish or be failed.");
+      return;
+    }
+    if (!window.confirm(`Delete this ${scan.status} scan? Results will be removed.`)) {
+      return;
+    }
+    deleteMutation.mutate(scan.id);
+  }
 
   function handleCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -120,6 +140,7 @@ export default function Scans() {
               <th>Bundle</th>
               <th>Created</th>
               <th>Completed</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -139,6 +160,18 @@ export default function Scans() {
                   {scan.completed_at
                     ? new Date(scan.completed_at).toLocaleString()
                     : '-'}
+                </td>
+                <td>
+                  <button
+                    className="btn btn-small btn-danger"
+                    disabled={scan.status === 'running' || deleteMutation.isPending}
+                    title={scan.status === 'running'
+                      ? 'Running scans cannot be deleted'
+                      : 'Delete this scan and its results'}
+                    onClick={(e) => handleDelete(e, scan)}
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}

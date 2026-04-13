@@ -23,6 +23,7 @@ type Store interface {
 	GetScan(ctx context.Context, id string) (*model.Scan, error)
 	CreateScan(ctx context.Context, req model.CreateScanRequest) (*model.Scan, error)
 	UpdateScanStatus(ctx context.Context, id string, status string) error
+	DeleteScan(ctx context.Context, id string) error
 
 	// Scan Results
 	CreateScanResults(ctx context.Context, scanID string, results []model.ScanResult) error

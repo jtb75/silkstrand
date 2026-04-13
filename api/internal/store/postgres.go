@@ -242,6 +242,26 @@ func (s *PostgresStore) UpdateScanStatus(ctx context.Context, id string, status 
 	return nil
 }
 
+// DeleteScan removes a scan (tenant-scoped). scan_results rows are removed
+// via ON DELETE CASCADE. Callers are expected to refuse deletion of
+// scans in a running state.
+func (s *PostgresStore) DeleteScan(ctx context.Context, id string) error {
+	tenantID := TenantID(ctx)
+	if tenantID == "" {
+		return fmt.Errorf("tenant not set in context")
+	}
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM scans WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("deleting scan: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // --- Scan Results ---
 
 func (s *PostgresStore) CreateScanResults(ctx context.Context, scanID string, results []model.ScanResult) error {
