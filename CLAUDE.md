@@ -465,7 +465,7 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 - `INTERNAL_API_KEY_PROD` — API key for backoffice → DC internal API access
 - `BACKOFFICE_JWT_SECRET` — Backoffice admin JWT signing key
 - `BACKOFFICE_ENCRYPTION_KEY` — AES-256 key for DC API key encryption in backoffice DB (64 hex chars)
-- `CREDENTIAL_ENCRYPTION_KEY_STAGE` / `CREDENTIAL_ENCRYPTION_KEY_PROD` — AES-256 key for credential encryption
+- `CREDENTIAL_ENCRYPTION_KEY_STAGE` / `CREDENTIAL_ENCRYPTION_KEY_PROD` — AES-256 key for credential encryption. Stored in GCP Secret Manager (`credential-encryption-key-{env}`); Cloud Run mounts via `secret_key_ref`. Never set as a plain Cloud Run env var — use Terraform.
 - `TENANT_JWT_SECRET` — HS256 signing key for tenant user JWTs. Shared: backoffice signs, every DC validates. `openssl rand -hex 32`.
 - `RESEND_API_KEY` — Resend API key for transactional email
 
