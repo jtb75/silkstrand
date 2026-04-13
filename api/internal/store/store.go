@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/jtb75/silkstrand/api/internal/model"
 )
@@ -36,6 +37,10 @@ type Store interface {
 	PromoteAgentKey(ctx context.Context, id string) error
 	ListAgents(ctx context.Context) ([]model.Agent, error)
 	DeleteAgent(ctx context.Context, id string) error
+
+	// Install tokens (one-time bootstrap credentials)
+	CreateInstallToken(ctx context.Context, tenantID string, tokenHash []byte, expiresAt time.Time, createdBy string) error
+	ConsumeInstallToken(ctx context.Context, tokenHash []byte, agentID string) (tenantID string, err error)
 
 	// Targets (non-tenant-scoped, for directive enrichment)
 	GetTargetByID(ctx context.Context, id string) (*model.Target, error)

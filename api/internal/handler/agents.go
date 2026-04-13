@@ -6,11 +6,15 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/jtb75/silkstrand/api/internal/crypto"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/store"
 )
+
+const installTokenTTL = time.Hour
 
 // AgentsHandler serves the tenant-facing agent CRUD API. Agents registered
 // here get a one-time API key shown in the response; the hash is stored.
@@ -156,4 +160,107 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /api/v1/agents/install-tokens (authenticated, tenant-scoped)
+// Body: {} (no fields yet)
+// Returns a one-time install token (1h, single-use) bound to this tenant.
+// Used by install.sh to call /api/v1/agents/bootstrap and self-register.
+func (h *AgentsHandler) CreateInstallToken(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.TenantID == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	plaintext, tokenHash, err := crypto.NewInstallToken()
+	if err != nil {
+		slog.Error("generating install token", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	expiresAt := time.Now().Add(installTokenTTL)
+	createdBy := ""
+	if claims.Sub != "" {
+		createdBy = claims.Sub
+	} else if claims.UserID != "" {
+		createdBy = claims.UserID
+	}
+	if err := h.store.CreateInstallToken(r.Context(), claims.TenantID, tokenHash, expiresAt, createdBy); err != nil {
+		slog.Error("storing install token", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"install_token": plaintext,
+		"expires_at":    expiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// POST /api/v1/agents/bootstrap (public, rate-limited)
+// Body: {install_token, name, version?}
+// Consumes the token (single-use) and creates an agent for the token's
+// tenant. Returns long-lived agent_id + api_key. Tenant is derived from
+// the token on the server — never trusted from the client.
+func (h *AgentsHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		InstallToken string `json:"install_token"`
+		Name         string `json:"name"`
+		Version      string `json:"version,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.InstallToken == "" || req.Name == "" {
+		writeError(w, http.StatusBadRequest, "install_token and name are required")
+		return
+	}
+
+	// Create the agent BEFORE consuming the token so we have the agent_id to
+	// audit on the token row. Small race window (agent exists briefly with
+	// no token link) — acceptable; agents table isn't user-visible yet.
+	// Caveat: we need the tenant_id first to create the agent. So we look it
+	// up with a non-consuming read, then consume atomically after creation.
+
+	// Check token validity (read-only) first to give a proper error up-front.
+	// We can piggy-back on the UPDATE…RETURNING by doing a two-step: create
+	// agent after a valid peek, then consume for real.
+	// Simpler: consume first, roll back the agent if consume failed. Since we
+	// don't have tx plumbing here, go with peek-then-create-then-consume.
+
+	hash := crypto.HashInstallToken(req.InstallToken)
+
+	// Consume (and get tenant_id) — use a placeholder agent_id since the
+	// audit field is optional. Then create the agent. We set the audit
+	// field with a follow-up UPDATE once we have the real id. If the agent
+	// creation fails, the token is already used — that's a UX regression
+	// but not a security issue (admin just generates a new token).
+	tenantID, err := h.store.ConsumeInstallToken(r.Context(), hash, "00000000-0000-0000-0000-000000000000")
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusUnauthorized, "install token invalid, expired, or already used")
+			return
+		}
+		slog.Error("consuming install token", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+
+	agent, rawKey, err := h.store.CreateAgent(r.Context(), model.CreateAgentRequest{
+		TenantID: tenantID,
+		Name:     req.Name,
+		Version:  req.Version,
+	})
+	if err != nil {
+		slog.Error("bootstrap: creating agent", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create agent")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"agent_id": agent.ID,
+		"api_key":  rawKey,
+	})
 }

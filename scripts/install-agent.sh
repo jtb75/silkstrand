@@ -1,82 +1,248 @@
 #!/usr/bin/env sh
 # SilkStrand agent installer.
 #
-# Usage:
-#   curl -sSL https://storage.googleapis.com/silkstrand-agent-releases/install.sh | sh
+# One-shot flow:
+#   curl -sSL https://storage.googleapis.com/silkstrand-agent-releases/install.sh | \
+#     sudo sh -s -- \
+#       --token=sst_<install-token> \
+#       --api-url=https://<your DC API host> \
+#       --name=$(hostname) \
+#       --as-service
 #
-# Installs silkstrand-agent to $INSTALL_DIR (default /usr/local/bin) for the
-# detected OS and architecture, verifying the SHA-256 checksum against the
-# file published alongside the binary.
+# What happens:
+#   1. Download + verify the silkstrand-agent binary for this OS/arch.
+#   2. Install to $INSTALL_DIR (default /usr/local/bin).
+#   3. Exchange the install token for long-lived agent credentials.
+#   4. Write /etc/silkstrand/agent.env (mode 0600, root-owned).
+#   5. If --as-service: install a systemd unit (Linux) or launchd plist
+#      (macOS) and start the agent.
 #
-# Env:
-#   INSTALL_DIR   Where to install the binary (default /usr/local/bin)
-#   VERSION       Release tag to pull (default "latest")
-#   RELEASE_URL   Override the GCS base URL (for mirrors / dev)
+# Flags:
+#   --token=TOK            One-time install token from the SilkStrand UI
+#   --api-url=URL          Your DC's HTTPS URL (same host, wss:// is derived)
+#   --name=NAME            Friendly name for this agent (default: hostname)
+#   --as-service           Install + start a system service
+#   --no-service           Skip service install (default)
+#   --install-dir=PATH     Where to install the binary (default /usr/local/bin)
+#   --version=TAG          Release to download (default "latest")
+#   --release-url=URL      Override the GCS base for binaries (dev / mirrors)
 
 set -eu
 
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-VERSION="${VERSION:-latest}"
-RELEASE_URL="${RELEASE_URL:-https://storage.googleapis.com/silkstrand-agent-releases}"
+INSTALL_DIR="/usr/local/bin"
+VERSION="latest"
+RELEASE_URL="https://storage.googleapis.com/silkstrand-agent-releases"
+TOKEN=""
+API_URL=""
+NAME="$(uname -n 2>/dev/null || echo agent)"
+AS_SERVICE=0
+CONFIG_DIR="/etc/silkstrand"
+CONFIG_FILE="/etc/silkstrand/agent.env"
+
+log() { printf '==> %s\n' "$*"; }
+fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --token=*)       TOKEN="${1#*=}" ;;
+            --api-url=*)     API_URL="${1#*=}" ;;
+            --name=*)        NAME="${1#*=}" ;;
+            --install-dir=*) INSTALL_DIR="${1#*=}" ;;
+            --version=*)     VERSION="${1#*=}" ;;
+            --release-url=*) RELEASE_URL="${1#*=}" ;;
+            --as-service)    AS_SERVICE=1 ;;
+            --no-service)    AS_SERVICE=0 ;;
+            -h|--help)       grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+            *) fail "unknown flag: $1" ;;
+        esac
+        shift
+    done
+}
 
 detect_os() {
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     case "$os" in
-        linux|darwin) echo "$os" ;;
-        *) echo "unsupported OS: $os" >&2; exit 1 ;;
+        linux|darwin) printf '%s' "$os" ;;
+        *) fail "unsupported OS: $os" ;;
     esac
 }
 
 detect_arch() {
     arch=$(uname -m)
     case "$arch" in
-        x86_64|amd64) echo "amd64" ;;
-        arm64|aarch64) echo "arm64" ;;
-        *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+        x86_64|amd64) printf 'amd64' ;;
+        arm64|aarch64) printf 'arm64' ;;
+        *) fail "unsupported arch: $arch" ;;
     esac
 }
 
-main() {
-    os=$(detect_os)
-    arch=$(detect_arch)
-    suffix="${os}-${arch}"
+need() { command -v "$1" >/dev/null 2>&1 || fail "'$1' is required"; }
+
+need_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        fail "run this script with sudo (writes to $INSTALL_DIR and $CONFIG_DIR)"
+    fi
+}
+
+download_binary() {
+    suffix="$(detect_os)-$(detect_arch)"
     bin_url="${RELEASE_URL}/${VERSION}/silkstrand-agent-${suffix}"
     sha_url="${bin_url}.sha256"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
 
-    echo "Downloading silkstrand-agent (${suffix}, ${VERSION})…"
+    log "Downloading silkstrand-agent (${suffix}, ${VERSION})"
     curl -fsSL -o "$tmp/silkstrand-agent" "$bin_url"
     curl -fsSL -o "$tmp/silkstrand-agent.sha256" "$sha_url"
 
-    echo "Verifying checksum…"
+    log "Verifying checksum"
     expected=$(cut -d' ' -f1 "$tmp/silkstrand-agent.sha256")
-    actual=$(shasum -a 256 "$tmp/silkstrand-agent" | cut -d' ' -f1)
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$tmp/silkstrand-agent" | cut -d' ' -f1)
+    else
+        actual=$(shasum -a 256 "$tmp/silkstrand-agent" | cut -d' ' -f1)
+    fi
     if [ "$expected" != "$actual" ]; then
-        echo "checksum mismatch: expected $expected, got $actual" >&2
-        exit 1
+        fail "checksum mismatch: expected $expected, got $actual"
     fi
 
     chmod +x "$tmp/silkstrand-agent"
+    install -d "$INSTALL_DIR"
+    mv "$tmp/silkstrand-agent" "$INSTALL_DIR/silkstrand-agent"
+    log "Installed $INSTALL_DIR/silkstrand-agent"
+}
 
-    if [ -w "$INSTALL_DIR" ]; then
-        mv "$tmp/silkstrand-agent" "$INSTALL_DIR/silkstrand-agent"
+bootstrap_agent() {
+    [ -n "$TOKEN" ] || fail "--token is required"
+    [ -n "$API_URL" ] || fail "--api-url is required"
+
+    # POST bootstrap with the install token; server returns agent_id + api_key.
+    log "Registering agent '$NAME'"
+    payload=$(printf '{"install_token":"%s","name":"%s"}' "$TOKEN" "$NAME")
+    resp=$(curl -fsS -X POST \
+        -H 'Content-Type: application/json' \
+        -d "$payload" \
+        "${API_URL}/api/v1/agents/bootstrap")
+
+    # Minimal JSON parse without jq: extract agent_id and api_key by key.
+    agent_id=$(printf '%s' "$resp" | sed -n 's/.*"agent_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    api_key=$(printf '%s' "$resp" | sed -n 's/.*"api_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    [ -n "$agent_id" ] || fail "server did not return agent_id (response: $resp)"
+    [ -n "$api_key" ]  || fail "server did not return api_key"
+
+    # DC WSS URL is the API URL with scheme swapped. Keep the host.
+    ws_url=$(printf '%s' "$API_URL" | sed -e 's,^https://,wss://,' -e 's,^http://,ws://,')
+
+    install -d -m 0700 "$CONFIG_DIR"
+    umask 077
+    cat > "$CONFIG_FILE" <<EOF
+# SilkStrand agent — written by install.sh.
+# mode 0600 — do not share.
+SILKSTRAND_AGENT_ID=$agent_id
+SILKSTRAND_AGENT_KEY=$api_key
+SILKSTRAND_API_URL=$ws_url
+EOF
+    chmod 0600 "$CONFIG_FILE"
+    log "Credentials written to $CONFIG_FILE"
+    log "Agent ID: $agent_id"
+}
+
+install_service_linux() {
+    unit=/etc/systemd/system/silkstrand-agent.service
+    cat > "$unit" <<EOF
+[Unit]
+Description=SilkStrand compliance scanner agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=$CONFIG_FILE
+ExecStart=$INSTALL_DIR/silkstrand-agent
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 0644 "$unit"
+    systemctl daemon-reload
+    systemctl enable --now silkstrand-agent
+    log "silkstrand-agent service started (systemd)"
+    log "Tail logs: journalctl -u silkstrand-agent -f"
+}
+
+install_service_darwin() {
+    plist=/Library/LaunchDaemons/io.silkstrand.agent.plist
+    # launchd can't read an EnvironmentFile, so load the env vars here.
+    # We read the env file at install time and bake into the plist.
+    set -a; . "$CONFIG_FILE"; set +a
+    cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>io.silkstrand.agent</string>
+  <key>ProgramArguments</key>
+    <array><string>$INSTALL_DIR/silkstrand-agent</string></array>
+  <key>EnvironmentVariables</key><dict>
+    <key>SILKSTRAND_AGENT_ID</key><string>${SILKSTRAND_AGENT_ID}</string>
+    <key>SILKSTRAND_AGENT_KEY</key><string>${SILKSTRAND_AGENT_KEY}</string>
+    <key>SILKSTRAND_API_URL</key><string>${SILKSTRAND_API_URL}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/var/log/silkstrand-agent.log</string>
+  <key>StandardErrorPath</key><string>/var/log/silkstrand-agent.log</string>
+</dict></plist>
+EOF
+    chmod 0644 "$plist"
+    launchctl bootout system/io.silkstrand.agent 2>/dev/null || true
+    launchctl bootstrap system "$plist"
+    log "silkstrand-agent service started (launchd)"
+    log "Tail logs: tail -f /var/log/silkstrand-agent.log"
+}
+
+install_service() {
+    case "$(detect_os)" in
+        linux)  install_service_linux ;;
+        darwin) install_service_darwin ;;
+    esac
+}
+
+print_manual_run() {
+    cat <<EOF
+
+Next step (manual run — no service installed):
+
+  sudo sh -c '. $CONFIG_FILE && exec $INSTALL_DIR/silkstrand-agent'
+
+Or re-run install.sh with --as-service to install a system service.
+EOF
+}
+
+main() {
+    parse_args "$@"
+    need curl
+    need_root
+    download_binary
+    if [ -n "$TOKEN" ] || [ -n "$API_URL" ]; then
+        bootstrap_agent
+        if [ "$AS_SERVICE" -eq 1 ]; then
+            install_service
+        else
+            print_manual_run
+        fi
     else
-        echo "Installing to $INSTALL_DIR (requires sudo)"
-        sudo mv "$tmp/silkstrand-agent" "$INSTALL_DIR/silkstrand-agent"
-    fi
+        cat <<EOF
 
-    echo ""
-    echo "Installed: $INSTALL_DIR/silkstrand-agent"
-    echo ""
-    echo "Next step: run with your agent credentials."
-    echo ""
-    echo "  SILKSTRAND_AGENT_ID=<uuid> \\"
-    echo "  SILKSTRAND_AGENT_KEY=<key> \\"
-    echo "  SILKSTRAND_API_URL=wss://<your DC API host> \\"
-    echo "  silkstrand-agent"
-    echo ""
-    echo "Credentials are created from the SilkStrand tenant UI under Agents."
+Binary installed. You still need credentials to run the agent.
+Generate an install token in the SilkStrand UI and re-run:
+
+  curl -sSL ${RELEASE_URL}/install.sh | sudo sh -s -- \\
+    --token=<token> --api-url=<DC url> --name=\$(hostname) --as-service
+EOF
+    fi
 }
 
 main "$@"

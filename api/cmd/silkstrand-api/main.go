@@ -90,6 +90,9 @@ func run() error {
 	// Agent WebSocket (agent auth — key-based, separate from user auth)
 	mux.HandleFunc("GET /ws/agent", agentH.Connect)
 
+	// Agent bootstrap (public; authed by install token in the body)
+	mux.HandleFunc("POST /api/v1/agents/bootstrap", agentsH.Bootstrap)
+
 	// Internal API routes (backoffice access via API key)
 	internalMux := http.NewServeMux()
 	internalMux.HandleFunc("POST /internal/v1/tenants", internalH.CreateTenant)
@@ -121,6 +124,7 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/agents/{id}", agentsH.Get)
 	apiMux.HandleFunc("POST /api/v1/agents/{id}/rotate-key", agentsH.RotateKey)
 	apiMux.HandleFunc("DELETE /api/v1/agents/{id}", agentsH.Delete)
+	apiMux.HandleFunc("POST /api/v1/agents/install-tokens", agentsH.CreateInstallToken)
 	apiMux.HandleFunc("POST /api/v1/scans", scanH.Create)
 	apiMux.HandleFunc("GET /api/v1/scans", scanH.List)
 	apiMux.HandleFunc("GET /api/v1/scans/{id}", scanH.Get)
