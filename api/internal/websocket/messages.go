@@ -10,6 +10,8 @@ const (
 	TypeScanError    = "scan_error"
 	TypeHeartbeat    = "heartbeat"
 	TypeUpgrade      = "upgrade"
+	TypeProbe        = "probe"
+	TypeProbeResult  = "probe_result"
 )
 
 // UpgradePayload tells the agent to fetch a new binary and restart.
@@ -17,6 +19,23 @@ type UpgradePayload struct {
 	Version          string            `json:"version"`
 	BaseURL          string            `json:"base_url"`
 	SHA256ByPlatform map[string]string `json:"sha256_by_platform"`
+}
+
+// ProbePayload validates target connectivity without running a scan.
+type ProbePayload struct {
+	ProbeID          string          `json:"probe_id"`
+	TargetType       string          `json:"target_type"`
+	TargetIdentifier string          `json:"target_identifier"`
+	TargetConfig     json.RawMessage `json:"target_config"`
+	Credentials      json.RawMessage `json:"credentials,omitempty"`
+}
+
+// ProbeResultPayload is the agent's reply to a probe.
+type ProbeResultPayload struct {
+	ProbeID string `json:"probe_id"`
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	Detail  string `json:"detail,omitempty"`
 }
 
 // DirectivePayload is sent from server to agent with scan instructions.

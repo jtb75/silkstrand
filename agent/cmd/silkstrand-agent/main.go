@@ -16,6 +16,7 @@ import (
 	"github.com/jtb75/silkstrand/agent/internal/bootstrap"
 	"github.com/jtb75/silkstrand/agent/internal/cache"
 	"github.com/jtb75/silkstrand/agent/internal/config"
+	"github.com/jtb75/silkstrand/agent/internal/prober"
 	"github.com/jtb75/silkstrand/agent/internal/runner"
 	"github.com/jtb75/silkstrand/agent/internal/tunnel"
 	"github.com/jtb75/silkstrand/agent/internal/updater"
@@ -108,6 +109,16 @@ func main() {
 			defer func() { <-scanSem }()
 			handleDirective(tun, bundleCache, pythonRunner, d)
 		}()
+	}
+
+	// Wire up connectivity probe handler.
+	tun.OnProbe = func(p tunnel.ProbePayload) {
+		slog.Info("probe requested", "probe_id", p.ProbeID, "type", p.TargetType)
+		res := prober.Probe(context.Background(), p.TargetType, p.TargetConfig, p.Credentials)
+		reply, _ := json.Marshal(tunnel.ProbeResultPayload{
+			ProbeID: p.ProbeID, OK: res.OK, Error: res.Error, Detail: res.Detail,
+		})
+		tun.Send(tunnel.Message{Type: tunnel.TypeProbeResult, Payload: reply})
 	}
 
 	// Wire up upgrade handler. On success the process exits; the service

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listTargets, createTarget, deleteTarget, listAgents } from '../api/client';
+import { listTargets, createTarget, deleteTarget, listAgents, probeTarget } from '../api/client';
 import type { Target, CreateTargetRequest, Agent } from '../api/types';
 import CredentialModal from '../components/CredentialModal';
 
@@ -8,6 +8,9 @@ export default function Targets() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [credTarget, setCredTarget] = useState<Target | null>(null);
+  // per-target probe state keyed by target id
+  const [probeBusy, setProbeBusy] = useState<Record<string, boolean>>({});
+  const [probeResult, setProbeResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
   const { data: targets, isLoading, error } = useQuery<Target[]>({
     queryKey: ['targets'],
@@ -62,6 +65,22 @@ export default function Targets() {
   function handleDelete(id: string) {
     if (window.confirm('Delete this target?')) {
       deleteMutation.mutate(id);
+    }
+  }
+
+  async function handleProbe(id: string) {
+    setProbeBusy((p) => ({ ...p, [id]: true }));
+    setProbeResult((p) => ({ ...p, [id]: { ok: false, msg: 'Testing…' } }));
+    try {
+      const r = await probeTarget(id);
+      const msg = r.ok
+        ? (r.detail ? r.detail.slice(0, 80) : 'OK')
+        : (r.error || 'Failed');
+      setProbeResult((p) => ({ ...p, [id]: { ok: r.ok, msg } }));
+    } catch (e) {
+      setProbeResult((p) => ({ ...p, [id]: { ok: false, msg: (e as Error).message } }));
+    } finally {
+      setProbeBusy((p) => ({ ...p, [id]: false }));
     }
   }
 
@@ -166,6 +185,27 @@ export default function Targets() {
                   <td>{agent ? agent.name : (t.agent_id ? t.agent_id.slice(0, 8) + '…' : '-')}</td>
                   <td>{new Date(t.created_at).toLocaleString()}</td>
                   <td style={{ textAlign: 'right' }}>
+                    {probeResult[t.id] && (
+                      <span
+                        style={{
+                          marginRight: 8,
+                          fontSize: 12,
+                          color: probeResult[t.id].ok ? '#065f46' : '#b91c1c',
+                        }}
+                        title={probeResult[t.id].msg}
+                      >
+                        {probeResult[t.id].ok ? '✓ connected' : `✗ ${probeResult[t.id].msg.slice(0, 40)}${probeResult[t.id].msg.length > 40 ? '…' : ''}`}
+                      </span>
+                    )}
+                    <button
+                      className="btn btn-sm"
+                      style={{ marginRight: 6 }}
+                      onClick={() => handleProbe(t.id)}
+                      disabled={probeBusy[t.id]}
+                      title="Send a lightweight connection test through the agent"
+                    >
+                      {probeBusy[t.id] ? 'Testing…' : 'Test'}
+                    </button>
                     <button
                       className="btn btn-sm"
                       style={{ marginRight: 6 }}
