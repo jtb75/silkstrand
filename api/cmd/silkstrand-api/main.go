@@ -69,7 +69,7 @@ func run() error {
 	hub := websocket.NewHub()
 
 	// Wire up agent message handling
-	hub.OnMessage = buildOnMessage(pgStore, ps)
+	hub.OnMessage = buildOnMessage(pgStore, ps, hub)
 
 	// Handlers
 	healthH := handler.NewHealthHandler(pgStore, redisPingFunc(ps))
@@ -78,6 +78,7 @@ func run() error {
 	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey)
 	agentsH := handler.NewAgentsHandler(pgStore, hub, cfg.AgentReleasesURL)
 	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey)
+	probeH := handler.NewProbeHandler(pgStore, hub, cfg.CredentialEncryptionKey)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 
 	// Router
@@ -121,6 +122,7 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/targets/{id}/credential", credsH.Get)
 	apiMux.HandleFunc("PUT /api/v1/targets/{id}/credential", credsH.Put)
 	apiMux.HandleFunc("DELETE /api/v1/targets/{id}/credential", credsH.Delete)
+	apiMux.HandleFunc("POST /api/v1/targets/{id}/probe", probeH.Probe)
 
 	apiMux.HandleFunc("GET /api/v1/agents/downloads", agentsH.Downloads)
 	apiMux.HandleFunc("GET /api/v1/agents", agentsH.List)
@@ -174,7 +176,7 @@ func run() error {
 }
 
 // buildOnMessage returns the hub.OnMessage callback that handles agent messages.
-func buildOnMessage(s store.Store, ps *pubsub.PubSub) func(agentID string, msg websocket.Message) {
+func buildOnMessage(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub) func(agentID string, msg websocket.Message) {
 	return func(agentID string, msg websocket.Message) {
 		ctx := context.Background()
 
@@ -203,6 +205,14 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub) func(agentID string, msg w
 				slog.Error("updating scan to failed", "scan_id", payload.ScanID, "error", err)
 			}
 			slog.Warn("scan failed", "agent_id", agentID, "scan_id", payload.ScanID, "error", payload.Error)
+
+		case websocket.TypeProbeResult:
+			var result websocket.ProbeResultPayload
+			if err := json.Unmarshal(msg.Payload, &result); err != nil {
+				slog.Error("parsing probe_result payload", "agent_id", agentID, "error", err)
+				return
+			}
+			hub.DeliverProbeResult(result)
 
 		case websocket.TypeHeartbeat:
 			var hb websocket.HeartbeatPayload

@@ -34,6 +34,8 @@ type Tunnel struct {
 	OnDirective func(DirectivePayload)
 	// OnUpgrade is called when the server asks the agent to upgrade its binary.
 	OnUpgrade func(UpgradePayload)
+	// OnProbe is called when the server asks for a target connectivity test.
+	OnProbe func(ProbePayload)
 
 	conn   *websocket.Conn
 	sendCh chan Message
@@ -190,6 +192,15 @@ func (t *Tunnel) readLoop(ctx context.Context, conn *websocket.Conn) error {
 			}
 			if t.OnUpgrade != nil {
 				t.OnUpgrade(up)
+			}
+		case TypeProbe:
+			var p ProbePayload
+			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				slog.Error("invalid probe payload", "error", err)
+				continue
+			}
+			if t.OnProbe != nil {
+				t.OnProbe(p)
 			}
 		default:
 			slog.Debug("unhandled message type", "type", msg.Type)

@@ -16,7 +16,27 @@ const (
 	TypeScanError   = "scan_error"
 	TypeHeartbeat   = "heartbeat"
 	TypeUpgrade     = "upgrade"
+	TypeProbe       = "probe"
+	TypeProbeResult = "probe_result"
 )
+
+// ProbePayload is sent from server to agent to validate target connectivity
+// without running a scan.
+type ProbePayload struct {
+	ProbeID          string          `json:"probe_id"`
+	TargetType       string          `json:"target_type"`
+	TargetIdentifier string          `json:"target_identifier"`
+	TargetConfig     json.RawMessage `json:"target_config"`
+	Credentials      json.RawMessage `json:"credentials,omitempty"`
+}
+
+// ProbeResultPayload is the agent's reply.
+type ProbeResultPayload struct {
+	ProbeID string `json:"probe_id"`
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	Detail  string `json:"detail,omitempty"` // e.g. "PostgreSQL 16.13"
+}
 
 // UpgradePayload instructs the agent to download a new binary version,
 // swap in place, and exit so the service manager restarts it.

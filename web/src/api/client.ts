@@ -136,3 +136,8 @@ export const putTargetCredential = (targetId: string, type: string, data: Record
   });
 export const deleteTargetCredential = (targetId: string) =>
   request<void>(`/api/v1/targets/${targetId}/credential`, { method: 'DELETE' });
+export const probeTarget = (targetId: string) =>
+  request<{ ok: boolean; error?: string; detail?: string }>(
+    `/api/v1/targets/${targetId}/probe`,
+    { method: 'POST' },
+  );

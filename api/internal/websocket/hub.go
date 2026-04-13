@@ -57,13 +57,52 @@ type Hub struct {
 	mu    sync.RWMutex
 	conns map[string]*websocket.Conn // agent_id → connection
 
+	// probeWaiters holds per-probe_id channels that probe HTTP handlers
+	// block on until the agent replies with a probe_result. Buffered 1 so
+	// the read loop never blocks if the handler has already given up.
+	probeMu      sync.Mutex
+	probeWaiters map[string]chan ProbeResultPayload
+
 	// OnMessage is called when an agent sends a message.
 	OnMessage func(agentID string, msg Message)
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		conns: make(map[string]*websocket.Conn),
+		conns:        make(map[string]*websocket.Conn),
+		probeWaiters: make(map[string]chan ProbeResultPayload),
+	}
+}
+
+// RegisterProbeWaiter reserves a channel keyed by probe_id. The caller
+// must call ReleaseProbeWaiter when done (defer it).
+func (h *Hub) RegisterProbeWaiter(probeID string) chan ProbeResultPayload {
+	ch := make(chan ProbeResultPayload, 1)
+	h.probeMu.Lock()
+	h.probeWaiters[probeID] = ch
+	h.probeMu.Unlock()
+	return ch
+}
+
+// ReleaseProbeWaiter drops the waiter for probe_id.
+func (h *Hub) ReleaseProbeWaiter(probeID string) {
+	h.probeMu.Lock()
+	delete(h.probeWaiters, probeID)
+	h.probeMu.Unlock()
+}
+
+// DeliverProbeResult forwards a probe_result message to the waiting handler.
+// Silently drops the result if no handler is waiting (timeout case).
+func (h *Hub) DeliverProbeResult(result ProbeResultPayload) {
+	h.probeMu.Lock()
+	ch, ok := h.probeWaiters[result.ProbeID]
+	h.probeMu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case ch <- result:
+	default:
 	}
 }
 
