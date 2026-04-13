@@ -114,7 +114,7 @@ download_binary() {
     chmod +x "$tmp/silkstrand-agent"
     install -d "$INSTALL_DIR"
     mv "$tmp/silkstrand-agent" "$INSTALL_DIR/silkstrand-agent"
-    log "Installed $INSTALL_DIR/silkstrand-agent"
+    log "Downloaded silkstrand-agent → $INSTALL_DIR/silkstrand-agent"
 }
 
 bootstrap_agent() {
@@ -298,9 +298,17 @@ cleanup_partial_install() {
     # EXIT trap when the script exits non-zero mid-install.
     [ "${INSTALL_SUCCEEDED:-0}" -eq 1 ] && return 0
     [ -z "${INSTALL_STARTED:-}" ] && return 0
-    printf 'error: install failed — rolling back partial install\n' >&2
-    rm -f "$INSTALL_DIR/silkstrand-agent" 2>/dev/null || true
-    rm -rf "$CONFIG_DIR" 2>/dev/null || true
+    printf '\n' >&2
+    printf -- '--- Install failed — cleaning up ---\n' >&2
+    if [ -f "$INSTALL_DIR/silkstrand-agent" ]; then
+        rm -f "$INSTALL_DIR/silkstrand-agent" 2>/dev/null || true
+        printf 'removed %s/silkstrand-agent\n' "$INSTALL_DIR" >&2
+    fi
+    if [ -d "$CONFIG_DIR" ]; then
+        rm -rf "$CONFIG_DIR" 2>/dev/null || true
+        printf 'removed %s\n' "$CONFIG_DIR" >&2
+    fi
+    printf 'Host is clean. Fix the error above and re-run the install command.\n' >&2
 }
 
 main() {
@@ -334,6 +342,7 @@ Generate an install token in the SilkStrand UI and re-run:
 EOF
     fi
     INSTALL_SUCCEEDED=1
+    log "Install complete."
 }
 
 main "$@"
