@@ -67,15 +67,40 @@ type Bundle struct {
 }
 
 type Target struct {
-	ID          string          `json:"id"`
-	TenantID    string          `json:"tenant_id"`
-	AgentID     *string         `json:"agent_id,omitempty"`
-	Type        string          `json:"type"`
-	Identifier  string          `json:"identifier"`
-	Config      json.RawMessage `json:"config"`
-	Environment *string         `json:"environment,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	ID                 string          `json:"id"`
+	TenantID           string          `json:"tenant_id"`
+	AgentID            *string         `json:"agent_id,omitempty"`
+	Type               string          `json:"type"`
+	Identifier         string          `json:"identifier"`
+	Config             json.RawMessage `json:"config"`
+	Environment        *string         `json:"environment,omitempty"`
+	CredentialSourceID *string         `json:"credential_source_id,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+}
+
+// CredentialSource is the pluggable resolver binding from a target to a
+// credential. C0 introduces only the `static` type, which wraps today's
+// encrypted-at-rest credentials. See docs/adr/004-credential-resolver.md.
+type CredentialSource struct {
+	ID        string          `json:"id"`
+	TenantID  string          `json:"tenant_id"`
+	Type      string          `json:"type"`
+	Config    json.RawMessage `json:"config"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+const (
+	CredentialSourceTypeStatic = "static"
+)
+
+// StaticCredentialConfig is the shape of CredentialSource.Config when
+// Type == "static". `EncryptedData` is a base64-encoded AES-256-GCM blob
+// using the same key as the legacy credentials table.
+type StaticCredentialConfig struct {
+	Type          string `json:"type"`
+	EncryptedData string `json:"encrypted_data"`
 }
 
 type CreateTargetRequest struct {

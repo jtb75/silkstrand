@@ -507,6 +507,112 @@ func (s *PostgresStore) CreateCredential(ctx context.Context, tenantID, targetID
 	return id, nil
 }
 
+// --- Credential Sources (ADR 004 C0) ---
+//
+// These methods back the future refactor of the /api/v1/targets/{id}/credential
+// surface onto a pluggable credential_sources table. No handler calls them
+// yet; they land additively so a follow-up PR can swap the read/write path
+// without schema changes.
+
+// CreateCredentialSource inserts a credential_sources row and returns its id.
+func (s *PostgresStore) CreateCredentialSource(ctx context.Context, tenantID, srcType string, config json.RawMessage) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO credential_sources (tenant_id, type, config)
+		 VALUES ($1, $2, $3) RETURNING id`,
+		tenantID, srcType, config).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("creating credential source: %w", err)
+	}
+	return id, nil
+}
+
+// GetCredentialSource returns a credential_sources row by id, or (nil, nil)
+// if not found.
+func (s *PostgresStore) GetCredentialSource(ctx context.Context, id string) (*model.CredentialSource, error) {
+	var cs model.CredentialSource
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, type, config, created_at, updated_at
+		 FROM credential_sources WHERE id = $1`, id).
+		Scan(&cs.ID, &cs.TenantID, &cs.Type, &cs.Config, &cs.CreatedAt, &cs.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting credential source: %w", err)
+	}
+	return &cs, nil
+}
+
+// GetCredentialSourceByTarget resolves the credential source linked to a
+// target via targets.credential_source_id. Returns (nil, nil) if the target
+// has no linked source.
+func (s *PostgresStore) GetCredentialSourceByTarget(ctx context.Context, targetID string) (*model.CredentialSource, error) {
+	var cs model.CredentialSource
+	err := s.db.QueryRowContext(ctx,
+		`SELECT cs.id, cs.tenant_id, cs.type, cs.config, cs.created_at, cs.updated_at
+		 FROM credential_sources cs
+		 JOIN targets t ON t.credential_source_id = cs.id
+		 WHERE t.id = $1`, targetID).
+		Scan(&cs.ID, &cs.TenantID, &cs.Type, &cs.Config, &cs.CreatedAt, &cs.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting credential source by target: %w", err)
+	}
+	return &cs, nil
+}
+
+// UpdateCredentialSourceConfig replaces the config JSON of an existing
+// source and bumps updated_at.
+func (s *PostgresStore) UpdateCredentialSourceConfig(ctx context.Context, id string, config json.RawMessage) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE credential_sources SET config = $1, updated_at = NOW() WHERE id = $2`,
+		config, id)
+	if err != nil {
+		return fmt.Errorf("updating credential source: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeleteCredentialSource removes a credential_sources row. Any targets
+// still referencing it have their FK nulled by ON DELETE SET NULL.
+func (s *PostgresStore) DeleteCredentialSource(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM credential_sources WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("deleting credential source: %w", err)
+	}
+	return nil
+}
+
+// SetTargetCredentialSource points a target at a credential source.
+func (s *PostgresStore) SetTargetCredentialSource(ctx context.Context, targetID, sourceID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE targets SET credential_source_id = $1, updated_at = NOW() WHERE id = $2`,
+		sourceID, targetID)
+	if err != nil {
+		return fmt.Errorf("setting target credential source: %w", err)
+	}
+	return nil
+}
+
+// ClearTargetCredentialSource unlinks a target from any credential source.
+func (s *PostgresStore) ClearTargetCredentialSource(ctx context.Context, targetID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE targets SET credential_source_id = NULL, updated_at = NOW() WHERE id = $1`,
+		targetID)
+	if err != nil {
+		return fmt.Errorf("clearing target credential source: %w", err)
+	}
+	return nil
+}
+
 // --- Scans (internal) ---
 
 func (s *PostgresStore) FailRunningScansForAgent(ctx context.Context, agentID string) (int, error) {
