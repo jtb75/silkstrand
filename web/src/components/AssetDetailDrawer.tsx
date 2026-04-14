@@ -56,11 +56,15 @@ function AssetBody({ asset, events }: { asset: DiscoveredAsset; events: import('
           <dt>first seen</dt><dd>{new Date(asset.first_seen).toLocaleString()}</dd>
           <dt>last seen</dt><dd>{new Date(asset.last_seen).toLocaleString()}</dd>
           <dt>scan policy</dt>
-          <dd><AllowlistBadge status="unknown" /></dd>
+          <dd><AllowlistBadge status={asset.allowlist_status} /></dd>
         </dl>
       </section>
       {suggestions.length > 0 && (
-        <SuggestionsSection assetId={asset.id} suggestions={suggestions} />
+        <SuggestionsSection
+          assetId={asset.id}
+          suggestions={suggestions}
+          outOfPolicy={asset.allowlist_status === 'out_of_policy'}
+        />
       )}
       {techs.length > 0 && (
         <section>
@@ -96,7 +100,15 @@ function AssetBody({ asset, events }: { asset: DiscoveredAsset; events: import('
   );
 }
 
-function SuggestionsSection({ assetId, suggestions }: { assetId: string; suggestions: AssetSuggestion[] }) {
+function SuggestionsSection({
+  assetId,
+  suggestions,
+  outOfPolicy,
+}: {
+  assetId: string;
+  suggestions: AssetSuggestion[];
+  outOfPolicy: boolean;
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const promote = useMutation({
@@ -105,12 +117,20 @@ function SuggestionsSection({ assetId, suggestions }: { assetId: string; suggest
       queryClient.invalidateQueries({ queryKey: ['asset', assetId] });
       queryClient.invalidateQueries({ queryKey: ['assets'] });
       navigate(`/targets`);
-      void resp; // trigger nav; user can then set credentials
+      void resp;
     },
   });
+  const blockedTitle = outOfPolicy
+    ? "This asset is outside the agent's scan allowlist. Update /etc/silkstrand/scan-allowlist.yaml on the agent before promoting."
+    : undefined;
   return (
     <section className="suggestion-section">
       <h3>Suggestions</h3>
+      {outOfPolicy && (
+        <p className="muted" style={{ marginTop: 0 }}>
+          Promotion is disabled — this asset is out of the agent's scan allowlist.
+        </p>
+      )}
       <ul className="suggestion-list">
         {suggestions.map((s) => (
           <li key={`${s.rule_name}:${s.bundle_id}`} className="suggestion">
@@ -121,7 +141,8 @@ function SuggestionsSection({ assetId, suggestions }: { assetId: string; suggest
             <button
               type="button"
               className="btn btn-sm"
-              disabled={promote.isPending}
+              disabled={promote.isPending || outOfPolicy}
+              title={blockedTitle}
               onClick={() => promote.mutate(s.bundle_id)}
             >
               {promote.isPending ? 'Promoting…' : 'Approve'}

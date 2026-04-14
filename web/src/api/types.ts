@@ -87,9 +87,13 @@ export interface DiscoveredAsset {
   last_scan_id?: string;
   missed_scan_count: number;
   metadata?: { suggested?: AssetSuggestion[]; [k: string]: unknown };
+  allowlist_status: AllowlistStatus;
+  allowlist_checked_at?: string;
   created_at: string;
   updated_at: string;
 }
+
+export type AllowlistStatus = 'allowlisted' | 'out_of_policy' | 'unknown';
 
 // Correlation rule (ADR 003 R1b)
 export interface CorrelationRuleBody {
