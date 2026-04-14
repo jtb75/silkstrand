@@ -247,6 +247,9 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub) func(a
 			if err := s.UpdateScanStatus(ctx, payload.ScanID, model.ScanStatusFailed); err != nil {
 				slog.Error("updating scan to failed", "scan_id", payload.ScanID, "error", err)
 			}
+			if err := s.OnChildScanTerminal(ctx, payload.ScanID); err != nil {
+				slog.Warn("one-shot rollup on scan_error", "scan_id", payload.ScanID, "error", err)
+			}
 			slog.Warn("scan failed", "agent_id", agentID, "scan_id", payload.ScanID, "error", payload.Error)
 
 		case websocket.TypeProbeResult:
@@ -348,6 +351,9 @@ func handleScanResults(ctx context.Context, s store.Store, ps *pubsub.PubSub, ag
 		if err := s.UpdateScanStatus(ctx, msg.ScanID, model.ScanStatusFailed); err != nil {
 			slog.Error("updating scan to failed", "scan_id", msg.ScanID, "error", err)
 		}
+		if err := s.OnChildScanTerminal(ctx, msg.ScanID); err != nil {
+			slog.Warn("one-shot rollup on results-store-fail", "scan_id", msg.ScanID, "error", err)
+		}
 		return
 	}
 
@@ -355,6 +361,9 @@ func handleScanResults(ctx context.Context, s store.Store, ps *pubsub.PubSub, ag
 	if err := s.UpdateScanStatus(ctx, msg.ScanID, model.ScanStatusCompleted); err != nil {
 		slog.Error("updating scan to completed", "scan_id", msg.ScanID, "error", err)
 		return
+	}
+	if err := s.OnChildScanTerminal(ctx, msg.ScanID); err != nil {
+		slog.Warn("one-shot rollup on scan_results", "scan_id", msg.ScanID, "error", err)
 	}
 
 	// Publish progress for real-time UI

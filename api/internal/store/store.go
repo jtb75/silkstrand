@@ -149,6 +149,12 @@ type Store interface {
 	UpdateOneShotScanProgress(ctx context.Context, id string, totalTargets int, status string) error
 	CreateScanForOneShot(ctx context.Context, tenantID, agentID, targetID, bundleID, parentID string) (*model.Scan, error)
 
+	// OnChildScanTerminal increments the parent one-shot's
+	// completed_targets counter and transitions its status when the
+	// last child finishes. No-op for scans without a parent. Called
+	// from every scan terminal path (results + error).
+	OnChildScanTerminal(ctx context.Context, scanID string) error
+
 	// Notification channels + deliveries (ADR 003 R1c / D12).
 	ListNotificationChannels(ctx context.Context) ([]model.NotificationChannel, error)
 	GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error)
