@@ -50,7 +50,7 @@ export default function Dashboard() {
                   <StatusBadge status={scan.status} />
                 </td>
                 <td>
-                  <Link to={`/scans/${scan.id}`}>{scan.target_id.slice(0, 8)}...</Link>
+                  <Link to={`/scans/${scan.id}`}>{(scan.target_id ?? scan.id).slice(0, 8)}...</Link>
                 </td>
                 <td>{scan.bundle_id}</td>
                 <td>{new Date(scan.created_at).toLocaleString()}</td>

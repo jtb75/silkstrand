@@ -183,7 +183,7 @@ export default function Scans() {
                 <td>
                   <StatusBadge status={scan.status} />
                 </td>
-                <td>{scan.target_id.slice(0, 8)}...</td>
+                <td>{scan.target_id ? `${scan.target_id.slice(0, 8)}...` : '-'}</td>
                 <td>{scan.bundle_id}</td>
                 <td>{new Date(scan.created_at).toLocaleString()}</td>
                 <td>
