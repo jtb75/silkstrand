@@ -174,20 +174,10 @@ func (h *InternalHandler) CreateCredential(w http.ResponseWriter, r *http.Reques
 		dataToStore = req.Data
 	}
 
-	// Dual-write: new credential_sources surface plus legacy credentials
-	// table, per ADR 004 C0. The returned `id` is the legacy row's id,
-	// preserved for API shape stability.
 	if err := h.store.UpsertStaticCredentialSource(r.Context(), req.TenantID, req.TargetID, req.Type, dataToStore); err != nil {
 		slog.Error("creating credential source", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create credential")
 		return
 	}
-	id, err := h.store.CreateCredential(r.Context(), req.TenantID, req.TargetID, req.Type, dataToStore)
-	if err != nil {
-		slog.Error("creating legacy credential", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create credential")
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
+	w.WriteHeader(http.StatusCreated)
 }
