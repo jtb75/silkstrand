@@ -10,14 +10,16 @@ type Message struct {
 
 // Message type constants matching the API's websocket protocol.
 const (
-	TypeDirective   = "directive"
-	TypeScanStarted = "scan_started"
-	TypeScanResults = "scan_results"
-	TypeScanError   = "scan_error"
-	TypeHeartbeat   = "heartbeat"
-	TypeUpgrade     = "upgrade"
-	TypeProbe       = "probe"
-	TypeProbeResult = "probe_result"
+	TypeDirective          = "directive"
+	TypeScanStarted        = "scan_started"
+	TypeScanResults        = "scan_results"
+	TypeScanError          = "scan_error"
+	TypeHeartbeat          = "heartbeat"
+	TypeUpgrade            = "upgrade"
+	TypeProbe              = "probe"
+	TypeProbeResult        = "probe_result"
+	TypeAssetDiscovered    = "asset_discovered"   // ADR 003 R1a
+	TypeDiscoveryCompleted = "discovery_completed" // ADR 003 R1a
 )
 
 // ProbePayload is sent from server to agent to validate target connectivity
@@ -50,6 +52,7 @@ type UpgradePayload struct {
 // DirectivePayload is received from the server with scan instructions.
 type DirectivePayload struct {
 	ScanID           string          `json:"scan_id"`
+	ScanType         string          `json:"scan_type,omitempty"` // "compliance" (default) | "discovery"
 	BundleID         string          `json:"bundle_id"`
 	BundleName       string          `json:"bundle_name"`
 	BundleVersion    string          `json:"bundle_version"`
@@ -59,6 +62,34 @@ type DirectivePayload struct {
 	TargetIdentifier string          `json:"target_identifier"`
 	TargetConfig     json.RawMessage `json:"target_config"`
 	Credentials      json.RawMessage `json:"credentials,omitempty"`
+}
+
+// AssetDiscoveredPayload is sent during a discovery scan with a batch of
+// findings. Process inline server-side per ADR 003 D9.
+type AssetDiscoveredPayload struct {
+	ScanID   string                  `json:"scan_id"`
+	BatchSeq int                     `json:"batch_seq,omitempty"`
+	Stage    string                  `json:"stage,omitempty"` // naabu|httpx|nuclei
+	Assets   []DiscoveredAssetUpsert `json:"assets"`
+}
+
+// DiscoveredAssetUpsert is one normalized asset finding.
+type DiscoveredAssetUpsert struct {
+	IP           string          `json:"ip"`
+	Port         int             `json:"port"`
+	Hostname     string          `json:"hostname,omitempty"`
+	Service      string          `json:"service,omitempty"`
+	Version      string          `json:"version,omitempty"`
+	Technologies json.RawMessage `json:"technologies,omitempty"`
+	CVEs         json.RawMessage `json:"cves,omitempty"`
+	ObservedAt   string          `json:"observed_at"`
+}
+
+// DiscoveryCompletedPayload is the terminal message for a discovery scan.
+type DiscoveryCompletedPayload struct {
+	ScanID       string `json:"scan_id"`
+	AssetsFound  int    `json:"assets_found"`
+	HostsScanned int    `json:"hosts_scanned"`
 }
 
 // ScanStartedPayload is sent to the server when scan execution begins.

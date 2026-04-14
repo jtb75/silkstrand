@@ -111,7 +111,11 @@ func main() {
 
 		go func() {
 			defer func() { <-scanSem }()
-			handleDirective(tun, bundleCache, pythonRunner, d)
+			if d.ScanType == "discovery" {
+				handleDiscoveryDirective(tun, d)
+			} else {
+				handleDirective(tun, bundleCache, pythonRunner, d)
+			}
 		}()
 	}
 
@@ -268,3 +272,45 @@ func runUninstall() error {
 }
 
 func printlnSafe(s string) { _, _ = os.Stdout.WriteString(s + "\n") }
+
+// handleDiscoveryDirective dispatches a discovery scan: walks the
+// naabu → httpx → nuclei pipeline, streams asset_discovered batches
+// over the tunnel, and emits a terminal discovery_completed.
+//
+// Bypasses the bundle cache — discovery directives carry no bundle
+// content (the recon framework lives in this binary). The bundle_id /
+// bundle_name on the directive are nominal so existing audit / scan
+// rows have something to point at.
+func handleDiscoveryDirective(tun *tunnel.Tunnel, d tunnel.DirectivePayload) {
+	slog.Info("received discovery directive",
+		"scan_id", d.ScanID,
+		"target", d.TargetIdentifier,
+		"target_type", d.TargetType,
+	)
+
+	emit := func(msgType string, payload any) error {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		tun.Send(tunnel.Message{Type: msgType, Payload: raw})
+		return nil
+	}
+
+	ctx := context.Background()
+	res, err := runner.ReconRun(ctx, d, emit)
+	if err != nil {
+		slog.Error("discovery failed", "scan_id", d.ScanID, "error", err)
+		sendError(tun, d.ScanID, "discovery: "+err.Error())
+		return
+	}
+
+	completed, _ := json.Marshal(tunnel.DiscoveryCompletedPayload{
+		ScanID:       d.ScanID,
+		AssetsFound:  res.AssetsFound,
+		HostsScanned: res.HostsScanned,
+	})
+	tun.Send(tunnel.Message{Type: tunnel.TypeDiscoveryCompleted, Payload: completed})
+	slog.Info("discovery completed", "scan_id", d.ScanID,
+		"assets_found", res.AssetsFound, "hosts_scanned", res.HostsScanned)
+}
