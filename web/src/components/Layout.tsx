@@ -17,6 +17,8 @@ export default function Layout() {
           <NavLink to="/targets">Targets</NavLink>
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/scans">Scans</NavLink>
+          {isAdmin && <NavLink to="/rules">Rules</NavLink>}
+          {isAdmin && <NavLink to="/channels">Channels</NavLink>}
           {isAdmin && <NavLink to="/team">Team</NavLink>}
           <NavLink to="/settings">Settings</NavLink>
         </nav>

@@ -155,6 +155,61 @@ export const promoteAsset = (id: string, bundleId: string) =>
     body: JSON.stringify({ bundle_id: bundleId }),
   });
 
+// Correlation rules (ADR 003 R1b)
+import type { CorrelationRule, CorrelationRuleBody } from './types';
+export const listCorrelationRules = () =>
+  request<CorrelationRule[]>('/api/v1/correlation-rules');
+
+export interface UpsertRuleRequest {
+  name: string;
+  trigger: 'asset_discovered' | 'asset_event';
+  enabled?: boolean;
+  event_type_filter?: string;
+  body: CorrelationRuleBody;
+}
+
+export const createCorrelationRule = (req: UpsertRuleRequest) =>
+  request<CorrelationRule>('/api/v1/correlation-rules', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+
+export const updateCorrelationRule = (id: string, req: UpsertRuleRequest) =>
+  request<CorrelationRule>(`/api/v1/correlation-rules/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+
+export const deleteCorrelationRule = (id: string) =>
+  request<void>(`/api/v1/correlation-rules/${id}`, { method: 'DELETE' });
+
+// Notification channels (ADR 003 R1c-a / D12)
+import type { NotificationChannel } from './types';
+export const listNotificationChannels = () =>
+  request<NotificationChannel[]>('/api/v1/notification-channels');
+
+export interface UpsertChannelRequest {
+  name: string;
+  type: 'webhook' | 'slack' | 'email' | 'pagerduty';
+  enabled?: boolean;
+  config: Record<string, unknown>;
+}
+
+export const createNotificationChannel = (req: UpsertChannelRequest) =>
+  request<NotificationChannel>('/api/v1/notification-channels', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+
+export const updateNotificationChannel = (id: string, req: UpsertChannelRequest) =>
+  request<NotificationChannel>(`/api/v1/notification-channels/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+
+export const deleteNotificationChannel = (id: string) =>
+  request<void>(`/api/v1/notification-channels/${id}`, { method: 'DELETE' });
+
 // Agents
 export const listAgents = () => request<Agent[]>('/api/v1/agents');
 export const createAgent = (name: string, version?: string) =>
