@@ -98,10 +98,24 @@ export const deleteTarget = (id: string) =>
 
 // Scans
 export const listScans = () => request<Scan[]>('/api/v1/scans');
-export const createScan = (targetId: string, bundleId: string) =>
+// Well-known id of the global "discovery" bundle row seeded by migration
+// 015. scan_type=discovery ignores the bundle contents on the agent side
+// but scans.bundle_id is NOT NULL, so the UI always passes this id for
+// discovery launches.
+export const DISCOVERY_BUNDLE_ID = '11111111-1111-1111-1111-111111111111';
+
+export const createScan = (
+  targetId: string,
+  bundleId: string,
+  scanType?: 'compliance' | 'discovery',
+) =>
   request<Scan>('/api/v1/scans', {
     method: 'POST',
-    body: JSON.stringify({ target_id: targetId, bundle_id: bundleId }),
+    body: JSON.stringify({
+      target_id: targetId,
+      bundle_id: bundleId,
+      ...(scanType ? { scan_type: scanType } : {}),
+    }),
   });
 export const getScan = (id: string) => request<Scan>(`/api/v1/scans/${id}`);
 export const deleteScan = (id: string) =>
