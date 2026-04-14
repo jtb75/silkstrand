@@ -1881,3 +1881,98 @@ func (s *PostgresStore) ListAllAssetsForTenant(ctx context.Context, tenantID str
 	}
 	return out, rows.Err()
 }
+
+// --- ADR 003 R1c-c: one-shot scans ---
+
+const oneShotSelectCols = `id, tenant_id, bundle_id, asset_set_id, inline_predicate,
+		max_concurrency, rate_limit_pps, total_targets, completed_targets, status,
+		triggered_by, created_at, dispatched_at, completed_at`
+
+func scanOneShot(row interface {
+	Scan(...interface{}) error
+}, o *model.OneShotScan) error {
+	return row.Scan(&o.ID, &o.TenantID, &o.BundleID, &o.AssetSetID, &o.InlinePredicate,
+		&o.MaxConcurrency, &o.RateLimitPPS, &o.TotalTargets, &o.CompletedTargets, &o.Status,
+		&o.TriggeredBy, &o.CreatedAt, &o.DispatchedAt, &o.CompletedAt)
+}
+
+func (s *PostgresStore) ListOneShotScans(ctx context.Context) ([]model.OneShotScan, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+oneShotSelectCols+` FROM one_shot_scans
+		 WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list one-shot scans: %w", err)
+	}
+	defer rows.Close()
+	var out []model.OneShotScan
+	for rows.Next() {
+		var o model.OneShotScan
+		if err := scanOneShot(rows, &o); err != nil {
+			return nil, fmt.Errorf("scan one-shot: %w", err)
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetOneShotScan(ctx context.Context, id string) (*model.OneShotScan, error) {
+	tenantID := TenantID(ctx)
+	var o model.OneShotScan
+	err := scanOneShot(s.db.QueryRowContext(ctx,
+		`SELECT `+oneShotSelectCols+` FROM one_shot_scans WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID), &o)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get one-shot: %w", err)
+	}
+	return &o, nil
+}
+
+func (s *PostgresStore) CreateOneShotScan(ctx context.Context, in model.OneShotScan) (*model.OneShotScan, error) {
+	var out model.OneShotScan
+	err := scanOneShot(s.db.QueryRowContext(ctx,
+		`INSERT INTO one_shot_scans
+		   (tenant_id, bundle_id, asset_set_id, inline_predicate, max_concurrency,
+		    rate_limit_pps, status, triggered_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 RETURNING `+oneShotSelectCols,
+		in.TenantID, in.BundleID, in.AssetSetID, in.InlinePredicate,
+		in.MaxConcurrency, in.RateLimitPPS, in.Status, in.TriggeredBy), &out)
+	if err != nil {
+		return nil, fmt.Errorf("create one-shot: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) UpdateOneShotScanProgress(ctx context.Context, id string, totalTargets int, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE one_shot_scans
+		    SET total_targets = $1, status = $2, dispatched_at = NOW()
+		  WHERE id = $3`,
+		totalTargets, status, id)
+	if err != nil {
+		return fmt.Errorf("update one-shot progress: %w", err)
+	}
+	return nil
+}
+
+// CreateScanForOneShot inserts a scan row bound to a one-shot parent.
+// The normal scan dispatch path (Redis pub/sub → agent WSS) publishes
+// the directive after the row is created by the one-shot handler.
+func (s *PostgresStore) CreateScanForOneShot(ctx context.Context, tenantID, agentID, targetID, bundleID, parentID string) (*model.Scan, error) {
+	var sc model.Scan
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO scans (tenant_id, agent_id, target_id, bundle_id, scan_type, status, parent_one_shot_id)
+		 VALUES ($1, $2, $3, $4, 'compliance', 'pending', $5)
+		 RETURNING id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at`,
+		tenantID, agentID, targetID, bundleID, parentID).
+		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType,
+			&sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("create one-shot child scan: %w", err)
+	}
+	return &sc, nil
+}

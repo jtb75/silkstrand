@@ -87,8 +87,10 @@ func run() error {
 	rulesH := handler.NewCorrelationRulesHandler(pgStore)
 	notifDispatcher := notify.New(pgStore, cfg.CredentialEncryptionKey)
 	globalNotifier = notifDispatcher // exposed for runRuleActions (see bottom of file)
+	globalPubSub = ps                // exposed for rule-driven one-shot dispatch
 	channelsH := handler.NewNotificationChannelsHandler(pgStore, cfg.CredentialEncryptionKey)
 	assetSetsH := handler.NewAssetSetsHandler(pgStore)
+	oneShotH := handler.NewOneShotScanHandler(pgStore, ps)
 
 	// Router
 	mux := http.NewServeMux()
@@ -172,6 +174,10 @@ func run() error {
 	apiMux.HandleFunc("PUT /api/v1/asset-sets/{id}", assetSetsH.Update)
 	apiMux.HandleFunc("DELETE /api/v1/asset-sets/{id}", assetSetsH.Delete)
 	apiMux.HandleFunc("GET /api/v1/asset-sets/{id}/preview", assetSetsH.Preview)
+
+	apiMux.HandleFunc("POST /api/v1/one-shot-scans", oneShotH.Create)
+	apiMux.HandleFunc("GET /api/v1/one-shot-scans", oneShotH.List)
+	apiMux.HandleFunc("GET /api/v1/one-shot-scans/{id}", oneShotH.Get)
 
 	// Apply auth + tenant middleware to API routes
 	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))
@@ -511,6 +517,26 @@ func runRuleActions(ctx context.Context, s store.Store, ruleSet []model.Correlat
 				"rule", act.RuleName, "action", act.Type,
 				"asset", asset.ID, "channel", channel)
 
+		case rules.ActionRunOneShotScan:
+			if globalPubSub == nil {
+				continue
+			}
+			bundleID := act.BundleID()
+			agentID, _ := act.Params["agent_id"].(string)
+			if bundleID == "" || agentID == "" {
+				slog.Warn("run_one_shot_scan missing bundle_id or agent_id",
+					"rule", act.RuleName, "asset", asset.ID)
+				continue
+			}
+			if err := handler.TriggerOneShotForAsset(ctx, s, globalPubSub,
+				asset.TenantID, agentID, bundleID, asset, act.RuleName); err != nil {
+				slog.Warn("run_one_shot_scan dispatch", "rule", act.RuleName, "asset", asset.ID, "error", err)
+			} else {
+				slog.Info("rule.fired",
+					"rule", act.RuleName, "action", act.Type,
+					"asset", asset.ID, "bundle", bundleID)
+			}
+
 		case rules.ActionAutoCreateTarget:
 			bundleID := act.BundleID()
 			if bundleID == "" {
@@ -632,3 +658,8 @@ func mustJSON(v any) json.RawMessage {
 // There is exactly one Dispatcher per process; it's safe to stash
 // in a package var.
 var globalNotifier *notify.Dispatcher
+
+// globalPubSub mirrors globalNotifier — exposes Redis dispatch to the
+// rule action for one-shot scans (which creates per-asset scans and
+// must publish directives).
+var globalPubSub *pubsub.PubSub
