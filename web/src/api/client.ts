@@ -289,6 +289,19 @@ export const upgradeAgent = (id: string, version?: string) =>
   });
 export const getAgentDownloads = () =>
   request<AgentDownloads>('/api/v1/agents/downloads');
+
+export interface AgentAllowlist {
+  agent_id: string;
+  snapshot_hash: string;
+  allow: string[];
+  deny: string[];
+  rate_limit_pps: number;
+  reported_at: string;
+  updated_at: string;
+}
+
+export const getAgentAllowlist = (id: string) =>
+  request<AgentAllowlist>(`/api/v1/agents/${id}/allowlist`);
 export const createInstallToken = () =>
   request<{ install_token: string; expires_at: string }>('/api/v1/agents/install-tokens', {
     method: 'POST',

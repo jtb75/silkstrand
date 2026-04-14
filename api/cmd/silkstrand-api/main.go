@@ -143,6 +143,7 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/agents", agentsH.List)
 	apiMux.HandleFunc("POST /api/v1/agents", agentsH.Create)
 	apiMux.HandleFunc("GET /api/v1/agents/{id}", agentsH.Get)
+	apiMux.HandleFunc("GET /api/v1/agents/{id}/allowlist", agentsH.GetAllowlist)
 	apiMux.HandleFunc("POST /api/v1/agents/{id}/rotate-key", agentsH.RotateKey)
 	apiMux.HandleFunc("POST /api/v1/agents/{id}/upgrade", agentsH.Upgrade)
 	apiMux.HandleFunc("DELETE /api/v1/agents/{id}", agentsH.Delete)

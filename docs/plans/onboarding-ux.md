@@ -36,8 +36,8 @@ Ongoing, the same admin expects to:
 | 2a | Generate install token | ✅ | ✅ | Agents page "Install a new agent" panel — already shipped. |
 | 2b | Download agent binary | ✅ | ✅ | Agents page surfaces per-platform links. |
 | 2c | Agent self-registration | ✅ | ✅ | Agents page shows status / heartbeat. |
-| 3a | Customer allowlist YAML on agent | ✅ (agent side) | ❌ | SCP'd by hand; agent pushes snapshot to server but UI doesn't render it. |
-| 3b | Server has snapshot for an agent | ✅ (`agent_allowlists`) | ❌ | No viewer/diff surface. |
+| 3a | Customer allowlist YAML on agent | ✅ (agent side) | ⚠️ | Still SCP'd by hand on the agent host; UI reads-only via Allowlist button on Agents page. |
+| 3b | Server has snapshot for an agent | ✅ (`agent_allowlists`) | ✅ | Agents page → Allowlist button opens the current snapshot. |
 | 4 | Create discovery target (CIDR / range) | ✅ | ✅ | Targets form has a Kind toggle (Compliance / Discovery) with type picker + identifier + optional ports/rate/httpx/nuclei toggles. |
 | 5 | Kick discovery scan | ✅ (`POST /api/v1/scans {scan_type:discovery}`) | ✅ | Scans page has a scan-type picker; discovery uses the global `discovery` bundle seeded in migration 015. |
 | 5 | Watch asset ingestion | ✅ | ✅ | Assets page + detail drawer. |
@@ -82,13 +82,13 @@ backend surface, so we can parallelize later if useful.
 | ~~O1~~ | ~~Install token button~~ | — | — | — | **Already shipped** (re-check missed it on plan draft). |
 | O2 | Discovery target creation | — | Targets form branch | M | **✅ shipped** |
 | O3 | Discovery scan launcher | migration 015 (global discovery bundle row) | Scans page scan-type picker | S | **✅ shipped** |
-| O4 | Allowlist viewer | `GET /api/v1/agents/{id}/allowlist` | Agents detail panel | S | Closes the "what does my agent accept" question |
+| O4 | Allowlist viewer | `GET /api/v1/agents/{id}/allowlist` | Agents modal | S | **✅ shipped** |
 | O5 | Target edit flow | none | Targets form reuse | M | Rename / re-identify / config edit |
 | ~~O6~~ | ~~Agent upgrade trigger~~ | — | — | — | **Already shipped** (per-row button exists). |
 | O7 | Audit surface v1 | `GET /api/v1/audit-log` (new, read-only) | new Audit page | M–L | Day-two transparency |
 | O8 | Correlation rule predicate builder adoption | none | CorrelationRules form split + new ActionListEditor | M | Nit polish; defer unless asked |
 
-Suggested execution order: **O4 → O5 → O7** (O1, O2, O3, O6 done).
+Suggested execution order: **O5 → O7** (O1, O2, O3, O4, O6 done).
 
 Each PR cycles through stage → tag → prod the same way we've been doing,
 averaging ~1 tag per PR.

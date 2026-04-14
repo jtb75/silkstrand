@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listAgents, rotateAgentKey, deleteAgent, getAgentDownloads,
-  createInstallToken, upgradeAgent,
+  createInstallToken, upgradeAgent, getAgentAllowlist,
+  type AgentAllowlist,
 } from '../api/client';
 import type { Agent, AgentDownloads } from '../api/types';
 import { useAuth } from '../auth/useAuth';
@@ -25,6 +26,7 @@ export default function Agents() {
 
   const [installToken, setInstallToken] = useState<{ token: string; expiresAt: string } | null>(null);
   const [newKey, setNewKey] = useState<{ agent: Agent; apiKey: string } | null>(null);
+  const [allowlistFor, setAllowlistFor] = useState<Agent | null>(null);
 
   const tokenMutation = useMutation({
     mutationFn: createInstallToken,
@@ -162,6 +164,14 @@ export default function Agents() {
                 <td>{a.version ?? '—'}</td>
                 <td>{a.last_heartbeat ? new Date(a.last_heartbeat).toLocaleString() : '—'}</td>
                 <td style={{ textAlign: 'right' }}>
+                  <button
+                    className="btn btn-sm"
+                    style={{ marginRight: 6 }}
+                    onClick={() => setAllowlistFor(a)}
+                    title="View the scan allowlist this agent most recently reported"
+                  >
+                    Allowlist
+                  </button>
                   {a.status === 'connected' && (
                     <button
                       className="btn btn-sm"
@@ -205,7 +215,90 @@ export default function Agents() {
           </tbody>
         </table>
       )}
+
+      {allowlistFor && (
+        <AllowlistModal agent={allowlistFor} onClose={() => setAllowlistFor(null)} />
+      )}
     </div>
+  );
+}
+
+function AllowlistModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const { data, isLoading, error } = useQuery<AgentAllowlist>({
+    queryKey: ['agent-allowlist', agent.id],
+    queryFn: () => getAgentAllowlist(agent.id),
+    retry: false,
+  });
+
+  const notReported = error && /not reported/i.test((error as Error).message);
+
+  return (
+    <>
+      <div className="drawer-backdrop" onClick={onClose} />
+      <aside className="drawer">
+        <header className="drawer-header">
+          <h2>Allowlist — {agent.name}</h2>
+          <button type="button" className="btn btn-sm" onClick={onClose}>×</button>
+        </header>
+        <div className="drawer-body">
+          <p className="muted" style={{ marginTop: 0 }}>
+            The scan allowlist lives on the agent host at{' '}
+            <code>/etc/silkstrand/scan-allowlist.yaml</code>. SilkStrand cannot
+            edit it — this panel shows the most recent snapshot the agent
+            reported over the tunnel. Edit the file on the host to change
+            what the agent is willing to scan.
+          </p>
+          {isLoading && <p>Loading…</p>}
+          {notReported && (
+            <p className="muted">
+              This agent has not reported an allowlist yet. It may be running
+              an older binary, or have no allowlist file configured.
+            </p>
+          )}
+          {error && !notReported && <p className="error">{(error as Error).message}</p>}
+          {data && (
+            <>
+              <dl className="kv">
+                <dt>snapshot hash</dt>
+                <dd style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                  {data.snapshot_hash.slice(0, 16)}…
+                </dd>
+                <dt>reported</dt>
+                <dd>{new Date(data.reported_at).toLocaleString()}</dd>
+                <dt>updated</dt>
+                <dd>{new Date(data.updated_at).toLocaleString()}</dd>
+                {data.rate_limit_pps > 0 && (
+                  <>
+                    <dt>rate cap</dt>
+                    <dd>{data.rate_limit_pps} pps</dd>
+                  </>
+                )}
+              </dl>
+              <section style={{ marginTop: 16 }}>
+                <h3>Allow ({data.allow.length})</h3>
+                {data.allow.length === 0 ? (
+                  <p className="muted">
+                    Empty — the agent will refuse every scan directive.
+                  </p>
+                ) : (
+                  <ul style={{ fontFamily: 'monospace', fontSize: 13 }}>
+                    {data.allow.map((rule) => (<li key={rule}>{rule}</li>))}
+                  </ul>
+                )}
+              </section>
+              {data.deny.length > 0 && (
+                <section style={{ marginTop: 16 }}>
+                  <h3>Deny ({data.deny.length})</h3>
+                  <ul style={{ fontFamily: 'monospace', fontSize: 13 }}>
+                    {data.deny.map((rule) => (<li key={rule}>{rule}</li>))}
+                  </ul>
+                </section>
+              )}
+            </>
+          )}
+        </div>
+      </aside>
+    </>
   );
 }
 

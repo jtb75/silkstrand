@@ -62,6 +62,38 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agent)
 }
 
+// GET /api/v1/agents/{id}/allowlist
+// Returns the customer-owned scan allowlist snapshot the agent most
+// recently reported over WSS (ADR 003 D11). The server has zero
+// authority to edit it — this endpoint is purely a viewer so admins
+// can see what the agent is willing to scan. 404 when the agent has
+// never reported a snapshot (new agent, or running an older binary).
+func (h *AgentsHandler) GetAllowlist(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	// Tenant-scoped GetAgent enforces that the caller owns this agent.
+	agent, err := h.store.GetAgent(r.Context(), id)
+	if err != nil {
+		slog.Error("getting agent for allowlist", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if agent == nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+	snap, err := h.store.GetAgentAllowlist(r.Context(), id)
+	if err != nil {
+		slog.Error("getting agent allowlist", "error", err, "agent_id", id)
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if snap == nil {
+		writeError(w, http.StatusNotFound, "agent has not reported an allowlist yet")
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
+}
+
 // POST /api/v1/agents
 // Body: {name, version?}
 // Response includes the plaintext api_key — shown ONCE; the hash is stored.
