@@ -531,3 +531,14 @@ a:hover {
 .event-time { color: #666; }
 .event-type { font-family: monospace; color: #444; }
 .event-summary { color: #222; }
+
+/* --- ADR 003 R1b Assets page suggestions --- */
+.suggestion-section { background: #fff8e1; padding: 12px; border-radius: 4px; }
+.suggestion-list { list-style: none; padding: 0; margin: 0; }
+.suggestion {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid #ffecb3;
+  font-size: 13px;
+}
+.suggestion:last-child { border-bottom: none; }

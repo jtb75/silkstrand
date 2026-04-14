@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
-import { getAsset } from '../api/client';
-import type { CVE, DiscoveredAsset } from '../api/types';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { getAsset, promoteAsset } from '../api/client';
+import type { AssetSuggestion, CVE, DiscoveredAsset } from '../api/types';
 import AllowlistBadge from './AllowlistBadge';
 import AssetEventTimeline from './AssetEventTimeline';
 
@@ -43,6 +44,7 @@ export default function AssetDetailDrawer({ assetId, onClose }: Props) {
 function AssetBody({ asset, events }: { asset: DiscoveredAsset; events: import('../api/types').AssetEvent[] }) {
   const cves = asCVEs(asset.cves);
   const techs = asTechnologies(asset.technologies);
+  const suggestions = asset.metadata?.suggested ?? [];
   return (
     <div className="drawer-body">
       <section>
@@ -57,6 +59,9 @@ function AssetBody({ asset, events }: { asset: DiscoveredAsset; events: import('
           <dd><AllowlistBadge status="unknown" /></dd>
         </dl>
       </section>
+      {suggestions.length > 0 && (
+        <SuggestionsSection assetId={asset.id} suggestions={suggestions} />
+      )}
       {techs.length > 0 && (
         <section>
           <h3>Technologies</h3>
@@ -88,5 +93,43 @@ function AssetBody({ asset, events }: { asset: DiscoveredAsset; events: import('
         <AssetEventTimeline events={events} />
       </section>
     </div>
+  );
+}
+
+function SuggestionsSection({ assetId, suggestions }: { assetId: string; suggestions: AssetSuggestion[] }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const promote = useMutation({
+    mutationFn: (bundleId: string) => promoteAsset(assetId, bundleId),
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: ['asset', assetId] });
+      queryClient.invalidateQueries({ queryKey: ['assets'] });
+      navigate(`/targets`);
+      void resp; // trigger nav; user can then set credentials
+    },
+  });
+  return (
+    <section className="suggestion-section">
+      <h3>Suggestions</h3>
+      <ul className="suggestion-list">
+        {suggestions.map((s) => (
+          <li key={`${s.rule_name}:${s.bundle_id}`} className="suggestion">
+            <div>
+              <strong>{s.bundle_id}</strong>
+              <span className="muted"> · rule {s.rule_name}</span>
+            </div>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={promote.isPending}
+              onClick={() => promote.mutate(s.bundle_id)}
+            >
+              {promote.isPending ? 'Promoting…' : 'Approve'}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {promote.error && <p className="error">{(promote.error as Error).message}</p>}
+    </section>
   );
 }

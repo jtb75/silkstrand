@@ -1457,3 +1457,171 @@ func (s *PostgresStore) SetTargetAsset(ctx context.Context, targetID, assetID st
 	}
 	return nil
 }
+
+// --- ADR 003 R1b: rule engine state + correlation_rules CRUD ---
+
+// SetAssetComplianceStatus updates the asset's compliance_status
+// (candidate / targeted / pass / fail). Used by rule actions and the
+// scan-results pipeline.
+func (s *PostgresStore) SetAssetComplianceStatus(ctx context.Context, assetID, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE discovered_assets SET compliance_status = $1, updated_at = NOW() WHERE id = $2`,
+		status, assetID)
+	if err != nil {
+		return fmt.Errorf("setting compliance status: %w", err)
+	}
+	return nil
+}
+
+// SetAssetSuggestion records that a `suggest_target` rule fired for an
+// asset. Stored inside the metadata JSONB so we don't need a dedicated
+// table for R1b. Layout:
+//
+//	metadata.suggested = [
+//	  { "rule_name": "...", "bundle_id": "...", "suggested_at": "RFC3339" }
+//	]
+//
+// Idempotent — a second fire of the same (rule_name, bundle_id) updates
+// the timestamp without duplicating the entry.
+func (s *PostgresStore) SetAssetSuggestion(ctx context.Context, assetID, ruleName, bundleID string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE discovered_assets
+		    SET metadata = jsonb_set(
+		          COALESCE(metadata, '{}'::jsonb),
+		          '{suggested}',
+		          (
+		            SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+		              FROM (
+		                SELECT elem
+		                  FROM jsonb_array_elements(
+		                         COALESCE(metadata->'suggested', '[]'::jsonb)
+		                       ) elem
+		                 WHERE NOT (elem->>'rule_name' = $2 AND elem->>'bundle_id' = $3)
+		                UNION ALL
+		                SELECT jsonb_build_object(
+		                         'rule_name',    $2::text,
+		                         'bundle_id',    $3::text,
+		                         'suggested_at', $4::text
+		                       )
+		              ) merged
+		          ),
+		          true
+		        ),
+		        updated_at = NOW()
+		  WHERE id = $1`,
+		assetID, ruleName, bundleID, now)
+	if err != nil {
+		return fmt.Errorf("setting asset suggestion: %w", err)
+	}
+	return nil
+}
+
+// ListActiveRules returns enabled rules for the calling tenant filtered
+// by trigger (asset_discovered | asset_event). Latest version per
+// (tenant_id, name) wins.
+func (s *PostgresStore) ListActiveRules(ctx context.Context, tenantID, trigger string) ([]model.CorrelationRule, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT ON (name)
+		        id, tenant_id, name, version, enabled, trigger, event_type_filter, body, created_at, created_by
+		   FROM correlation_rules
+		  WHERE tenant_id = $1 AND trigger = $2 AND enabled = TRUE
+		  ORDER BY name, version DESC`,
+		tenantID, trigger)
+	if err != nil {
+		return nil, fmt.Errorf("listing active rules: %w", err)
+	}
+	defer rows.Close()
+	var out []model.CorrelationRule
+	for rows.Next() {
+		var r model.CorrelationRule
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.Name, &r.Version, &r.Enabled, &r.Trigger,
+			&r.EventTypeFilter, &r.Body, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, fmt.Errorf("scan rule: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListAllRules returns every rule for the calling tenant — admin UI
+// view, includes disabled and historical versions.
+func (s *PostgresStore) ListAllRules(ctx context.Context) ([]model.CorrelationRule, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, name, version, enabled, trigger, event_type_filter, body, created_at, created_by
+		   FROM correlation_rules
+		  WHERE tenant_id = $1
+		  ORDER BY name, version DESC`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing all rules: %w", err)
+	}
+	defer rows.Close()
+	var out []model.CorrelationRule
+	for rows.Next() {
+		var r model.CorrelationRule
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.Name, &r.Version, &r.Enabled, &r.Trigger,
+			&r.EventTypeFilter, &r.Body, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, fmt.Errorf("scan rule: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetRule(ctx context.Context, id string) (*model.CorrelationRule, error) {
+	tenantID := TenantID(ctx)
+	var r model.CorrelationRule
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, name, version, enabled, trigger, event_type_filter, body, created_at, created_by
+		   FROM correlation_rules WHERE id = $1 AND tenant_id = $2`, id, tenantID).
+		Scan(&r.ID, &r.TenantID, &r.Name, &r.Version, &r.Enabled, &r.Trigger,
+			&r.EventTypeFilter, &r.Body, &r.CreatedAt, &r.CreatedBy)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get rule: %w", err)
+	}
+	return &r, nil
+}
+
+// UpsertRule inserts a new version of a (tenant_id, name) rule. Existing
+// rows are kept for audit; queries use latest-version-wins via
+// ListActiveRules' DISTINCT ON.
+func (s *PostgresStore) UpsertRule(ctx context.Context, r model.CorrelationRule) (*model.CorrelationRule, error) {
+	tenantID := TenantID(ctx)
+	// Find the current max version for this name.
+	var maxVersion int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version), 0) FROM correlation_rules WHERE tenant_id = $1 AND name = $2`,
+		tenantID, r.Name).Scan(&maxVersion)
+	if err != nil {
+		return nil, fmt.Errorf("querying rule version: %w", err)
+	}
+	newVersion := maxVersion + 1
+	var out model.CorrelationRule
+	err = s.db.QueryRowContext(ctx,
+		`INSERT INTO correlation_rules
+		   (tenant_id, name, version, enabled, trigger, event_type_filter, body, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 RETURNING id, tenant_id, name, version, enabled, trigger, event_type_filter, body, created_at, created_by`,
+		tenantID, r.Name, newVersion, r.Enabled, r.Trigger, r.EventTypeFilter, r.Body, r.CreatedBy).
+		Scan(&out.ID, &out.TenantID, &out.Name, &out.Version, &out.Enabled, &out.Trigger,
+			&out.EventTypeFilter, &out.Body, &out.CreatedAt, &out.CreatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("upsert rule: %w", err)
+	}
+	return &out, nil
+}
+
+// DeleteRule disables the latest version of a rule (soft delete to
+// preserve audit). All older versions remain in place.
+func (s *PostgresStore) DeleteRule(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE correlation_rules SET enabled = FALSE WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("disabling rule: %w", err)
+	}
+	return nil
+}

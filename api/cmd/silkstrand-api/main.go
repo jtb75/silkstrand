@@ -22,6 +22,7 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
+	"github.com/jtb75/silkstrand/api/internal/rules"
 	"github.com/jtb75/silkstrand/api/internal/store"
 	"github.com/jtb75/silkstrand/api/internal/websocket"
 )
@@ -82,6 +83,7 @@ func run() error {
 	bundlesH := handler.NewBundlesHandler(pgStore)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 	assetH := handler.NewAssetHandler(pgStore)
+	rulesH := handler.NewCorrelationRulesHandler(pgStore)
 
 	// Router
 	mux := http.NewServeMux()
@@ -144,6 +146,13 @@ func run() error {
 
 	apiMux.HandleFunc("GET /api/v1/assets", assetH.List)
 	apiMux.HandleFunc("GET /api/v1/assets/{id}", assetH.Get)
+	apiMux.HandleFunc("POST /api/v1/assets/{id}/promote", assetH.Promote)
+
+	apiMux.HandleFunc("GET /api/v1/correlation-rules", rulesH.List)
+	apiMux.HandleFunc("POST /api/v1/correlation-rules", rulesH.Create)
+	apiMux.HandleFunc("GET /api/v1/correlation-rules/{id}", rulesH.Get)
+	apiMux.HandleFunc("PUT /api/v1/correlation-rules/{id}", rulesH.Update)
+	apiMux.HandleFunc("DELETE /api/v1/correlation-rules/{id}", rulesH.Delete)
 
 	// Apply auth + tenant middleware to API routes
 	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))
@@ -387,6 +396,14 @@ func handleAssetDiscovered(ctx context.Context, s store.Store, agentID string, p
 		}
 	}
 
+	// Load the tenant's active asset_discovered rules once per batch.
+	// R1b — engine evaluates after each asset upsert.
+	activeRules, err := s.ListActiveRules(ctx, scan.TenantID, model.RuleTriggerAssetDiscovered)
+	if err != nil {
+		slog.Warn("loading active rules for asset_discovered", "tenant", scan.TenantID, "error", err)
+		// Continue without rules — ingest must not fail because rules can't load.
+	}
+
 	for _, a := range batch.Assets {
 		in := store.DiscoveredAssetInput{
 			TenantID:     scan.TenantID,
@@ -406,6 +423,61 @@ func handleAssetDiscovered(ctx context.Context, s store.Store, agentID string, p
 		events := deriveAssetEvents(scan.TenantID, scan.ID, oldAsset, newAsset)
 		if err := s.AppendAssetEvents(ctx, events); err != nil {
 			slog.Error("appending asset events", "asset_id", newAsset.ID, "error", err)
+		}
+		runRuleActions(ctx, s, activeRules, newAsset)
+	}
+}
+
+// runRuleActions evaluates the loaded rules against the asset and
+// executes each fired action. R1b implements suggest_target and
+// auto_create_target; notify and run_one_shot_scan are R1c.
+func runRuleActions(ctx context.Context, s store.Store, ruleSet []model.CorrelationRule, asset *model.DiscoveredAsset) {
+	if asset == nil || len(ruleSet) == 0 {
+		return
+	}
+	fired := rules.EvaluateAsset(ruleSet, asset)
+	for _, act := range fired {
+		switch act.Type {
+		case rules.ActionSuggestTarget:
+			bundleID := act.BundleID()
+			if bundleID == "" {
+				slog.Warn("suggest_target action missing bundle", "rule", act.RuleName, "asset", asset.ID)
+				continue
+			}
+			if err := s.SetAssetSuggestion(ctx, asset.ID, act.RuleName, bundleID); err != nil {
+				slog.Warn("recording asset suggestion", "asset", asset.ID, "error", err)
+				continue
+			}
+			if err := s.SetAssetComplianceStatus(ctx, asset.ID, "candidate"); err != nil {
+				slog.Warn("setting asset to candidate", "asset", asset.ID, "error", err)
+			}
+			slog.Info("rule.fired",
+				"rule", act.RuleName, "action", act.Type,
+				"asset", asset.ID, "bundle", bundleID)
+
+		case rules.ActionAutoCreateTarget:
+			bundleID := act.BundleID()
+			if bundleID == "" {
+				slog.Warn("auto_create_target action missing bundle", "rule", act.RuleName, "asset", asset.ID)
+				continue
+			}
+			if err := s.SetAssetComplianceStatus(ctx, asset.ID, "targeted"); err != nil {
+				slog.Warn("setting asset to targeted", "asset", asset.ID, "error", err)
+			}
+			// Future: when the target-creation handler accepts an
+			// asset_id directly, wire that here. For R1b we record
+			// the intent on the asset; the suggest_target UI flow
+			// (Approve button) is the human path that actually
+			// materializes the target row. auto_create remains
+			// degenerate until R1c lands the credential-resolver
+			// integration that lets us create targets without the
+			// admin filling in connection details.
+			if err := s.SetAssetSuggestion(ctx, asset.ID, act.RuleName, bundleID); err != nil {
+				slog.Warn("recording auto-target intent", "asset", asset.ID, "error", err)
+			}
+			slog.Info("rule.fired",
+				"rule", act.RuleName, "action", act.Type,
+				"asset", asset.ID, "bundle", bundleID)
 		}
 	}
 }

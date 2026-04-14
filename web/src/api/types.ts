@@ -63,6 +63,12 @@ export interface CVE {
   found_at?: string;
 }
 
+export interface AssetSuggestion {
+  rule_name: string;
+  bundle_id: string;
+  suggested_at: string;
+}
+
 export interface DiscoveredAsset {
   id: string;
   tenant_id: string;
@@ -80,8 +86,28 @@ export interface DiscoveredAsset {
   last_seen: string;
   last_scan_id?: string;
   missed_scan_count: number;
+  metadata?: { suggested?: AssetSuggestion[]; [k: string]: unknown };
   created_at: string;
   updated_at: string;
+}
+
+// Correlation rule (ADR 003 R1b)
+export interface CorrelationRuleBody {
+  match: Record<string, unknown>;
+  actions: Array<{ type: string; bundle_id?: string; bundle?: string; [k: string]: unknown }>;
+}
+
+export interface CorrelationRule {
+  id: string;
+  tenant_id: string;
+  name: string;
+  version: number;
+  enabled: boolean;
+  trigger: 'asset_discovered' | 'asset_event';
+  event_type_filter?: string;
+  body: CorrelationRuleBody;
+  created_at: string;
+  created_by?: string;
 }
 
 export type AssetEventType =

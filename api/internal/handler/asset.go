@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/store"
 )
@@ -146,3 +148,83 @@ func parseDuration(s string) (time.Duration, error) {
 type filterErr struct{ msg string }
 
 func (e *filterErr) Error() string { return e.msg }
+
+// POST /api/v1/assets/{id}/promote
+// Body: { bundle_id }
+// Creates a compliance target from a candidate asset (R1b promote-from-
+// suggestion). The asset's compliance_status flips to 'targeted'.
+//
+// Credentials still need to be set separately via the existing
+// PUT /api/v1/targets/{tid}/credential flow — discovery doesn't bind
+// creds (that's ADR 004 C1+).
+func (h *AssetHandler) Promote(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.TenantID == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id := r.PathValue("id")
+	asset, err := h.store.GetAssetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if asset == nil {
+		writeError(w, http.StatusNotFound, "asset not found")
+		return
+	}
+	var req struct {
+		BundleID string `json:"bundle_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.BundleID == "" {
+		writeError(w, http.StatusBadRequest, "bundle_id is required")
+		return
+	}
+
+	// Bundle determines the target type (engine probers map 1:1 to
+	// service names). For unknown bundles we punt to 'host' which the
+	// admin can adjust later — better to create the target than fail.
+	targetType := model.TargetTypeHost
+	if asset.Service != nil {
+		switch *asset.Service {
+		case "postgresql", "postgres":
+			targetType = model.TargetTypePostgreSQL
+		case "mssql", "ms-sql", "sqlserver":
+			targetType = model.TargetTypeMSSQL
+		case "mongodb", "mongo":
+			targetType = model.TargetTypeMongoDB
+		case "mysql":
+			targetType = model.TargetTypeMySQL
+		}
+	}
+	cfg := map[string]any{
+		"host": asset.IP,
+		"port": asset.Port,
+	}
+	cfgJSON, _ := json.Marshal(cfg)
+	envPtr := ""
+	if asset.Environment != nil {
+		envPtr = *asset.Environment
+	}
+	target, err := h.store.CreateTarget(r.Context(), model.CreateTargetRequest{
+		Type:        targetType,
+		Identifier:  asset.IP,
+		Config:      cfgJSON,
+		Environment: envPtr,
+	})
+	if err != nil {
+		slog.Error("creating target from asset", "asset", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create target")
+		return
+	}
+	if err := h.store.SetTargetAsset(r.Context(), target.ID, asset.ID); err != nil {
+		slog.Warn("wiring promoted target to asset", "target", target.ID, "asset", asset.ID, "error", err)
+	}
+	if err := h.store.SetAssetComplianceStatus(r.Context(), asset.ID, "targeted"); err != nil {
+		slog.Warn("setting asset to targeted after promote", "asset", asset.ID, "error", err)
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"target":   target,
+		"bundle_id": req.BundleID,
+	})
+}
