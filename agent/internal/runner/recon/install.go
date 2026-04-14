@@ -1,6 +1,8 @@
 package recon
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -121,10 +124,85 @@ func EnsureTemplates() (string, error) {
 	if _, err := os.Stat(dir); err == nil {
 		return dir, nil
 	}
-	// PR #6 will implement: download .tar.gz + .sig from
-	// runtimesBaseURL/nuclei-templates/<version>.tar.gz, verify Ed25519
-	// sig (reusing the bundle-signing pubkey), extract into dir.
-	return "", fmt.Errorf("template fetch not implemented (PR #6)")
+
+	url := fmt.Sprintf("%s/nuclei-templates/%s.tar.gz", runtimesBaseURL, nucleiTemplatesPin.Version)
+	tmpTar := filepath.Join(os.TempDir(),
+		fmt.Sprintf("silkstrand-templates-%s.tar.gz", nucleiTemplatesPin.Version))
+	if err := downloadAndVerify(url, tmpTar, nucleiTemplatesPin.SHA256); err != nil {
+		_ = os.Remove(tmpTar)
+		return "", err
+	}
+	defer os.Remove(tmpTar)
+
+	stagingDir := dir + ".staging"
+	_ = os.RemoveAll(stagingDir)
+	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+		return "", fmt.Errorf("creating templates staging dir: %w", err)
+	}
+	if err := extractTarGz(tmpTar, stagingDir); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		return "", err
+	}
+	if err := os.Rename(stagingDir, dir); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		return "", fmt.Errorf("atomic rename: %w", err)
+	}
+	return dir, nil
+}
+
+// extractTarGz unpacks a gzipped tar into dst. Path traversal is
+// rejected.
+func extractTarGz(src, dst string) error {
+	f, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open tarball: %w", err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("gzip reader: %w", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	dstAbs, err := filepath.Abs(dst)
+	if err != nil {
+		return err
+	}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("tar read: %w", err)
+		}
+		// Reject path traversal.
+		target := filepath.Join(dstAbs, hdr.Name)
+		if !strings.HasPrefix(target, dstAbs+string(os.PathSeparator)) && target != dstAbs {
+			return fmt.Errorf("tar path traversal: %s", hdr.Name)
+		}
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return fmt.Errorf("mkdir %s: %w", target, err)
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return fmt.Errorf("mkdir parent of %s: %w", target, err)
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o755)
+			if err != nil {
+				return fmt.Errorf("open %s: %w", target, err)
+			}
+			if _, err := io.Copy(out, tr); err != nil {
+				out.Close()
+				return fmt.Errorf("write %s: %w", target, err)
+			}
+			out.Close()
+		default:
+			// Skip symlinks, devices, etc. — templates are pure files.
+		}
+	}
 }
 
 func downloadAndVerify(url, dst, expectedSHA string) error {
