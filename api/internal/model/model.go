@@ -125,13 +125,14 @@ type Scan struct {
 	AgentID     *string      `json:"agent_id,omitempty"`
 	TargetID    *string      `json:"target_id,omitempty"` // nullable since ADR 003 R0 (one-shot scans address assets)
 	BundleID    string       `json:"bundle_id"`
-	ScanType    string       `json:"scan_type,omitempty"` // "compliance" (default) | "discovery"
-	Status      string       `json:"status"`
-	StartedAt   *time.Time   `json:"started_at,omitempty"`
-	CompletedAt *time.Time   `json:"completed_at,omitempty"`
-	CreatedAt   time.Time    `json:"created_at"`
-	Results     []ScanResult `json:"results,omitempty"`
-	Summary     *ScanSummary `json:"summary,omitempty"`
+	ScanType     string       `json:"scan_type,omitempty"` // "compliance" (default) | "discovery"
+	Status       string       `json:"status"`
+	ErrorMessage *string      `json:"error_message,omitempty"` // populated when status='failed'
+	StartedAt    *time.Time   `json:"started_at,omitempty"`
+	CompletedAt  *time.Time   `json:"completed_at,omitempty"`
+	CreatedAt    time.Time    `json:"created_at"`
+	Results      []ScanResult `json:"results,omitempty"`
+	Summary      *ScanSummary `json:"summary,omitempty"`
 }
 
 type ScanSummary struct {

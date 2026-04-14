@@ -166,7 +166,7 @@ func (s *PostgresStore) DeleteTarget(ctx context.Context, id string) error {
 func (s *PostgresStore) ListScans(ctx context.Context) ([]model.Scan, error) {
 	tenantID := TenantID(ctx)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at
+		`SELECT id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at, error_message
 		 FROM scans WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("listing scans: %w", err)
@@ -176,7 +176,7 @@ func (s *PostgresStore) ListScans(ctx context.Context) ([]model.Scan, error) {
 	var scans []model.Scan
 	for rows.Next() {
 		var sc model.Scan
-		if err := rows.Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt); err != nil {
+		if err := rows.Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt, &sc.ErrorMessage); err != nil {
 			return nil, fmt.Errorf("scanning scan row: %w", err)
 		}
 		scans = append(scans, sc)
@@ -188,9 +188,9 @@ func (s *PostgresStore) GetScan(ctx context.Context, id string) (*model.Scan, er
 	tenantID := TenantID(ctx)
 	var sc model.Scan
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at
+		`SELECT id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at, error_message
 		 FROM scans WHERE id = $1 AND tenant_id = $2`, id, tenantID).
-		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
+		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt, &sc.ErrorMessage)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -221,9 +221,9 @@ func (s *PostgresStore) CreateScan(ctx context.Context, req model.CreateScanRequ
 	err = s.db.QueryRowContext(ctx,
 		`INSERT INTO scans (tenant_id, agent_id, target_id, bundle_id, scan_type, status)
 		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at`,
+		 RETURNING id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at, error_message`,
 		tenantID, target.AgentID, req.TargetID, req.BundleID, scanType, model.ScanStatusPending).
-		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
+		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt, &sc.ErrorMessage)
 	if err != nil {
 		return nil, fmt.Errorf("creating scan: %w", err)
 	}
@@ -244,6 +244,19 @@ func (s *PostgresStore) UpdateScanStatus(ctx context.Context, id string, status 
 	_, err := s.db.ExecContext(ctx, query, status, id)
 	if err != nil {
 		return fmt.Errorf("updating scan status: %w", err)
+	}
+	return nil
+}
+
+// FailScan marks a scan failed and stores the agent-reported reason so
+// the UI can render it on the Scan Results page. Reason may be empty —
+// e.g. when the server itself fails results parsing.
+func (s *PostgresStore) FailScan(ctx context.Context, id, reason string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE scans SET status = $1, completed_at = NOW(), error_message = NULLIF($2, '') WHERE id = $3`,
+		model.ScanStatusFailed, reason, id)
+	if err != nil {
+		return fmt.Errorf("failing scan: %w", err)
 	}
 	return nil
 }
@@ -579,9 +592,9 @@ func (s *PostgresStore) GetTargetByID(ctx context.Context, id string) (*model.Ta
 func (s *PostgresStore) GetScanByID(ctx context.Context, id string) (*model.Scan, error) {
 	var sc model.Scan
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at
+		`SELECT id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at, error_message
 		 FROM scans WHERE id = $1`, id).
-		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
+		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt, &sc.ErrorMessage)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1962,10 +1975,10 @@ func (s *PostgresStore) CreateScanForOneShot(ctx context.Context, tenantID, agen
 	err := s.db.QueryRowContext(ctx,
 		`INSERT INTO scans (tenant_id, agent_id, target_id, bundle_id, scan_type, status, parent_one_shot_id)
 		 VALUES ($1, $2, $3, $4, 'compliance', 'pending', $5)
-		 RETURNING id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at`,
+		 RETURNING id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at, error_message`,
 		tenantID, agentID, targetID, bundleID, parentID).
 		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType,
-			&sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
+			&sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt, &sc.ErrorMessage)
 	if err != nil {
 		return nil, fmt.Errorf("create one-shot child scan: %w", err)
 	}
