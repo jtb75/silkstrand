@@ -162,13 +162,14 @@ silkstrand/
 | **R1c-b** | D13 asset sets (saved JSONB predicates + preview) | ✅ shipped |
 | **R1c-c** | D13 one-shot scan dispatcher; `run_one_shot_scan` rule action; completion rollup; ephemeral target cleanup | ✅ shipped |
 | **R1.5 (admin UI)** | Rules / Channels / Asset Sets / One-shot pages | ✅ shipped |
-| **R1.5 (deferred)** | Notification retry worker · D14 per-tenant template selection · visual predicate builder in correlation rules (Asset Sets already has it) · full edit flow on targets (today UI only reassigns agent — no rename / re-identify / environment / config edits) | ⏸ |
+| **R1.5 (deferred)** | Notification retry worker · D14 per-tenant template selection · visual predicate builder in correlation rules (Asset Sets already has it) | ⏸ |
+| **Onboarding UX (O-series)** | Install token button · discovery scan launcher · discovery target creation · allowlist viewer · target edit flow · agent upgrade trigger — all shipped; O7 audit surface in design (ADR 005) | ✅ mostly shipped |
 | **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential auto-binding (with ADR 004 C1) | ⏳ planned |
 | **R3+** | Vault credential resolver (ADR 004 C3); DNS zone enumeration; Azure/GCP cloud discovery | ⏳ planned |
 
 ADR 004 (credential resolver) is at **C0** (plumbing — `credential_sources` is the sole surface with `static` type; legacy `credentials` table dropped in migration 014). C1+ resolvers (AWS Secrets Manager / Vault / etc.) are planned but not started.
 
-Implementation plans live in `docs/plans/r0-r1a-*.md` (data model, API, agent runtime, frontend, synthesis); design rationale in `docs/adr/`.
+Implementation plans live in `docs/plans/r0-r1a-*.md` (data model, API, agent runtime, frontend, synthesis) and `docs/plans/onboarding-ux.md` (zero-to-scan journey + O-series PR split + R2 sketch); design rationale in `docs/adr/`, including ADR 005 (audit events surface) which gates O7.
 
 ### What's Built
 
@@ -185,7 +186,7 @@ Implementation plans live in `docs/plans/r0-r1a-*.md` (data model, API, agent ru
 - **Recon Pipeline (ADR 003 R0–R1c)** — Discovery scans run end-to-end: agent runs naabu → httpx → nuclei against allowlisted targets, streams `asset_discovered` batches over WSS, server upserts `discovered_assets` and derives `asset_events` (`new_asset` / `version_changed` / `new_cve` / `cve_resolved`). Manual targets unify into the same inventory via `targets.asset_id`. Generalized D2 rule engine evaluates per ingest; ships with `suggest_target`, `auto_create_target`, `notify`, and `run_one_shot_scan` actions. D12 notification channels (webhook + Slack; HMAC-signed webhooks; secrets encrypted at rest). D13 asset sets (saved JSONB predicates) + one-shot fan-out dispatcher with auto-cleanup of ephemeral targets on parent completion.
 - **Edge Agent** — Go binary with WSS tunnel (exponential backoff reconnect), Python compliance runner, recon runner (naabu/httpx/nuclei via runtime download from `gs://silkstrand-runtimes`), bundle cache, heartbeat. D11 customer-controlled scan allowlist (`/etc/silkstrand/scan-allowlist.yaml`) gates every recon directive. Cross-compiled for 6 platforms on release.
 - **Compliance Bundles** — three live: `cis-postgresql-16`, `cis-mssql-2022`, `cis-mongodb-8`. Per-engine probers (postgres, mssql, mongodb, mysql) wire credentials through to the Python runtime via FD pipe (no on-disk credential file on Unix).
-- **Tenant Frontend** — React + TypeScript SPA. Pages: Dashboard, Assets (`/assets` — list + topology via `@xyflow/react`, filter chips, detail drawer with suggestions + Approve), Targets, Agents, Scans, Settings, Team. Admin-only: Asset Sets, Rules (correlation rule CRUD), Channels (notification channel CRUD), One-shot Scans (fan-out launcher). In-house auth (login / accept-invite / forgot-password / reset-password pages), `<TenantSwitcher />` in the topbar for multi-tenant users. Dockerfile with nginx that splits `/api/v1/tenant-auth/*` → backoffice and `/api/*` → DC API.
+- **Tenant Frontend** — React + TypeScript SPA. Pages: Dashboard, Assets (`/assets` — list + topology via `@xyflow/react`, filter chips, detail drawer with suggestions + Approve gated by allowlist status), Targets (Compliance + Discovery kinds, edit flow, per-row agent reassign / Test / Credential), Agents (install-token one-liner, per-agent Allowlist viewer, Upgrade, Rotate key, Delete), Scans (scan-type picker: compliance + discovery), Settings, Team. Admin-only: Asset Sets (visual predicate builder), Rules (correlation rule CRUD with edit + auto-versioning), Channels (notification channel CRUD with secret-preserve on edit), One-shot Scans (fan-out launcher). In-house auth (login / accept-invite / forgot-password / reset-password pages), `<TenantSwitcher />` in the topbar for multi-tenant users. Dockerfile with nginx that splits `/api/v1/tenant-auth/*` → backoffice and `/api/*` → DC API.
 - **Backoffice Manager** — Separate Go module + React frontend:
   - Data center registration with AES-256-GCM encrypted API key storage
   - Two-phase tenant provisioning (backoffice DB → DC API call, retry on failure)
@@ -217,10 +218,11 @@ All sensitive Cloud Run env vars (DATABASE_URL, REDIS_URL, JWT_SECRET, INTERNAL_
 - AWS cloud discovery (ADR 003 R2 — `target_type: aws_account`, cloud-native credential auto-binding via `MasterUserSecret`)
 - Per-tenant template selection (D14) — backoffice catalog + tenant settings + directive extension
 - Notification retry worker (failed `notification_deliveries` rows stay failed; rule must re-fire to retry)
-- Visual predicate builder (raw JSON textarea is v1)
+- Visual predicate builder in correlation-rule `match` (Asset Sets already has it)
 - Frontend pagination for list endpoints
 - Agent WebSocket origin restriction for production
-- Audit log surfacing (slog `credential.fetch` events emitted but not queryable in UI)
+- Audit log surfacing (ADR 005 drafted; implementation is the remaining O7 work — plumbing, UI, retention worker)
+- Clearing `environment` / `agent_id` on a target via the edit form (v1 treats empty-string as "keep existing"; clear-via-dropdown still works for agent)
 
 ## DC API Routes
 
