@@ -149,6 +149,12 @@ export const listAssets = (params: AssetFilterParams = {}) =>
 export const getAsset = (id: string, eventsLimit = 50) =>
   request<AssetDetailResponse>(`/api/v1/assets/${id}?events=${eventsLimit}`);
 
+export const promoteAsset = (id: string, bundleId: string) =>
+  request<{ target: Target; bundle_id: string }>(`/api/v1/assets/${id}/promote`, {
+    method: 'POST',
+    body: JSON.stringify({ bundle_id: bundleId }),
+  });
+
 // Agents
 export const listAgents = () => request<Agent[]>('/api/v1/agents');
 export const createAgent = (name: string, version?: string) =>

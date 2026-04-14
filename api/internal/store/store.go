@@ -119,6 +119,17 @@ type Store interface {
 	ListAssetEventsByAsset(ctx context.Context, assetID string, limit int) ([]model.AssetEvent, error)
 	UpsertManualAsset(ctx context.Context, tenantID, ip string, port int, environment *string) (*model.DiscoveredAsset, error)
 	SetTargetAsset(ctx context.Context, targetID, assetID string) error
+
+	// Asset state mutations driven by rule actions (ADR 003 R1b).
+	SetAssetComplianceStatus(ctx context.Context, assetID, status string) error
+	SetAssetSuggestion(ctx context.Context, assetID, ruleName, bundleID string) error
+
+	// Correlation rules (ADR 003 R1b).
+	ListActiveRules(ctx context.Context, tenantID, trigger string) ([]model.CorrelationRule, error)
+	ListAllRules(ctx context.Context) ([]model.CorrelationRule, error)
+	GetRule(ctx context.Context, id string) (*model.CorrelationRule, error)
+	UpsertRule(ctx context.Context, r model.CorrelationRule) (*model.CorrelationRule, error)
+	DeleteRule(ctx context.Context, id string) error
 }
 
 // DiscoveredAssetInput is what the agent's asset_discovered payload
