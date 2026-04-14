@@ -155,6 +155,11 @@ type Store interface {
 	// from every scan terminal path (results + error).
 	OnChildScanTerminal(ctx context.Context, scanID string) error
 
+	// Agent allowlist snapshots (ADR 003 D11 follow-up). Informational
+	// mirror of the agent's customer-owned scan policy; used to label
+	// discovered_assets for UI gating.
+	UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) error
+
 	// Notification channels + deliveries (ADR 003 R1c / D12).
 	ListNotificationChannels(ctx context.Context) ([]model.NotificationChannel, error)
 	GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error)
@@ -178,6 +183,15 @@ type DiscoveredAssetInput struct {
 	Technologies json.RawMessage
 	CVEs         json.RawMessage
 	Environment  *string
+}
+
+// AgentAllowlistInput is the agent_allowlists upsert payload.
+type AgentAllowlistInput struct {
+	AgentID      string
+	Hash         string
+	Allow        []string
+	Deny         []string
+	RateLimitPPS int
 }
 
 // AssetFilter is the parsed query for ListAssets. All zero-value

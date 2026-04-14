@@ -364,6 +364,44 @@ func (s *PostgresStore) UpdateAgentHeartbeat(ctx context.Context, id, version st
 	return nil
 }
 
+// UpsertAgentAllowlist writes the agent's most recently reported
+// allowlist snapshot. Idempotent: dedupe by hash to avoid needless
+// row churn when the agent resends an unchanged snapshot.
+func (s *PostgresStore) UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) error {
+	if in.Allow == nil {
+		in.Allow = []string{}
+	}
+	if in.Deny == nil {
+		in.Deny = []string{}
+	}
+	allowJSON, err := json.Marshal(in.Allow)
+	if err != nil {
+		return fmt.Errorf("marshal allow: %w", err)
+	}
+	denyJSON, err := json.Marshal(in.Deny)
+	if err != nil {
+		return fmt.Errorf("marshal deny: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO agent_allowlists (agent_id, snapshot_hash, allow, deny, rate_limit_pps, reported_at, updated_at)
+		VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, NOW(), NOW())
+		ON CONFLICT (agent_id) DO UPDATE SET
+			reported_at = NOW(),
+			snapshot_hash = EXCLUDED.snapshot_hash,
+			allow = EXCLUDED.allow,
+			deny = EXCLUDED.deny,
+			rate_limit_pps = EXCLUDED.rate_limit_pps,
+			updated_at = CASE
+				WHEN agent_allowlists.snapshot_hash = EXCLUDED.snapshot_hash THEN agent_allowlists.updated_at
+				ELSE NOW()
+			END
+	`, in.AgentID, in.Hash, allowJSON, denyJSON, in.RateLimitPPS)
+	if err != nil {
+		return fmt.Errorf("upserting agent_allowlists: %w", err)
+	}
+	return nil
+}
+
 // GetAgentByID looks up an agent by ID without tenant scoping (for WSS auth).
 func (s *PostgresStore) GetAgentByID(ctx context.Context, id string) (*model.Agent, error) {
 	var a model.Agent

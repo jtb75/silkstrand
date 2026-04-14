@@ -12,9 +12,20 @@ const (
 	TypeUpgrade            = "upgrade"
 	TypeProbe              = "probe"
 	TypeProbeResult        = "probe_result"
-	TypeAssetDiscovered    = "asset_discovered"   // ADR 003 R1a
+	TypeAssetDiscovered    = "asset_discovered"    // ADR 003 R1a
 	TypeDiscoveryCompleted = "discovery_completed" // ADR 003 R1a
+	TypeAllowlistSnapshot  = "allowlist_snapshot"  // ADR 003 D11
 )
+
+// AllowlistSnapshotPayload is the agent's most recently loaded scan
+// allowlist (ADR 003 D11). Informational only — the agent remains the
+// policy authority. Server persists to agent_allowlists.
+type AllowlistSnapshotPayload struct {
+	Hash         string   `json:"hash"`
+	Allow        []string `json:"allow"`
+	Deny         []string `json:"deny,omitempty"`
+	RateLimitPPS int      `json:"rate_limit_pps,omitempty"`
+}
 
 // UpgradePayload tells the agent to fetch a new binary and restart.
 type UpgradePayload struct {
