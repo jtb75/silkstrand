@@ -17,6 +17,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 
+	"github.com/jtb75/silkstrand/api/internal/allowlist"
 	"github.com/jtb75/silkstrand/api/internal/config"
 	"github.com/jtb75/silkstrand/api/internal/handler"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
@@ -275,20 +276,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub) func(a
 			}
 
 		case websocket.TypeAllowlistSnapshot:
-			var payload websocket.AllowlistSnapshotPayload
-			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-				slog.Warn("parsing allowlist_snapshot payload", "agent_id", agentID, "error", err)
-				return
-			}
-			if err := s.UpsertAgentAllowlist(ctx, store.AgentAllowlistInput{
-				AgentID:      agentID,
-				Hash:         payload.Hash,
-				Allow:        payload.Allow,
-				Deny:         payload.Deny,
-				RateLimitPPS: payload.RateLimitPPS,
-			}); err != nil {
-				slog.Error("upserting agent allowlist", "agent_id", agentID, "error", err)
-			}
+			handleAllowlistSnapshot(ctx, s, agentID, msg.Payload)
 
 		case websocket.TypeAssetDiscovered:
 			handleAssetDiscovered(ctx, s, agentID, msg.Payload)
@@ -454,16 +442,22 @@ func handleAssetDiscovered(ctx context.Context, s store.Store, agentID string, p
 		// Continue without rules — ingest must not fail because rules can't load.
 	}
 
+	// Load the owning agent's allowlist snapshot once per batch so each
+	// upsert can be stamped with allowlist_status. No snapshot → leave
+	// the column at its 'unknown' default.
+	aw := loadAgentAllowlist(ctx, s, agentID)
+
 	for _, a := range batch.Assets {
 		in := store.DiscoveredAssetInput{
-			TenantID:     scan.TenantID,
-			IP:           a.IP,
-			Port:         a.Port,
-			Hostname:     a.Hostname,
-			Service:      a.Service,
-			Version:      a.Version,
-			Technologies: a.Technologies,
-			CVEs:         a.CVEs,
+			TenantID:        scan.TenantID,
+			IP:              a.IP,
+			Port:            a.Port,
+			Hostname:        a.Hostname,
+			Service:         a.Service,
+			Version:         a.Version,
+			Technologies:    a.Technologies,
+			CVEs:            a.CVEs,
+			AllowlistStatus: evalAllowlistStatus(aw, a.IP, a.Hostname),
 		}
 		newAsset, oldAsset, err := s.UpsertDiscoveredAsset(ctx, scan.ID, in)
 		if err != nil {
@@ -476,6 +470,107 @@ func handleAssetDiscovered(ctx context.Context, s store.Store, agentID string, p
 		}
 		runRuleActions(ctx, s, activeRules, newAsset)
 	}
+}
+
+// handleAllowlistSnapshot persists the agent's reported scan policy and,
+// when the snapshot hash has actually changed, re-evaluates every
+// discovered_asset this agent owns so the UI's allowlist badge reflects
+// the latest policy without waiting for the asset to be re-discovered.
+func handleAllowlistSnapshot(ctx context.Context, s store.Store, agentID string, payload json.RawMessage) {
+	var p websocket.AllowlistSnapshotPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		slog.Warn("parsing allowlist_snapshot payload", "agent_id", agentID, "error", err)
+		return
+	}
+	changed, err := s.UpsertAgentAllowlist(ctx, store.AgentAllowlistInput{
+		AgentID:      agentID,
+		Hash:         p.Hash,
+		Allow:        p.Allow,
+		Deny:         p.Deny,
+		RateLimitPPS: p.RateLimitPPS,
+	})
+	if err != nil {
+		slog.Error("upserting agent allowlist", "agent_id", agentID, "error", err)
+		return
+	}
+	if !changed {
+		return
+	}
+	aw, err := allowlist.Parse(p.Allow, p.Deny)
+	if err != nil {
+		slog.Warn("parsing allowlist snapshot for reeval", "agent_id", agentID, "error", err)
+		return
+	}
+	rows, err := s.ListAssetsForAgentReeval(ctx, agentID)
+	if err != nil {
+		slog.Warn("listing assets for reeval", "agent_id", agentID, "error", err)
+		return
+	}
+	var reevaluated, updated int
+	for _, r := range rows {
+		hostname := ""
+		if r.Hostname != nil {
+			hostname = *r.Hostname
+		}
+		next := classify(aw, r.IP, hostname)
+		reevaluated++
+		if next == r.Status {
+			continue
+		}
+		if err := s.UpdateAssetAllowlistStatus(ctx, r.ID, next); err != nil {
+			slog.Warn("updating asset allowlist_status", "asset", r.ID, "error", err)
+			continue
+		}
+		updated++
+	}
+	slog.Info("allowlist snapshot applied",
+		"agent_id", agentID, "hash", p.Hash,
+		"reevaluated", reevaluated, "updated", updated)
+}
+
+// loadAgentAllowlist returns the parsed allowlist for agentID, or nil
+// if the agent hasn't reported one yet (→ assets stay 'unknown').
+func loadAgentAllowlist(ctx context.Context, s store.Store, agentID string) *allowlist.Allowlist {
+	snap, err := s.GetAgentAllowlist(ctx, agentID)
+	if err != nil {
+		slog.Warn("loading agent allowlist", "agent_id", agentID, "error", err)
+		return nil
+	}
+	if snap == nil {
+		return nil
+	}
+	aw, err := allowlist.Parse(snap.Allow, snap.Deny)
+	if err != nil {
+		slog.Warn("parsing agent allowlist", "agent_id", agentID, "error", err)
+		return nil
+	}
+	return aw
+}
+
+// evalAllowlistStatus returns a pointer suitable for DiscoveredAssetInput:
+// nil when we have no policy (caller preserves existing column value),
+// or a pointer to the classified status when we do.
+func evalAllowlistStatus(aw *allowlist.Allowlist, ip, hostname string) *string {
+	if aw == nil {
+		return nil
+	}
+	s := classify(aw, ip, hostname)
+	return &s
+}
+
+// classify returns allowlisted / out_of_policy. An asset passes if
+// either its IP or (when present) its hostname is allowed.
+func classify(aw *allowlist.Allowlist, ip, hostname string) string {
+	if aw == nil {
+		return model.AllowlistStatusUnknown
+	}
+	if ip != "" && aw.Allows(ip) {
+		return model.AllowlistStatusAllowlisted
+	}
+	if hostname != "" && aw.Allows(hostname) {
+		return model.AllowlistStatusAllowlisted
+	}
+	return model.AllowlistStatusOutOfPolicy
 }
 
 // runRuleActions evaluates the loaded rules against the asset and

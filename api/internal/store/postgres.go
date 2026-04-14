@@ -365,9 +365,10 @@ func (s *PostgresStore) UpdateAgentHeartbeat(ctx context.Context, id, version st
 }
 
 // UpsertAgentAllowlist writes the agent's most recently reported
-// allowlist snapshot. Idempotent: dedupe by hash to avoid needless
-// row churn when the agent resends an unchanged snapshot.
-func (s *PostgresStore) UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) error {
+// allowlist snapshot. Returns changed=true when the snapshot hash
+// differs from the prior row (or no row existed). Callers use that
+// signal to trigger re-evaluation of owned assets.
+func (s *PostgresStore) UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) (bool, error) {
 	if in.Allow == nil {
 		in.Allow = []string{}
 	}
@@ -376,11 +377,17 @@ func (s *PostgresStore) UpsertAgentAllowlist(ctx context.Context, in AgentAllowl
 	}
 	allowJSON, err := json.Marshal(in.Allow)
 	if err != nil {
-		return fmt.Errorf("marshal allow: %w", err)
+		return false, fmt.Errorf("marshal allow: %w", err)
 	}
 	denyJSON, err := json.Marshal(in.Deny)
 	if err != nil {
-		return fmt.Errorf("marshal deny: %w", err)
+		return false, fmt.Errorf("marshal deny: %w", err)
+	}
+	var prevHash sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT snapshot_hash FROM agent_allowlists WHERE agent_id = $1`,
+		in.AgentID).Scan(&prevHash); err != nil && err != sql.ErrNoRows {
+		return false, fmt.Errorf("reading prior agent_allowlist: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO agent_allowlists (agent_id, snapshot_hash, allow, deny, rate_limit_pps, reported_at, updated_at)
@@ -397,7 +404,71 @@ func (s *PostgresStore) UpsertAgentAllowlist(ctx context.Context, in AgentAllowl
 			END
 	`, in.AgentID, in.Hash, allowJSON, denyJSON, in.RateLimitPPS)
 	if err != nil {
-		return fmt.Errorf("upserting agent_allowlists: %w", err)
+		return false, fmt.Errorf("upserting agent_allowlists: %w", err)
+	}
+	changed := !prevHash.Valid || prevHash.String != in.Hash
+	return changed, nil
+}
+
+// GetAgentAllowlist returns the agent's most recent snapshot, or
+// (nil, nil) when none has been reported yet.
+func (s *PostgresStore) GetAgentAllowlist(ctx context.Context, agentID string) (*model.AgentAllowlist, error) {
+	var a model.AgentAllowlist
+	var allowJSON, denyJSON []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT agent_id, snapshot_hash, allow, deny, rate_limit_pps, reported_at, updated_at
+		 FROM agent_allowlists WHERE agent_id = $1`, agentID).
+		Scan(&a.AgentID, &a.SnapshotHash, &allowJSON, &denyJSON, &a.RateLimitPPS, &a.ReportedAt, &a.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("loading agent_allowlist: %w", err)
+	}
+	if err := json.Unmarshal(allowJSON, &a.Allow); err != nil {
+		return nil, fmt.Errorf("decoding allow: %w", err)
+	}
+	if err := json.Unmarshal(denyJSON, &a.Deny); err != nil {
+		return nil, fmt.Errorf("decoding deny: %w", err)
+	}
+	return &a, nil
+}
+
+// ListAssetsForAgentReeval enumerates every discovered_asset whose
+// last_scan_id points to a scan this agent ran. Used to re-stamp
+// allowlist_status when the agent reports a changed snapshot.
+func (s *PostgresStore) ListAssetsForAgentReeval(ctx context.Context, agentID string) ([]model.AssetReevalRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT da.id, host(da.ip), da.hostname, da.allowlist_status
+		FROM discovered_assets da
+		JOIN scans s ON s.id = da.last_scan_id
+		WHERE s.agent_id = $1
+	`, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("listing assets for reeval: %w", err)
+	}
+	defer rows.Close()
+	var out []model.AssetReevalRow
+	for rows.Next() {
+		var r model.AssetReevalRow
+		if err := rows.Scan(&r.ID, &r.IP, &r.Hostname, &r.Status); err != nil {
+			return nil, fmt.Errorf("scanning reeval row: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UpdateAssetAllowlistStatus writes a new allowlist_status (and
+// refreshes allowlist_checked_at) for one asset.
+func (s *PostgresStore) UpdateAssetAllowlistStatus(ctx context.Context, assetID, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE discovered_assets
+		   SET allowlist_status = $1, allowlist_checked_at = NOW(), updated_at = NOW()
+		 WHERE id = $2`,
+		status, assetID)
+	if err != nil {
+		return fmt.Errorf("updating asset allowlist_status: %w", err)
 	}
 	return nil
 }
@@ -1194,6 +1265,7 @@ func (s *PostgresStore) UpsertBundle(ctx context.Context, b model.Bundle) (*mode
 const assetSelectCols = `id, tenant_id, host(ip), port, hostname, service, version,
 		technologies, cves, compliance_status, source, environment,
 		first_seen, last_seen, last_scan_id, missed_scan_count, metadata,
+		allowlist_status, allowlist_checked_at,
 		created_at, updated_at`
 
 func scanAsset(scanner interface {
@@ -1203,6 +1275,7 @@ func scanAsset(scanner interface {
 		&a.ID, &a.TenantID, &a.IP, &a.Port, &a.Hostname, &a.Service, &a.Version,
 		&a.Technologies, &a.CVEs, &a.ComplianceStatus, &a.Source, &a.Environment,
 		&a.FirstSeen, &a.LastSeen, &a.LastScanID, &a.MissedScanCount, &a.Metadata,
+		&a.AllowlistStatus, &a.AllowlistCheckedAt,
 		&a.CreatedAt, &a.UpdatedAt,
 	)
 }
@@ -1229,7 +1302,8 @@ func (s *PostgresStore) UpsertDiscoveredAsset(ctx context.Context, scanID string
 		&oldAsset.Service, &oldAsset.Version, &oldAsset.Technologies, &oldAsset.CVEs,
 		&oldAsset.ComplianceStatus, &oldAsset.Source, &oldAsset.Environment,
 		&oldAsset.FirstSeen, &oldAsset.LastSeen, &oldAsset.LastScanID, &oldAsset.MissedScanCount,
-		&oldAsset.Metadata, &oldAsset.CreatedAt, &oldAsset.UpdatedAt)
+		&oldAsset.Metadata, &oldAsset.AllowlistStatus, &oldAsset.AllowlistCheckedAt,
+		&oldAsset.CreatedAt, &oldAsset.UpdatedAt)
 	if err == sql.ErrNoRows {
 		hadOld = false
 	} else if err != nil {
@@ -1260,8 +1334,10 @@ func (s *PostgresStore) UpsertDiscoveredAsset(ctx context.Context, scanID string
 	err = tx.QueryRowContext(ctx,
 		`INSERT INTO discovered_assets
 		   (tenant_id, ip, port, hostname, service, version, technologies, cves,
-		    source, environment, first_seen, last_seen, last_scan_id, missed_scan_count)
-		 VALUES ($1, $2::INET, $3, $4, $5, $6, $7, $8, 'discovered', $9, NOW(), NOW(), $10, 0)
+		    source, environment, first_seen, last_seen, last_scan_id, missed_scan_count,
+		    allowlist_status, allowlist_checked_at)
+		 VALUES ($1, $2::INET, $3, $4, $5, $6, $7, $8, 'discovered', $9, NOW(), NOW(), $10, 0,
+		         COALESCE($11, 'unknown'), CASE WHEN $11 IS NULL THEN NULL ELSE NOW() END)
 		 ON CONFLICT (tenant_id, ip, port) DO UPDATE SET
 		   hostname          = COALESCE(EXCLUDED.hostname, discovered_assets.hostname),
 		   service           = COALESCE(EXCLUDED.service,  discovered_assets.service),
@@ -1272,15 +1348,18 @@ func (s *PostgresStore) UpsertDiscoveredAsset(ctx context.Context, scanID string
 		   last_seen         = NOW(),
 		   last_scan_id      = EXCLUDED.last_scan_id,
 		   missed_scan_count = 0,
+		   allowlist_status  = COALESCE($11, discovered_assets.allowlist_status),
+		   allowlist_checked_at = CASE WHEN $11 IS NULL THEN discovered_assets.allowlist_checked_at ELSE NOW() END,
 		   updated_at        = NOW()
 		 RETURNING `+assetSelectCols,
 		in.TenantID, in.IP, in.Port, hostname, service, version, tech, cves,
-		in.Environment, scanID).Scan(
+		in.Environment, scanID, in.AllowlistStatus).Scan(
 		&newAsset.ID, &newAsset.TenantID, &newAsset.IP, &newAsset.Port, &newAsset.Hostname,
 		&newAsset.Service, &newAsset.Version, &newAsset.Technologies, &newAsset.CVEs,
 		&newAsset.ComplianceStatus, &newAsset.Source, &newAsset.Environment,
 		&newAsset.FirstSeen, &newAsset.LastSeen, &newAsset.LastScanID, &newAsset.MissedScanCount,
-		&newAsset.Metadata, &newAsset.CreatedAt, &newAsset.UpdatedAt,
+		&newAsset.Metadata, &newAsset.AllowlistStatus, &newAsset.AllowlistCheckedAt,
+		&newAsset.CreatedAt, &newAsset.UpdatedAt,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upserting asset: %w", err)

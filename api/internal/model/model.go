@@ -230,15 +230,43 @@ type DiscoveredAsset struct {
 	LastSeen          time.Time       `json:"last_seen"`
 	LastScanID        *string         `json:"last_scan_id,omitempty"`
 	MissedScanCount   int             `json:"missed_scan_count"`
-	Metadata          json.RawMessage `json:"metadata"`
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
+	Metadata           json.RawMessage `json:"metadata"`
+	AllowlistStatus    string          `json:"allowlist_status"`
+	AllowlistCheckedAt *time.Time      `json:"allowlist_checked_at,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 const (
 	AssetSourceManual     = "manual"
 	AssetSourceDiscovered = "discovered"
+
+	// ADR 003 D11 follow-up: per-asset scan policy status.
+	AllowlistStatusAllowlisted = "allowlisted"
+	AllowlistStatusOutOfPolicy = "out_of_policy"
+	AllowlistStatusUnknown     = "unknown"
 )
+
+// AgentAllowlist is the agent's most recently reported scan policy.
+// One row per agent; re-fetched by ingest to stamp discovered_assets.
+type AgentAllowlist struct {
+	AgentID      string    `json:"agent_id"`
+	SnapshotHash string    `json:"snapshot_hash"`
+	Allow        []string  `json:"allow"`
+	Deny         []string  `json:"deny"`
+	RateLimitPPS int       `json:"rate_limit_pps"`
+	ReportedAt   time.Time `json:"reported_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// AssetReevalRow is a minimal projection used when re-evaluating
+// allowlist status for all assets owned by one agent.
+type AssetReevalRow struct {
+	ID       string
+	IP       string
+	Hostname *string
+	Status   string
+}
 
 // AssetEvent is one append-only row in asset_events.
 type AssetEvent struct {
