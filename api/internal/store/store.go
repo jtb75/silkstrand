@@ -142,6 +142,13 @@ type Store interface {
 	DeleteAssetSet(ctx context.Context, id string) error
 	ListAllAssetsForTenant(ctx context.Context, tenantID string) ([]model.DiscoveredAsset, error)
 
+	// One-shot scans (ADR 003 R1c-c / D13).
+	ListOneShotScans(ctx context.Context) ([]model.OneShotScan, error)
+	GetOneShotScan(ctx context.Context, id string) (*model.OneShotScan, error)
+	CreateOneShotScan(ctx context.Context, o model.OneShotScan) (*model.OneShotScan, error)
+	UpdateOneShotScanProgress(ctx context.Context, id string, totalTargets int, status string) error
+	CreateScanForOneShot(ctx context.Context, tenantID, agentID, targetID, bundleID, parentID string) (*model.Scan, error)
+
 	// Notification channels + deliveries (ADR 003 R1c / D12).
 	ListNotificationChannels(ctx context.Context) ([]model.NotificationChannel, error)
 	GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error)
