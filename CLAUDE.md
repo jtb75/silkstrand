@@ -94,6 +94,8 @@ silkstrand/
 │   │   ├── model/          # Domain types
 │   │   ├── store/          # Postgres data access + migrations
 │   │   ├── pubsub/         # Upstash Redis pub/sub
+│   │   ├── rules/          # ADR 003 R1b rule engine (predicate matcher + action set)
+│   │   ├── notify/         # ADR 003 R1c-a notification dispatcher (webhook + slack)
 │   │   └── websocket/     # Agent WebSocket hub + message types
 │   └── Dockerfile
 ├── agent/                  # Go edge agent binary
@@ -101,7 +103,9 @@ silkstrand/
 │   └── internal/
 │       ├── config/         # Agent configuration (env vars)
 │       ├── tunnel/         # WSS connection, reconnect, message types
-│       ├── runner/         # Python runner, manifest parser
+│       ├── runner/         # Python compliance runner, recon runner
+│       │   └── recon/      # ADR 003 R1a: naabu/httpx/nuclei pipeline + PD tool installer + allowlist + redaction
+│       ├── prober/         # Per-engine probers (postgres/mssql/mongodb/mysql)
 │       └── cache/          # Local bundle cache
 ├── backoffice/             # Backoffice Manager (separate deployment)
 │   ├── cmd/backoffice-api/ # Entry point
@@ -121,13 +125,14 @@ silkstrand/
 ├── web/                    # Tenant React frontend
 │   └── src/
 │       ├── api/            # API client + types
-│       ├── components/     # Layout, TokenPrompt
-│       └── pages/          # Dashboard, Targets, Scans, ScanResults
+│       ├── components/     # Layout, AssetsTable, AssetDetailDrawer, AssetsTopology (xyflow), CredentialModal, etc.
+│       └── pages/          # Dashboard, Assets, Targets, Agents, Scans, ScanResults,
+│                           #   Settings, Team, AssetSets, CorrelationRules,
+│                           #   NotificationChannels, OneShotScans
 ├── bundles/                # Compliance bundles
-│   └── cis-postgresql-16/  # First bundle: 8 CIS PostgreSQL controls
-│       ├── manifest.yaml
-│       ├── content/checks.py
-│       └── seed.sql
+│   ├── cis-postgresql-16/
+│   ├── cis-mssql-2022/
+│   └── cis-mongodb-8/
 ├── terraform/
 │   ├── bootstrap/
 │   ├── environments/
@@ -146,21 +151,41 @@ silkstrand/
 
 ## Current State
 
+### Roadmap (ADR 003 phases)
+
+| Phase | What | Status |
+|---|---|---|
+| **R0** | Schema for the recon pipeline (discovered_assets, asset_events, asset_sets, correlation_rules, notification_channels, notification_deliveries, one_shot_scans) | ✅ shipped |
+| **R1a** | L3 discovery (naabu/httpx/nuclei), Assets page + topology, manual/discovered unification, customer-controlled scan allowlist (D11), evidence redaction | ✅ shipped |
+| **R1b** | Generalized D2 rule engine (`suggest_target` + `auto_create_target`); promote-from-suggestion API + UI | ✅ shipped |
+| **R1c-a** | D12 notification channels (webhook + slack); `notify` rule action | ✅ shipped |
+| **R1c-b** | D13 asset sets (saved JSONB predicates + preview) | ✅ shipped |
+| **R1c-c** | D13 one-shot scan dispatcher; `run_one_shot_scan` rule action; completion rollup; ephemeral target cleanup | ✅ shipped |
+| **R1.5 (admin UI)** | Rules / Channels / Asset Sets / One-shot pages | ✅ shipped |
+| **R1.5 (deferred)** | Notification retry worker · D14 per-tenant template selection · update flow on rules/channels UI · visual predicate builder | ⏸ |
+| **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential auto-binding (with ADR 004 C1) | ⏳ planned |
+| **R3+** | Vault credential resolver (ADR 004 C3); DNS zone enumeration; Azure/GCP cloud discovery | ⏳ planned |
+
+ADR 004 (credential resolver) is at **C0** (plumbing — `credential_sources` table live with `static` type, dual-write to legacy `credentials` for rollback). C1+ resolvers (AWS Secrets Manager / Vault / etc.) are planned but not started.
+
+Implementation plans live in `docs/plans/r0-r1a-*.md` (data model, API, agent runtime, frontend, synthesis); design rationale in `docs/adr/`.
+
 ### What's Built
 
 - **Data Center API** — Full Go API server with:
   - User-facing routes: targets CRUD, scans, scan results (JWT + tenant middleware)
-  - HS256 tenant JWT validation using a `TENANT_JWT_SECRET` shared with the backoffice. Stdlib-only crypto.
+  - HS256 tenant JWT validation using a `TENANT_JWT_SECRET` shared with the backoffice. Stdlib-only crypto. JWT iss/aud claims (`silkstrand-backoffice` / `silkstrand-tenant-api`).
   - Agent WebSocket endpoint with per-agent API key auth (SHA-256, dual-key rotation)
   - Internal API routes (`/internal/v1/`) for backoffice access (API key auth)
   - Tenant status enforcement (active/suspended/inactive with 5s TTL cache)
   - Scan lifecycle: create → directive via Upstash Redis → agent executes → results via WSS → stored in Postgres
-  - Credential encryption at rest (AES-256-GCM), decrypted before forwarding to agents
+  - Credential storage via the ADR 004 C0 `credential_sources` abstraction (`static` source type today; pluggable resolver pattern ready for AWS Secrets Manager / Vault / etc. in C1+). AES-256-GCM at rest using the `CREDENTIAL_ENCRYPTION_KEY` mounted from Secret Manager. Dual-write to the legacy `credentials` table during the C0 rollback window. `credential.fetch` slog audit event on every read.
   - Stuck scan cleanup: running scans fail automatically on agent disconnect
   - Dockerfile: multi-stage (golang:1.25-alpine → distroless)
-- **Edge Agent** — Go binary with WSS tunnel (exponential backoff reconnect), Python runner, bundle cache, heartbeat. Cross-compiled for 6 platforms on release.
-- **Compliance Bundles** — three live: `cis-postgresql-16`, `cis-mssql-2022`, `cis-mongodb-8`. Per-engine probers (postgres, mssql, mongodb, mysql) wire credentials through to the Python runtime.
-- **Tenant Frontend** — React + TypeScript SPA: dashboard, targets CRUD, scan triggering, results viewer with summary bar. In-house auth (login / accept-invite / forgot-password / reset-password pages), Team page for admins to invite/remove users, `<TenantSwitcher />` in the topbar for multi-tenant users. Dockerfile with nginx that splits `/api/v1/tenant-auth/*` → backoffice and `/api/*` → DC API.
+- **Recon Pipeline (ADR 003 R0–R1c)** — Discovery scans run end-to-end: agent runs naabu → httpx → nuclei against allowlisted targets, streams `asset_discovered` batches over WSS, server upserts `discovered_assets` and derives `asset_events` (`new_asset` / `version_changed` / `new_cve` / `cve_resolved`). Manual targets unify into the same inventory via `targets.asset_id`. Generalized D2 rule engine evaluates per ingest; ships with `suggest_target`, `auto_create_target`, `notify`, and `run_one_shot_scan` actions. D12 notification channels (webhook + Slack; HMAC-signed webhooks; secrets encrypted at rest). D13 asset sets (saved JSONB predicates) + one-shot fan-out dispatcher with auto-cleanup of ephemeral targets on parent completion.
+- **Edge Agent** — Go binary with WSS tunnel (exponential backoff reconnect), Python compliance runner, recon runner (naabu/httpx/nuclei via runtime download from `gs://silkstrand-runtimes`), bundle cache, heartbeat. D11 customer-controlled scan allowlist (`/etc/silkstrand/scan-allowlist.yaml`) gates every recon directive. Cross-compiled for 6 platforms on release.
+- **Compliance Bundles** — three live: `cis-postgresql-16`, `cis-mssql-2022`, `cis-mongodb-8`. Per-engine probers (postgres, mssql, mongodb, mysql) wire credentials through to the Python runtime via FD pipe (no on-disk credential file on Unix).
+- **Tenant Frontend** — React + TypeScript SPA. Pages: Dashboard, Assets (`/assets` — list + topology via `@xyflow/react`, filter chips, detail drawer with suggestions + Approve), Targets, Agents, Scans, Settings, Team. Admin-only: Asset Sets, Rules (correlation rule CRUD), Channels (notification channel CRUD), One-shot Scans (fan-out launcher). In-house auth (login / accept-invite / forgot-password / reset-password pages), `<TenantSwitcher />` in the topbar for multi-tenant users. Dockerfile with nginx that splits `/api/v1/tenant-auth/*` → backoffice and `/api/*` → DC API.
 - **Backoffice Manager** — Separate Go module + React frontend:
   - Data center registration with AES-256-GCM encrypted API key storage
   - Two-phase tenant provisioning (backoffice DB → DC API call, retry on failure)
@@ -188,11 +213,16 @@ All sensitive Cloud Run env vars (DATABASE_URL, REDIS_URL, JWT_SECRET, INTERNAL_
 ### What's Not Built Yet
 
 - Bundle upload API (bundles registered in DB but no upload endpoint; currently seeded manually)
-- Vault/CyberArk credential integrations (ADR 004 Phase C1+, currently `static`-only via the credential_sources table introduced by C0)
-- Recon pipeline (ADR 003 — discovered_assets, asset_events, correlation rules, Assets page)
+- Vault/CyberArk credential integrations (ADR 004 Phase C1+, currently `static`-only)
+- AWS cloud discovery (ADR 003 R2 — `target_type: aws_account`, cloud-native credential auto-binding via `MasterUserSecret`)
+- Per-tenant template selection (D14) — backoffice catalog + tenant settings + directive extension
+- Notification retry worker (failed `notification_deliveries` rows stay failed; rule must re-fire to retry)
+- Update flow on rules/channels/asset-sets in the UI (current admin pages are create + delete only — workaround: delete + recreate)
+- Visual predicate builder (raw JSON textarea is v1)
 - Frontend pagination for list endpoints
 - Agent WebSocket origin restriction for production
 - Audit log surfacing (slog `credential.fetch` events emitted but not queryable in UI)
+- Drop the legacy `credentials` table (ADR 004 C0 follow-up; dual-write still active as rollback seam)
 
 ## DC API Routes
 
@@ -216,13 +246,65 @@ POST   /internal/v1/credentials            # Store encrypted credential
 
 # Tenant API (JWT + tenant middleware)
 GET    /api/v1/targets                     # List targets
-POST   /api/v1/targets                     # Create target
+POST   /api/v1/targets                     # Create target (writes asset row first per D6)
 GET    /api/v1/targets/{id}                # Get target
 PUT    /api/v1/targets/{id}                # Update target
 DELETE /api/v1/targets/{id}                # Delete target
-POST   /api/v1/scans                       # Trigger scan
+
+PUT    /api/v1/targets/{id}/credential     # Set encrypted credential
+GET    /api/v1/targets/{id}/credential     # {set, type} (never plaintext)
+DELETE /api/v1/targets/{id}/credential     # Remove credential
+POST   /api/v1/targets/{id}/probe          # Test connectivity (sync via Redis pub/sub)
+
+POST   /api/v1/scans                       # Trigger scan ({scan_type: compliance|discovery})
 GET    /api/v1/scans                       # List scans
 GET    /api/v1/scans/{id}                  # Get scan with results
+DELETE /api/v1/scans/{id}                  # Delete scan + results
+
+# Recon — ADR 003 R0/R1a
+GET    /api/v1/assets                      # Filter chips: service, ip CIDR, cve_count_gte, source, compliance_status, new_since, changed_since, q
+GET    /api/v1/assets/{id}                 # Asset + recent events
+POST   /api/v1/assets/{id}/promote         # Create compliance target from a candidate asset
+
+# Recon — ADR 003 R1b (rule engine)
+GET    /api/v1/correlation-rules
+POST   /api/v1/correlation-rules           # body: {name, trigger, body: {match, actions[]}}
+GET    /api/v1/correlation-rules/{id}
+PUT    /api/v1/correlation-rules/{id}      # auto-versions
+DELETE /api/v1/correlation-rules/{id}      # soft (disables latest)
+
+# Recon — ADR 003 R1c-a (notifications)
+GET    /api/v1/notification-channels
+POST   /api/v1/notification-channels       # webhook | slack; secrets encrypted
+GET    /api/v1/notification-channels/{id}  # secrets returned as '(set)'
+PUT    /api/v1/notification-channels/{id}
+DELETE /api/v1/notification-channels/{id}
+
+# Recon — ADR 003 R1c-b (asset sets)
+GET    /api/v1/asset-sets
+POST   /api/v1/asset-sets                  # body: {name, description?, predicate}
+POST   /api/v1/asset-sets/preview          # ad-hoc {predicate} → {count, sample}
+GET    /api/v1/asset-sets/{id}
+PUT    /api/v1/asset-sets/{id}
+DELETE /api/v1/asset-sets/{id}
+GET    /api/v1/asset-sets/{id}/preview
+
+# Recon — ADR 003 R1c-c (one-shot scans)
+GET    /api/v1/one-shot-scans
+POST   /api/v1/one-shot-scans              # body: {bundle_id, agent_id, asset_set_id | inline_predicate, ...}
+GET    /api/v1/one-shot-scans/{id}
+
+# Bundles + agents
+GET    /api/v1/bundles                     # List bundles available to tenant
+GET    /api/v1/agents/downloads            # Per-platform agent binary URLs
+GET    /api/v1/agents
+POST   /api/v1/agents
+GET    /api/v1/agents/{id}
+POST   /api/v1/agents/{id}/rotate-key
+POST   /api/v1/agents/{id}/upgrade
+DELETE /api/v1/agents/{id}
+POST   /api/v1/agents/install-tokens       # Bootstrap token for a new agent
+DELETE /api/v1/agents/self?agent_id={id}   # Agent self-deregister (uses agent key)
 ```
 
 ## Backoffice API Routes
@@ -254,10 +336,14 @@ Agent-to-API messages use `{"type": "string", "payload": {...}}` envelope.
 
 | Type | Direction | Payload |
 |------|-----------|---------|
-| `directive` | server → agent | scan_id, bundle_id/name/version, target_id/type/identifier/config, credentials |
+| `directive` | server → agent | scan_id, **scan_type** (compliance\|discovery), bundle_id/name/version, target_id/type/identifier/config, credentials (compliance only) |
 | `scan_started` | agent → server | scan_id |
-| `scan_results` | agent → server | scan_id, results (standard schema) |
+| `scan_results` | agent → server | scan_id, results (standard schema) — compliance only |
 | `scan_error` | agent → server | scan_id, error |
+| `asset_discovered` | agent → server | scan_id, batch_seq, stage (naabu/httpx/nuclei), assets[] — discovery; processed inline |
+| `discovery_completed` | agent → server | scan_id, assets_found, hosts_scanned — terminal for discovery |
+| `probe` / `probe_result` | bidir | One-shot connectivity check (Test Connection button) |
+| `upgrade` | server → agent | New version + sha256-by-platform → agent self-updates and exits |
 | `heartbeat` | agent → server | version, uptime_seconds |
 
 Server sends WebSocket pings every 30s; agent responds with pong (60s timeout).
@@ -267,7 +353,7 @@ Server sends WebSocket pings every 30s; agent responds with pong (60s timeout).
 1. **Data never leaves the customer network** — raw config data stays on-prem. Only structured results (pass/fail, evidence snippets) traverse the tunnel.
 2. **Data residency** — each data center is a regional deployment. EU data stays in EU. Backoffice manages across DCs without direct DB access.
 3. **Outbound-only connectivity** — agents never require inbound firewall rules. WSS over 443, proxy-compatible.
-4. **Credential encryption at rest** — MVP: AES-256-GCM in DC database, decrypted before sending to agent over TLS. Post-MVP: agent fetches from customer vault JIT.
+4. **Credential encryption at rest** — Pluggable resolver via `credential_sources` (ADR 004). Today: `static` source — AES-256-GCM in DC database, key from `CREDENTIAL_ENCRYPTION_KEY` (Secret Manager), decrypted before forwarding to agent over WSS. C1+: per-source agent-side resolution against AWS Secrets Manager / Vault / etc., zero plaintext at rest.
 5. **Framework-agnostic execution** — polyglot bundle runtime. Bundle authors choose their assessment language; standardized JSON output schema is the contract.
 6. **Thin agent, smart bundles** — agent is tunnel + runner + cache. All compliance logic lives in updateable bundles.
 7. **Cost-minimal by default** — serverless-first (Cloud Run, Upstash). Scale to zero. No always-on infrastructure beyond Cloud SQL.
@@ -484,6 +570,7 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 | 008_cascade_target_deletes | credentials cascades on target delete |
 | 009_target_type_engines | per-engine target type constants (postgresql, mssql, mongodb, mysql, etc.) |
 | 010_credential_sources | ADR 004 C0: credential_sources table + targets.credential_source_id, backfill from credentials |
+| 011_recon_pipeline | ADR 003 R0: discovered_assets, asset_events (monthly partitioned), asset_sets, correlation_rules, notification_channels, notification_deliveries (monthly partitioned), one_shot_scans + targets.asset_id (backfill) + scans.scan_type/parent_one_shot_id/discovery_scope; scans.target_id made nullable |
 
 ### Backoffice (`backoffice/internal/store/migrations/`)
 
