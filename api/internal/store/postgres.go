@@ -1625,3 +1625,150 @@ func (s *PostgresStore) DeleteRule(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// --- ADR 003 R1c: notification channels + deliveries ---
+
+const channelSelectCols = `id, tenant_id, name, type, config, enabled, created_at, updated_at`
+
+func scanChannel(row interface {
+	Scan(...interface{}) error
+}, c *model.NotificationChannel) error {
+	return row.Scan(&c.ID, &c.TenantID, &c.Name, &c.Type, &c.Config, &c.Enabled, &c.CreatedAt, &c.UpdatedAt)
+}
+
+func (s *PostgresStore) ListNotificationChannels(ctx context.Context) ([]model.NotificationChannel, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+channelSelectCols+` FROM notification_channels WHERE tenant_id = $1 ORDER BY name`,
+		tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list notification channels: %w", err)
+	}
+	defer rows.Close()
+	var out []model.NotificationChannel
+	for rows.Next() {
+		var c model.NotificationChannel
+		if err := scanChannel(rows, &c); err != nil {
+			return nil, fmt.Errorf("scan channel: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error) {
+	tenantID := TenantID(ctx)
+	var c model.NotificationChannel
+	err := scanChannel(s.db.QueryRowContext(ctx,
+		`SELECT `+channelSelectCols+` FROM notification_channels WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID), &c)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get notification channel: %w", err)
+	}
+	return &c, nil
+}
+
+// GetNotificationChannelByName resolves a channel by its tenant-unique
+// name. Used by the notify dispatcher (rule action's `channel` field).
+// Not tenant-scoped via context — the caller provides tenant_id
+// explicitly because dispatch runs in a detached goroutine.
+func (s *PostgresStore) GetNotificationChannelByName(ctx context.Context, tenantID, name string) (*model.NotificationChannel, error) {
+	var c model.NotificationChannel
+	err := scanChannel(s.db.QueryRowContext(ctx,
+		`SELECT `+channelSelectCols+` FROM notification_channels WHERE tenant_id = $1 AND name = $2`,
+		tenantID, name), &c)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get notification channel by name: %w", err)
+	}
+	return &c, nil
+}
+
+func (s *PostgresStore) CreateNotificationChannel(ctx context.Context, c model.NotificationChannel) (*model.NotificationChannel, error) {
+	var out model.NotificationChannel
+	err := scanChannel(s.db.QueryRowContext(ctx,
+		`INSERT INTO notification_channels (tenant_id, name, type, config, enabled)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING `+channelSelectCols,
+		c.TenantID, c.Name, c.Type, c.Config, c.Enabled), &out)
+	if err != nil {
+		return nil, fmt.Errorf("create notification channel: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) UpdateNotificationChannel(ctx context.Context, c model.NotificationChannel) (*model.NotificationChannel, error) {
+	tenantID := TenantID(ctx)
+	var out model.NotificationChannel
+	err := scanChannel(s.db.QueryRowContext(ctx,
+		`UPDATE notification_channels
+		    SET type = $1, config = $2, enabled = $3, updated_at = NOW()
+		  WHERE id = $4 AND tenant_id = $5
+		  RETURNING `+channelSelectCols,
+		c.Type, c.Config, c.Enabled, c.ID, tenantID), &out)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("update notification channel: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) DeleteNotificationChannel(ctx context.Context, id string) error {
+	tenantID := TenantID(ctx)
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM notification_channels WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID)
+	if err != nil {
+		return fmt.Errorf("delete notification channel: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) InsertNotificationDelivery(ctx context.Context, d model.NotificationDelivery) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO notification_deliveries
+		   (tenant_id, channel_id, rule_id, event_id, severity, status, attempt, response_code, error, payload)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		d.TenantID, d.ChannelID, d.RuleID, d.EventID, d.Severity, d.Status,
+		d.Attempt, d.ResponseCode, d.Error, d.Payload)
+	if err != nil {
+		return fmt.Errorf("insert notification delivery: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListNotificationDeliveries(ctx context.Context, limit int) ([]model.NotificationDelivery, error) {
+	tenantID := TenantID(ctx)
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, channel_id, rule_id, event_id, severity, status, attempt,
+		        response_code, error, payload, dispatched_at
+		   FROM notification_deliveries
+		  WHERE tenant_id = $1
+		  ORDER BY dispatched_at DESC
+		  LIMIT $2`, tenantID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list deliveries: %w", err)
+	}
+	defer rows.Close()
+	var out []model.NotificationDelivery
+	for rows.Next() {
+		var d model.NotificationDelivery
+		if err := rows.Scan(&d.ID, &d.TenantID, &d.ChannelID, &d.RuleID, &d.EventID,
+			&d.Severity, &d.Status, &d.Attempt, &d.ResponseCode, &d.Error, &d.Payload,
+			&d.DispatchedAt); err != nil {
+			return nil, fmt.Errorf("scan delivery: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
