@@ -45,7 +45,7 @@ Ongoing, the same admin expects to:
 | 6b | Set / update credentials | ✅ | ✅ | |
 | 6c | Run compliance scan | ✅ | ✅ | |
 | 6d | View results | ✅ | ✅ | |
-| 6e | Edit target (name / identifier / config) | ✅ | ⚠️ | UI only reassigns agent today. Added to deferred list. |
+| 6e | Edit target (name / identifier / config) | ✅ | ✅ | Edit button opens the Targets form pre-filled; type/kind locked on edit. |
 | 7a | Correlation rules | ✅ | ✅ | Match still raw JSON (predicate builder adopted on Asset Sets only). |
 | 7b | Notification channels | ✅ | ✅ | Email / PagerDuty rejected by server. Retry worker deferred. |
 | 7c | Asset sets | ✅ | ✅ | Visual predicate builder landed v0.1.38. |
@@ -83,12 +83,12 @@ backend surface, so we can parallelize later if useful.
 | O2 | Discovery target creation | — | Targets form branch | M | **✅ shipped** |
 | O3 | Discovery scan launcher | migration 015 (global discovery bundle row) | Scans page scan-type picker | S | **✅ shipped** |
 | O4 | Allowlist viewer | `GET /api/v1/agents/{id}/allowlist` | Agents modal | S | **✅ shipped** |
-| O5 | Target edit flow | none | Targets form reuse | M | Rename / re-identify / config edit |
+| O5 | Target edit flow | none | Targets form reuse | M | **✅ shipped** |
 | ~~O6~~ | ~~Agent upgrade trigger~~ | — | — | — | **Already shipped** (per-row button exists). |
 | O7 | Audit surface v1 | `GET /api/v1/audit-log` (new, read-only) | new Audit page | M–L | Day-two transparency |
 | O8 | Correlation rule predicate builder adoption | none | CorrelationRules form split + new ActionListEditor | M | Nit polish; defer unless asked |
 
-Suggested execution order: **O5 → O7** (O1, O2, O3, O4, O6 done).
+Suggested execution order: **O7** (O1–O6 done).
 
 Each PR cycles through stage → tag → prod the same way we've been doing,
 averaging ~1 tag per PR.
