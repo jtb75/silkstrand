@@ -158,7 +158,18 @@ type Store interface {
 	// Agent allowlist snapshots (ADR 003 D11 follow-up). Informational
 	// mirror of the agent's customer-owned scan policy; used to label
 	// discovered_assets for UI gating.
-	UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) error
+	//
+	// UpsertAgentAllowlist returns changed=true when the snapshot hash
+	// differs from what was previously stored (or no prior row existed).
+	// Callers re-evaluate all owned assets only when changed=true.
+	UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) (changed bool, err error)
+	GetAgentAllowlist(ctx context.Context, agentID string) (*model.AgentAllowlist, error)
+
+	// ListAssetsForAgentReeval returns the (id, ip, hostname) tuples for
+	// every discovered_asset whose last_scan was owned by agentID. The
+	// caller evaluates each and writes back via UpdateAssetAllowlistStatus.
+	ListAssetsForAgentReeval(ctx context.Context, agentID string) ([]model.AssetReevalRow, error)
+	UpdateAssetAllowlistStatus(ctx context.Context, assetID, status string) error
 
 	// Notification channels + deliveries (ADR 003 R1c / D12).
 	ListNotificationChannels(ctx context.Context) ([]model.NotificationChannel, error)
@@ -183,6 +194,11 @@ type DiscoveredAssetInput struct {
 	Technologies json.RawMessage
 	CVEs         json.RawMessage
 	Environment  *string
+	// AllowlistStatus, when set, stamps the asset with the caller's
+	// evaluation against the owning agent's reported policy (ADR 003
+	// D11 follow-up). Nil leaves the existing value intact — defaulting
+	// to 'unknown' on fresh inserts.
+	AllowlistStatus *string
 }
 
 // AgentAllowlistInput is the agent_allowlists upsert payload.

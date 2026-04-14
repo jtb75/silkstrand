@@ -173,6 +173,13 @@ func (h *AssetHandler) Promote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "asset not found")
 		return
 	}
+	// ADR 003 D11 follow-up: refuse to promote an out-of-policy asset.
+	// 'unknown' still allowed — missing snapshot must not block the
+	// product; the agent's allowlist is the ultimate gate anyway.
+	if asset.AllowlistStatus == model.AllowlistStatusOutOfPolicy {
+		writeError(w, http.StatusConflict, "asset is out of the agent's scan allowlist; update /etc/silkstrand/scan-allowlist.yaml on the agent before promoting")
+		return
+	}
 	var req struct {
 		BundleID string `json:"bundle_id"`
 	}
