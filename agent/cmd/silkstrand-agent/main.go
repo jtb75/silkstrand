@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jtb75/silkstrand/agent/internal/allowlistreport"
 	"github.com/jtb75/silkstrand/agent/internal/bootstrap"
 	"github.com/jtb75/silkstrand/agent/internal/cache"
 	"github.com/jtb75/silkstrand/agent/internal/config"
@@ -156,6 +157,8 @@ func main() {
 		cancel()
 	}()
 
+	go allowlistreport.Run(ctx, tun, allowlistPath())
+
 	tun.Run(ctx, version)
 	slog.Info("agent stopped")
 }
@@ -272,6 +275,15 @@ func runUninstall() error {
 }
 
 func printlnSafe(s string) { _, _ = os.Stdout.WriteString(s + "\n") }
+
+// allowlistPath mirrors the recon package's default so both pieces read
+// the same file.
+func allowlistPath() string {
+	if v := os.Getenv("SILKSTRAND_SCAN_ALLOWLIST_PATH"); v != "" {
+		return v
+	}
+	return "/etc/silkstrand/scan-allowlist.yaml"
+}
 
 // handleDiscoveryDirective dispatches a discovery scan: walks the
 // naabu → httpx → nuclei pipeline, streams asset_discovered batches

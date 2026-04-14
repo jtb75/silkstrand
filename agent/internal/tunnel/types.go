@@ -18,9 +18,21 @@ const (
 	TypeUpgrade            = "upgrade"
 	TypeProbe              = "probe"
 	TypeProbeResult        = "probe_result"
-	TypeAssetDiscovered    = "asset_discovered"   // ADR 003 R1a
+	TypeAssetDiscovered    = "asset_discovered"    // ADR 003 R1a
 	TypeDiscoveryCompleted = "discovery_completed" // ADR 003 R1a
+	TypeAllowlistSnapshot  = "allowlist_snapshot"  // ADR 003 D11 — agent → server informational
 )
+
+// AllowlistSnapshotPayload is the agent's most recently reported
+// scan allowlist (D11). Informational only — the agent remains the
+// policy authority. Server uses it to tag discovered_assets with a
+// display status so the UI can surface/gate promote.
+type AllowlistSnapshotPayload struct {
+	Hash         string   `json:"hash"`
+	Allow        []string `json:"allow"`
+	Deny         []string `json:"deny,omitempty"`
+	RateLimitPPS int      `json:"rate_limit_pps,omitempty"`
+}
 
 // ProbePayload is sent from server to agent to validate target connectivity
 // without running a scan.

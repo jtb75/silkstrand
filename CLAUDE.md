@@ -571,6 +571,7 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 | 009_target_type_engines | per-engine target type constants (postgresql, mssql, mongodb, mysql, etc.) |
 | 010_credential_sources | ADR 004 C0: credential_sources table + targets.credential_source_id, backfill from credentials |
 | 011_recon_pipeline | ADR 003 R0: discovered_assets, asset_events (monthly partitioned), asset_sets, correlation_rules, notification_channels, notification_deliveries (monthly partitioned), one_shot_scans + targets.asset_id (backfill) + scans.scan_type/parent_one_shot_id/discovery_scope; scans.target_id made nullable |
+| 012_agent_allowlists | ADR 003 D11 follow-up: agent_allowlists table (one row per agent) storing customer allowlist snapshot for UI gating |
 
 ### Backoffice (`backoffice/internal/store/migrations/`)
 

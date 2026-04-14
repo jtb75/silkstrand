@@ -274,6 +274,22 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub) func(a
 				slog.Error("updating agent heartbeat", "agent_id", agentID, "error", err)
 			}
 
+		case websocket.TypeAllowlistSnapshot:
+			var payload websocket.AllowlistSnapshotPayload
+			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+				slog.Warn("parsing allowlist_snapshot payload", "agent_id", agentID, "error", err)
+				return
+			}
+			if err := s.UpsertAgentAllowlist(ctx, store.AgentAllowlistInput{
+				AgentID:      agentID,
+				Hash:         payload.Hash,
+				Allow:        payload.Allow,
+				Deny:         payload.Deny,
+				RateLimitPPS: payload.RateLimitPPS,
+			}); err != nil {
+				slog.Error("upserting agent allowlist", "agent_id", agentID, "error", err)
+			}
+
 		case websocket.TypeAssetDiscovered:
 			handleAssetDiscovered(ctx, s, agentID, msg.Payload)
 
