@@ -37,7 +37,7 @@ function summarize(e: AssetEvent): string {
 }
 
 export default function AssetEventTimeline({ events }: Props) {
-  if (events.length === 0) {
+  if (!events || events.length === 0) {
     return <p className="muted">No recorded events yet.</p>;
   }
   return (
