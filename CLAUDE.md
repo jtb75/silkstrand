@@ -576,6 +576,7 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 | 013_asset_allowlist_status | ADR 003 D11 follow-up: allowlist_status (allowlisted/out_of_policy/unknown) + allowlist_checked_at on discovered_assets |
 | 014_drop_legacy_credentials | ADR 004 C0 close-out: drop legacy `credentials` table; `credential_sources` (static) is now the sole credential surface |
 | 015_discovery_bundle | Seed global `discovery` bundle row (id `11111111-…`) so scan_type=discovery scans have a valid bundles.id to reference; agent ignores bundle contents for discovery per ADR 003 R1a |
+| 016_scan_error_message | `scans.error_message TEXT` — persists the agent-reported failure reason so the UI can render it on the Scan Results page |
 
 ### Backoffice (`backoffice/internal/store/migrations/`)
 

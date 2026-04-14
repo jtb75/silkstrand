@@ -141,6 +141,15 @@ export default function ScanResults() {
         )}
       </div>
 
+      {scan.status === 'failed' && scan.error_message && (
+        <div className="detail-card" style={{ borderColor: '#b91c1c', marginTop: 12 }}>
+          <strong>Failure reason:</strong>
+          <pre style={{ whiteSpace: 'pre-wrap', marginTop: 6, marginBottom: 0 }}>
+            {scan.error_message}
+          </pre>
+        </div>
+      )}
+
       <SummaryBar scan={scan} />
 
       {scan.results && scan.results.length > 0 ? (

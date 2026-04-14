@@ -246,7 +246,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub) func(a
 				slog.Error("parsing scan_error payload", "agent_id", agentID, "error", err)
 				return
 			}
-			if err := s.UpdateScanStatus(ctx, payload.ScanID, model.ScanStatusFailed); err != nil {
+			if err := s.FailScan(ctx, payload.ScanID, payload.Error); err != nil {
 				slog.Error("updating scan to failed", "scan_id", payload.ScanID, "error", err)
 			}
 			if err := s.OnChildScanTerminal(ctx, payload.ScanID); err != nil {

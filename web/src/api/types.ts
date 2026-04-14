@@ -46,6 +46,7 @@ export interface Scan {
   bundle_id: string;
   scan_type?: 'compliance' | 'discovery';
   status: 'pending' | 'running' | 'completed' | 'failed';
+  error_message?: string;
   started_at?: string;
   completed_at?: string;
   created_at: string;
