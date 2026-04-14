@@ -90,16 +90,8 @@ func (h *CredentialsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		stored = req.Data
 	}
 
-	// Dual-write during ADR 004 C0 rollout: write the new credential_sources
-	// row first (so reads prefer it), then the legacy credentials row so it
-	// stays authoritative if this code path is reverted.
 	if err := h.store.UpsertStaticCredentialSource(r.Context(), claims.TenantID, targetID, req.Type, stored); err != nil {
 		slog.Error("upserting credential source", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to save credential")
-		return
-	}
-	if err := h.store.UpsertCredential(r.Context(), claims.TenantID, targetID, req.Type, stored); err != nil {
-		slog.Error("upserting legacy credential", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to save credential")
 		return
 	}

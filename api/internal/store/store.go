@@ -55,15 +55,8 @@ type Store interface {
 	ListBundlesForTenant(ctx context.Context, tenantID string) ([]model.Bundle, error)
 	UpsertBundle(ctx context.Context, b model.Bundle) (*model.Bundle, error)
 
-	// Credentials (legacy table; kept authoritative through ADR 004 C0
-	// rollback window — writes dual-write to both surfaces).
-	GetCredentialsByTarget(ctx context.Context, targetID string) (json.RawMessage, error)
-	CreateCredential(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) (string, error)
-	UpsertCredential(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) error
-	DeleteCredential(ctx context.Context, tenantID, targetID string) error
-	HasCredential(ctx context.Context, targetID string) (bool, string, error)
-
-	// Credential Sources (ADR 004 C0).
+	// Credential Sources (ADR 004 C0 — sole surface since the legacy
+	// `credentials` table was dropped in migration 014).
 	CreateCredentialSource(ctx context.Context, tenantID, srcType string, config json.RawMessage) (string, error)
 	GetCredentialSource(ctx context.Context, id string) (*model.CredentialSource, error)
 	GetCredentialSourceByTarget(ctx context.Context, targetID string) (*model.CredentialSource, error)

@@ -166,7 +166,7 @@ silkstrand/
 | **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential auto-binding (with ADR 004 C1) | ⏳ planned |
 | **R3+** | Vault credential resolver (ADR 004 C3); DNS zone enumeration; Azure/GCP cloud discovery | ⏳ planned |
 
-ADR 004 (credential resolver) is at **C0** (plumbing — `credential_sources` table live with `static` type, dual-write to legacy `credentials` for rollback). C1+ resolvers (AWS Secrets Manager / Vault / etc.) are planned but not started.
+ADR 004 (credential resolver) is at **C0** (plumbing — `credential_sources` is the sole surface with `static` type; legacy `credentials` table dropped in migration 014). C1+ resolvers (AWS Secrets Manager / Vault / etc.) are planned but not started.
 
 Implementation plans live in `docs/plans/r0-r1a-*.md` (data model, API, agent runtime, frontend, synthesis); design rationale in `docs/adr/`.
 
@@ -179,7 +179,7 @@ Implementation plans live in `docs/plans/r0-r1a-*.md` (data model, API, agent ru
   - Internal API routes (`/internal/v1/`) for backoffice access (API key auth)
   - Tenant status enforcement (active/suspended/inactive with 5s TTL cache)
   - Scan lifecycle: create → directive via Upstash Redis → agent executes → results via WSS → stored in Postgres
-  - Credential storage via the ADR 004 C0 `credential_sources` abstraction (`static` source type today; pluggable resolver pattern ready for AWS Secrets Manager / Vault / etc. in C1+). AES-256-GCM at rest using the `CREDENTIAL_ENCRYPTION_KEY` mounted from Secret Manager. Dual-write to the legacy `credentials` table during the C0 rollback window. `credential.fetch` slog audit event on every read.
+  - Credential storage via the ADR 004 C0 `credential_sources` abstraction (`static` source type today; pluggable resolver pattern ready for AWS Secrets Manager / Vault / etc. in C1+). AES-256-GCM at rest using the `CREDENTIAL_ENCRYPTION_KEY` mounted from Secret Manager. `credential.fetch` slog audit event on every read.
   - Stuck scan cleanup: running scans fail automatically on agent disconnect
   - Dockerfile: multi-stage (golang:1.25-alpine → distroless)
 - **Recon Pipeline (ADR 003 R0–R1c)** — Discovery scans run end-to-end: agent runs naabu → httpx → nuclei against allowlisted targets, streams `asset_discovered` batches over WSS, server upserts `discovered_assets` and derives `asset_events` (`new_asset` / `version_changed` / `new_cve` / `cve_resolved`). Manual targets unify into the same inventory via `targets.asset_id`. Generalized D2 rule engine evaluates per ingest; ships with `suggest_target`, `auto_create_target`, `notify`, and `run_one_shot_scan` actions. D12 notification channels (webhook + Slack; HMAC-signed webhooks; secrets encrypted at rest). D13 asset sets (saved JSONB predicates) + one-shot fan-out dispatcher with auto-cleanup of ephemeral targets on parent completion.
@@ -222,7 +222,6 @@ All sensitive Cloud Run env vars (DATABASE_URL, REDIS_URL, JWT_SECRET, INTERNAL_
 - Frontend pagination for list endpoints
 - Agent WebSocket origin restriction for production
 - Audit log surfacing (slog `credential.fetch` events emitted but not queryable in UI)
-- Drop the legacy `credentials` table (ADR 004 C0 follow-up; dual-write still active as rollback seam)
 
 ## DC API Routes
 
@@ -573,6 +572,7 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 | 011_recon_pipeline | ADR 003 R0: discovered_assets, asset_events (monthly partitioned), asset_sets, correlation_rules, notification_channels, notification_deliveries (monthly partitioned), one_shot_scans + targets.asset_id (backfill) + scans.scan_type/parent_one_shot_id/discovery_scope; scans.target_id made nullable |
 | 012_agent_allowlists | ADR 003 D11 follow-up: agent_allowlists table (one row per agent) storing customer allowlist snapshot for UI gating |
 | 013_asset_allowlist_status | ADR 003 D11 follow-up: allowlist_status (allowlisted/out_of_policy/unknown) + allowlist_checked_at on discovered_assets |
+| 014_drop_legacy_credentials | ADR 004 C0 close-out: drop legacy `credentials` table; `credential_sources` (static) is now the sole credential surface |
 
 ### Backoffice (`backoffice/internal/store/migrations/`)
 
