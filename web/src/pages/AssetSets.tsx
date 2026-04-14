@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   listAssetSets,
   createAssetSet,
+  updateAssetSet,
   deleteAssetSet,
   previewAssetSetAdhoc,
   type UpsertAssetSetRequest,
@@ -16,6 +17,8 @@ const EXAMPLE_PREDICATE = `{
   ]
 }`;
 
+type FormMode = { kind: 'new' } | { kind: 'edit'; set: AssetSet };
+
 export default function AssetSets() {
   const queryClient = useQueryClient();
   const { data: sets, isLoading, error } = useQuery({
@@ -23,13 +26,21 @@ export default function AssetSets() {
     queryFn: listAssetSets,
   });
 
-  const [showForm, setShowForm] = useState(false);
+  const [mode, setMode] = useState<FormMode | null>(null);
 
   const createMut = useMutation({
     mutationFn: createAssetSet,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['asset-sets'] });
-      setShowForm(false);
+      setMode(null);
+    },
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, req }: { id: string; req: UpsertAssetSetRequest }) => updateAssetSet(id, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['asset-sets'] });
+      setMode(null);
     },
   });
 
@@ -44,20 +55,31 @@ export default function AssetSets() {
     deleteMut.mutate(s.id);
   }
 
+  const submitting = createMut.isPending || updateMut.isPending;
+  const submitError = createMut.error ?? updateMut.error;
+
   return (
     <div>
       <div className="page-header">
         <h1>Asset Sets</h1>
-        <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
-          {showForm ? 'Cancel' : 'New Set'}
+        <button
+          className="btn btn-primary"
+          onClick={() => setMode(mode ? null : { kind: 'new' })}
+        >
+          {mode ? 'Cancel' : 'New Set'}
         </button>
       </div>
 
-      {showForm && (
+      {mode && (
         <AssetSetForm
-          submitting={createMut.isPending}
-          error={createMut.error ? (createMut.error as Error).message : null}
-          onSubmit={(req) => createMut.mutate(req)}
+          key={mode.kind === 'edit' ? mode.set.id : 'new'}
+          mode={mode}
+          submitting={submitting}
+          error={submitError ? (submitError as Error).message : null}
+          onSubmit={(req) => {
+            if (mode.kind === 'edit') updateMut.mutate({ id: mode.set.id, req });
+            else createMut.mutate(req);
+          }}
         />
       )}
 
@@ -85,7 +107,13 @@ export default function AssetSets() {
                 <td>{s.name}</td>
                 <td>{s.description || '-'}</td>
                 <td>{new Date(s.created_at).toLocaleString()}</td>
-                <td>
+                <td style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    className="btn btn-small"
+                    onClick={() => setMode({ kind: 'edit', set: s })}
+                  >
+                    Edit
+                  </button>
                   <button
                     className="btn btn-small btn-danger"
                     onClick={(e) => handleDelete(e, s)}
@@ -104,13 +132,17 @@ export default function AssetSets() {
 }
 
 interface FormProps {
+  mode: FormMode;
   submitting: boolean;
   error: string | null;
   onSubmit: (req: UpsertAssetSetRequest) => void;
 }
 
-function AssetSetForm({ submitting, error, onSubmit }: FormProps) {
-  const [predicateText, setPredicateText] = useState(EXAMPLE_PREDICATE);
+function AssetSetForm({ mode, submitting, error, onSubmit }: FormProps) {
+  const initial = mode.kind === 'edit' ? mode.set : null;
+  const [predicateText, setPredicateText] = useState(
+    initial ? JSON.stringify(initial.predicate, null, 2) : EXAMPLE_PREDICATE,
+  );
   const [parseErr, setParseErr] = useState<string | null>(null);
   const [preview, setPreview] = useState<AssetSetPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -154,13 +186,14 @@ function AssetSetForm({ submitting, error, onSubmit }: FormProps) {
 
   return (
     <form className="form-card" onSubmit={handleSubmit}>
+      <h3 style={{ marginTop: 0 }}>{initial ? `Edit ${initial.name}` : 'New asset set'}</h3>
       <div className="form-group">
         <label htmlFor="name">Name</label>
-        <input id="name" name="name" required placeholder="postgres-candidates" />
+        <input id="name" name="name" required defaultValue={initial?.name ?? ''} placeholder="postgres-candidates" />
       </div>
       <div className="form-group">
         <label htmlFor="description">Description</label>
-        <input id="description" name="description" placeholder="optional" />
+        <input id="description" name="description" defaultValue={initial?.description ?? ''} placeholder="optional" />
       </div>
       <div className="form-group">
         <label htmlFor="predicate">Predicate (JSONB)</label>
@@ -178,7 +211,7 @@ function AssetSetForm({ submitting, error, onSubmit }: FormProps) {
           {previewing ? 'Previewing…' : 'Preview matches'}
         </button>
         <button type="submit" className="btn btn-primary" disabled={submitting}>
-          {submitting ? 'Saving…' : 'Save'}
+          {submitting ? 'Saving…' : initial ? 'Save changes' : 'Save'}
         </button>
       </div>
       {preview && (

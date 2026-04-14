@@ -91,6 +91,12 @@ func (h *NotificationChannelsHandler) Update(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	ch.ID = existing.ID
+	// Preserve existing encrypted secrets when the incoming config
+	// omits them (or sends the '(set)' sentinel) so the UI can edit
+	// non-secret fields without forcing the admin to re-enter secrets.
+	if merged, err := mergePreservedSecrets(ch.Type, ch.Config, existing.Config); err == nil {
+		ch.Config = merged
+	}
 	out, err := h.store.UpdateNotificationChannel(r.Context(), *ch)
 	if err != nil {
 		slog.Error("update channel", "error", err)
@@ -134,7 +140,7 @@ func (h *NotificationChannelsHandler) parseChannel(r *http.Request, isNew bool) 
 	default:
 		return nil, errors.New("unknown channel type: " + req.Type)
 	}
-	encCfg, err := encryptSecretsInConfig(req.Type, req.Config, h.encKey)
+	encCfg, err := encryptSecretsInConfig(req.Type, req.Config, h.encKey, isNew)
 	if err != nil {
 		return nil, err
 	}
@@ -153,8 +159,10 @@ func (h *NotificationChannelsHandler) parseChannel(r *http.Request, isNew bool) 
 
 // encryptSecretsInConfig takes plaintext incoming config JSON and
 // returns a marshalled config with sensitive fields replaced by
-// encrypted ciphertext (ADR 004 C0 pattern).
-func encryptSecretsInConfig(chType string, raw json.RawMessage, encKey []byte) (json.RawMessage, error) {
+// encrypted ciphertext (ADR 004 C0 pattern). On update (isNew=false),
+// the '(set)' sentinel or an empty/missing secret field is dropped so
+// the Update handler can merge the existing encrypted value back in.
+func encryptSecretsInConfig(chType string, raw json.RawMessage, encKey []byte, isNew bool) (json.RawMessage, error) {
 	var cfg map[string]any
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, errors.New("config must be a JSON object")
@@ -164,7 +172,10 @@ func encryptSecretsInConfig(chType string, raw json.RawMessage, encKey []byte) (
 		if url, ok := cfg["url"].(string); !ok || url == "" {
 			return nil, errors.New("webhook config requires url")
 		}
-		if sec, ok := cfg["secret"].(string); ok && sec != "" {
+		switch sec, _ := cfg["secret"].(string); {
+		case sec == "" || sec == "(set)":
+			delete(cfg, "secret")
+		default:
 			enc, err := notify.EncryptSecret(sec, encKey)
 			if err != nil {
 				return nil, err
@@ -172,17 +183,51 @@ func encryptSecretsInConfig(chType string, raw json.RawMessage, encKey []byte) (
 			cfg["secret"] = enc
 		}
 	case model.ChannelTypeSlack:
-		sec, ok := cfg["webhook_url"].(string)
-		if !ok || sec == "" {
-			return nil, errors.New("slack config requires webhook_url")
+		sec, _ := cfg["webhook_url"].(string)
+		switch {
+		case sec == "" || sec == "(set)":
+			if isNew {
+				return nil, errors.New("slack config requires webhook_url")
+			}
+			delete(cfg, "webhook_url")
+		default:
+			enc, err := notify.EncryptSecret(sec, encKey)
+			if err != nil {
+				return nil, err
+			}
+			cfg["webhook_url"] = enc
 		}
-		enc, err := notify.EncryptSecret(sec, encKey)
-		if err != nil {
-			return nil, err
-		}
-		cfg["webhook_url"] = enc
 	}
 	return json.Marshal(cfg)
+}
+
+// mergePreservedSecrets copies existing encrypted secret fields into
+// newCfg whenever they're missing (the update path dropped them in
+// encryptSecretsInConfig). Keeps the existing ciphertext intact.
+func mergePreservedSecrets(chType string, newCfg, existingCfg json.RawMessage) (json.RawMessage, error) {
+	var nc, ec map[string]any
+	if err := json.Unmarshal(newCfg, &nc); err != nil {
+		return newCfg, err
+	}
+	if err := json.Unmarshal(existingCfg, &ec); err != nil {
+		return newCfg, err
+	}
+	var keys []string
+	switch chType {
+	case model.ChannelTypeWebhook:
+		keys = []string{"secret"}
+	case model.ChannelTypeSlack:
+		keys = []string{"webhook_url"}
+	}
+	for _, k := range keys {
+		if _, present := nc[k]; present {
+			continue
+		}
+		if existingV, ok := ec[k]; ok {
+			nc[k] = existingV
+		}
+	}
+	return json.Marshal(nc)
 }
 
 // scrubChannelForWire replaces sensitive config values with a sentinel
