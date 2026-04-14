@@ -1,8 +1,15 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { listScans, listTargets, createScan, listBundles, deleteScan } from '../api/client';
+import {
+  listScans, listTargets, createScan, listBundles, deleteScan,
+  DISCOVERY_BUNDLE_ID,
+} from '../api/client';
 import type { Scan, Target, Bundle } from '../api/types';
+
+// Target types eligible for a discovery scan (ADR 003 R1a recon pipeline).
+const DISCOVERY_TARGET_TYPES = new Set(['host', 'cidr', 'network_range']);
+type ScanKind = 'compliance' | 'discovery';
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{status}</span>;
@@ -13,6 +20,7 @@ export default function Scans() {
   const navigate = useNavigate();
   const [showForm, setShowForm] = useState(false);
   const [selectedTargetId, setSelectedTargetId] = useState('');
+  const [scanKind, setScanKind] = useState<ScanKind>('compliance');
 
   const { data: scans, isLoading, error } = useQuery<Scan[]>({
     queryKey: ['scans'],
@@ -39,12 +47,13 @@ export default function Scans() {
   });
 
   const createMutation = useMutation({
-    mutationFn: ({ targetId, bundleId }: { targetId: string; bundleId: string }) =>
-      createScan(targetId, bundleId),
+    mutationFn: ({ targetId, bundleId, kind }: { targetId: string; bundleId: string; kind: ScanKind }) =>
+      createScan(targetId, bundleId, kind),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scans'] });
       setShowForm(false);
       setSelectedTargetId('');
+      setScanKind('compliance');
     },
   });
 
@@ -72,10 +81,11 @@ export default function Scans() {
     e.preventDefault();
     const form = e.currentTarget;
     const formData = new FormData(form);
-    createMutation.mutate({
-      targetId: formData.get('target_id') as string,
-      bundleId: formData.get('bundle_id') as string,
-    });
+    const targetId = formData.get('target_id') as string;
+    const bundleId = scanKind === 'discovery'
+      ? DISCOVERY_BUNDLE_ID
+      : (formData.get('bundle_id') as string);
+    createMutation.mutate({ targetId, bundleId, kind: scanKind });
   }
 
   return (
@@ -87,6 +97,7 @@ export default function Scans() {
           onClick={() => {
             setShowForm(!showForm);
             setSelectedTargetId('');
+            setScanKind('compliance');
           }}
         >
           {showForm ? 'Cancel' : 'New Scan'}
@@ -96,6 +107,36 @@ export default function Scans() {
       {showForm && (
         <form className="form-card" onSubmit={handleCreate}>
           <div className="form-group">
+            <label>Scan type</label>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <label style={{ fontWeight: 'normal' }}>
+                <input
+                  type="radio"
+                  name="scan_kind"
+                  value="compliance"
+                  checked={scanKind === 'compliance'}
+                  onChange={() => { setScanKind('compliance'); setSelectedTargetId(''); }}
+                />{' '}Compliance
+              </label>
+              <label style={{ fontWeight: 'normal' }}>
+                <input
+                  type="radio"
+                  name="scan_kind"
+                  value="discovery"
+                  checked={scanKind === 'discovery'}
+                  onChange={() => { setScanKind('discovery'); setSelectedTargetId(''); }}
+                />{' '}Discovery
+              </label>
+            </div>
+            {scanKind === 'discovery' && (
+              <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+                Runs naabu → httpx → nuclei against the target. The agent's
+                allowlist YAML gates everything — ranges outside the allowlist
+                are rejected before any packet is sent.
+              </p>
+            )}
+          </div>
+          <div className="form-group">
             <label htmlFor="target_id">Target</label>
             <select
               id="target_id"
@@ -104,16 +145,26 @@ export default function Scans() {
               value={selectedTargetId}
               onChange={(e) => setSelectedTargetId(e.target.value)}
             >
-              <option value="">Select a target...</option>
-              {targets?.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.type}: {t.identifier}
-                  {t.environment ? ` (${t.environment})` : ''}
-                </option>
-              ))}
+              <option value="">
+                {scanKind === 'discovery' ? 'Select a host / CIDR / range…' : 'Select a target…'}
+              </option>
+              {targets
+                ?.filter((t) => scanKind === 'compliance' || DISCOVERY_TARGET_TYPES.has(t.type))
+                .map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.type}: {t.identifier}
+                    {t.environment ? ` (${t.environment})` : ''}
+                  </option>
+                ))}
             </select>
+            {scanKind === 'discovery' && targets && targets.filter((t) => DISCOVERY_TARGET_TYPES.has(t.type)).length === 0 && (
+              <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+                No discovery-shaped targets yet. Create one with type{' '}
+                <code>host</code>, <code>cidr</code>, or <code>network_range</code>.
+              </p>
+            )}
           </div>
-          {(() => {
+          {scanKind === 'compliance' && (() => {
             const selectedTarget = targets?.find((t) => t.id === selectedTargetId);
             const compatibleBundles = selectedTarget
               ? bundles?.filter((b) => b.target_type === selectedTarget.type)
@@ -150,7 +201,9 @@ export default function Scans() {
             className="btn btn-primary"
             disabled={createMutation.isPending}
           >
-            {createMutation.isPending ? 'Creating...' : 'Start Scan'}
+            {createMutation.isPending
+              ? 'Creating…'
+              : scanKind === 'discovery' ? 'Start discovery scan' : 'Start compliance scan'}
           </button>
           {createMutation.error && (
             <p className="error">{(createMutation.error as Error).message}</p>

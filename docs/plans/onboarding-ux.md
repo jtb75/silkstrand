@@ -33,13 +33,13 @@ Ongoing, the same admin expects to:
 | # | Stage | API | Tenant UI | Notes |
 |---|---|---|---|---|
 | 1 | Accept invite / first login | ✅ | ✅ | Done. No SSO / MFA / self-serve. |
-| 2a | Generate install token | ✅ | ❌ | `POST /api/v1/agents/install-tokens` — UI has no button. |
+| 2a | Generate install token | ✅ | ✅ | Agents page "Install a new agent" panel — already shipped. |
 | 2b | Download agent binary | ✅ | ✅ | Agents page surfaces per-platform links. |
 | 2c | Agent self-registration | ✅ | ✅ | Agents page shows status / heartbeat. |
 | 3a | Customer allowlist YAML on agent | ✅ (agent side) | ❌ | SCP'd by hand; agent pushes snapshot to server but UI doesn't render it. |
 | 3b | Server has snapshot for an agent | ✅ (`agent_allowlists`) | ❌ | No viewer/diff surface. |
 | 4 | Create discovery target (CIDR / range) | ✅ | ⚠️ | Targets form only surfaces compliance-engine types. Schema supports more. |
-| 5 | Kick discovery scan | ✅ (`POST /api/v1/scans {scan_type:discovery}`) | ❌ | Scans page only creates compliance scans. |
+| 5 | Kick discovery scan | ✅ (`POST /api/v1/scans {scan_type:discovery}`) | ✅ | Scans page has a scan-type picker; discovery uses the global `discovery` bundle seeded in migration 015. |
 | 5 | Watch asset ingestion | ✅ | ✅ | Assets page + detail drawer. |
 | 6a | Promote discovered → compliance target | ✅ | ✅ | Gated by allowlist status (v0.1.35). |
 | 6b | Set / update credentials | ✅ | ✅ | |
@@ -50,7 +50,7 @@ Ongoing, the same admin expects to:
 | 7b | Notification channels | ✅ | ✅ | Email / PagerDuty rejected by server. Retry worker deferred. |
 | 7c | Asset sets | ✅ | ✅ | Visual predicate builder landed v0.1.38. |
 | 7d | One-shot scans | ✅ | ✅ | |
-| — | Agent upgrade | ✅ (WSS `upgrade` directive) | ❌ | No UI trigger. |
+| — | Agent upgrade | ✅ (WSS `upgrade` directive) | ✅ | Per-row "Upgrade" button on Agents page — already shipped. |
 | — | Audit log surfacing | ⚠️ (slog only) | ❌ | `credential.fetch`, `rule.fired`, delivery rows — nothing queryable. |
 | — | Bundle upload | ❌ | ❌ | Bundles seeded via SQL. |
 | — | Agent allowlist viewer | ❌ | ❌ | See 3b. |
@@ -79,18 +79,16 @@ backend surface, so we can parallelize later if useful.
 
 | PR | Title | Backend | Frontend | Size | Unblocks |
 |---|---|---|---|---|---|
-| O1 | Install token button | none (endpoint exists) | Agents page | S | Agent install w/o curl |
-| O2 | Discovery target creation | minor (target_type whitelist check) | Targets form branch | M | Needs a CIDR target to exist |
-| O3 | Discovery scan launcher | none | Scans page (or Targets row) | S | **Today's topic** |
+| ~~O1~~ | ~~Install token button~~ | — | — | — | **Already shipped** (re-check missed it on plan draft). |
+| O2 | Discovery target creation | minor (target_type whitelist check) | Targets form branch | M | Self-serve CIDR/range target creation. |
+| O3 | Discovery scan launcher | migration 015 (global discovery bundle row) | Scans page scan-type picker | S | **✅ shipped** |
 | O4 | Allowlist viewer | `GET /api/v1/agents/{id}/allowlist` | Agents detail panel | S | Closes the "what does my agent accept" question |
 | O5 | Target edit flow | none | Targets form reuse | M | Rename / re-identify / config edit |
-| O6 | Agent upgrade trigger | `POST /api/v1/agents/{id}/upgrade` (exists) wired to UI | Agents row button + confirm modal | S | Ongoing ops |
+| ~~O6~~ | ~~Agent upgrade trigger~~ | — | — | — | **Already shipped** (per-row button exists). |
 | O7 | Audit surface v1 | `GET /api/v1/audit-log` (new, read-only) | new Audit page | M–L | Day-two transparency |
 | O8 | Correlation rule predicate builder adoption | none | CorrelationRules form split + new ActionListEditor | M | Nit polish; defer unless asked |
 
-Suggested execution order: **O1 → O3 → O2 → O4 → O5 → O6 → O7**. O3 before O2
-because the launcher can initially work against any existing target the
-allowlist covers; O2 is the polish that makes target creation discoverable.
+Suggested execution order: **O2 → O4 → O5 → O7** (O1, O3, O6 done).
 
 Each PR cycles through stage → tag → prod the same way we've been doing,
 averaging ~1 tag per PR.
