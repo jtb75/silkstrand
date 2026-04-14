@@ -1981,6 +1981,10 @@ func (s *PostgresStore) CreateScanForOneShot(ctx context.Context, tenantID, agen
 // its child scans reaches a terminal status. Runs the counter bump +
 // conditional status/completed_at flip atomically. Safe to call for
 // scans that aren't part of a one-shot — returns nil.
+//
+// When this tick transitions the parent to 'completed' it also
+// deletes the ephemeral '__one_shot__' targets the fan-out minted.
+// Child scan rows survive (scans.target_id is ON DELETE SET NULL).
 func (s *PostgresStore) OnChildScanTerminal(ctx context.Context, scanID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -2025,7 +2029,18 @@ func (s *PostgresStore) OnChildScanTerminal(ctx context.Context, scanID string) 
 	}
 	_ = newTotal
 	_ = newCompleted
-	_ = newStatus
+
+	if newStatus == "completed" {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM targets
+			   WHERE environment = '__one_shot__'
+			     AND id IN (
+			       SELECT target_id FROM scans
+			        WHERE parent_one_shot_id = $1 AND target_id IS NOT NULL
+			     )`, parentID.String); err != nil {
+			return fmt.Errorf("cleaning up ephemeral one-shot targets: %w", err)
+		}
+	}
 
 	return tx.Commit()
 }
