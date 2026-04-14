@@ -9,13 +9,14 @@ import {
   type UpsertAssetSetRequest,
 } from '../api/client';
 import type { AssetSet, AssetSetPreview } from '../api/types';
+import PredicateBuilder, { type Predicate } from '../components/PredicateBuilder';
 
-const EXAMPLE_PREDICATE = `{
-  "$and": [
-    { "service": "postgresql" },
-    { "version": { "$regex": "^16\\\\." } }
-  ]
-}`;
+const EXAMPLE_PREDICATE: Predicate = {
+  $and: [
+    { service: 'postgresql' },
+    { version: { $regex: '^16\\.' } },
+  ],
+};
 
 type FormMode = { kind: 'new' } | { kind: 'edit'; set: AssetSet };
 
@@ -140,9 +141,7 @@ interface FormProps {
 
 function AssetSetForm({ mode, submitting, error, onSubmit }: FormProps) {
   const initial = mode.kind === 'edit' ? mode.set : null;
-  const [predicateText, setPredicateText] = useState(
-    initial ? JSON.stringify(initial.predicate, null, 2) : EXAMPLE_PREDICATE,
-  );
+  const [predicate, setPredicate] = useState<Predicate>(initial ? initial.predicate : EXAMPLE_PREDICATE);
   const [parseErr, setParseErr] = useState<string | null>(null);
   const [preview, setPreview] = useState<AssetSetPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -150,16 +149,9 @@ function AssetSetForm({ mode, submitting, error, onSubmit }: FormProps) {
   async function handlePreview() {
     setParseErr(null);
     setPreview(null);
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(predicateText);
-    } catch (err) {
-      setParseErr('predicate is not valid JSON: ' + (err as Error).message);
-      return;
-    }
     setPreviewing(true);
     try {
-      const res = await previewAssetSetAdhoc(parsed);
+      const res = await previewAssetSetAdhoc(predicate);
       setPreview(res);
     } catch (err) {
       setParseErr((err as Error).message);
@@ -173,15 +165,8 @@ function AssetSetForm({ mode, submitting, error, onSubmit }: FormProps) {
     const fd = new FormData(e.currentTarget);
     const name = (fd.get('name') as string).trim();
     const desc = (fd.get('description') as string).trim() || undefined;
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(predicateText);
-    } catch (err) {
-      setParseErr('predicate is not valid JSON: ' + (err as Error).message);
-      return;
-    }
     setParseErr(null);
-    onSubmit({ name, description: desc, predicate: parsed });
+    onSubmit({ name, description: desc, predicate });
   }
 
   return (
@@ -196,15 +181,8 @@ function AssetSetForm({ mode, submitting, error, onSubmit }: FormProps) {
         <input id="description" name="description" defaultValue={initial?.description ?? ''} placeholder="optional" />
       </div>
       <div className="form-group">
-        <label htmlFor="predicate">Predicate (JSONB)</label>
-        <textarea
-          id="predicate"
-          name="predicate"
-          rows={8}
-          value={predicateText}
-          onChange={(e) => setPredicateText(e.target.value)}
-          style={{ fontFamily: 'monospace', width: '100%' }}
-        />
+        <label>Predicate</label>
+        <PredicateBuilder value={predicate} onChange={setPredicate} />
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <button type="button" className="btn" disabled={previewing} onClick={handlePreview}>

@@ -162,7 +162,7 @@ silkstrand/
 | **R1c-b** | D13 asset sets (saved JSONB predicates + preview) | ✅ shipped |
 | **R1c-c** | D13 one-shot scan dispatcher; `run_one_shot_scan` rule action; completion rollup; ephemeral target cleanup | ✅ shipped |
 | **R1.5 (admin UI)** | Rules / Channels / Asset Sets / One-shot pages | ✅ shipped |
-| **R1.5 (deferred)** | Notification retry worker · D14 per-tenant template selection · visual predicate builder | ⏸ |
+| **R1.5 (deferred)** | Notification retry worker · D14 per-tenant template selection · visual predicate builder in correlation rules (Asset Sets already has it) | ⏸ |
 | **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential auto-binding (with ADR 004 C1) | ⏳ planned |
 | **R3+** | Vault credential resolver (ADR 004 C3); DNS zone enumeration; Azure/GCP cloud discovery | ⏳ planned |
 
