@@ -1,0 +1,193 @@
+name: Publish ProjectDiscovery Tools
+
+# One-shot upload of pinned naabu/httpx/nuclei binaries + curated
+# nuclei-templates tarball to gs://silkstrand-runtimes (ADR 003 R1a).
+# Trigger manually after picking versions; the agent's pdpins.go is
+# updated separately from the workflow output.
+#
+# A future workflow (Q2 from the recon planning) will run on a weekly
+# cron and auto-PR pin bumps; this one is the bootstrap.
+
+on:
+  workflow_dispatch:
+    inputs:
+      naabu_version:
+        description: 'naabu release tag (e.g. v2.3.5; "latest" resolves the latest stable)'
+        default: 'latest'
+      httpx_version:
+        description: 'httpx release tag'
+        default: 'latest'
+      nuclei_version:
+        description: 'nuclei release tag'
+        default: 'latest'
+      templates_version:
+        description: 'SilkStrand-side semver for the curated templates tarball (e.g. 0.1.0)'
+        default: '0.1.0'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  RUNTIMES_BUCKET: silkstrand-runtimes
+  PLATFORMS: |
+    linux-amd64
+    linux-arm64
+    darwin-amd64
+    darwin-arm64
+    windows-amd64
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER_PROD }}
+          service_account: ${{ vars.WIF_SA_PROD }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve versions
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          resolve() {
+            local repo=$1 input=$2
+            if [ "$input" = "latest" ]; then
+              gh release view --repo "$repo" --json tagName -q .tagName
+            else
+              echo "$input"
+            fi
+          }
+          NAABU=$(resolve projectdiscovery/naabu  "${{ inputs.naabu_version }}")
+          HTTPX=$(resolve projectdiscovery/httpx  "${{ inputs.httpx_version }}")
+          NUCLEI=$(resolve projectdiscovery/nuclei "${{ inputs.nuclei_version }}")
+          echo "naabu=$NAABU"   >> $GITHUB_OUTPUT
+          echo "httpx=$HTTPX"   >> $GITHUB_OUTPUT
+          echo "nuclei=$NUCLEI" >> $GITHUB_OUTPUT
+          echo "Resolved: naabu=$NAABU httpx=$HTTPX nuclei=$NUCLEI"
+
+      - name: Publish PD binaries
+        id: bins
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NAABU:  ${{ steps.ver.outputs.naabu }}
+          HTTPX:  ${{ steps.ver.outputs.httpx }}
+          NUCLEI: ${{ steps.ver.outputs.nuclei }}
+        run: |
+          set -e
+          mkdir -p work && cd work
+          declare -A SHAS
+
+          # PD asset naming: <tool>_<ver-no-v>_<os>_<arch>.zip
+          # arch differs slightly: amd64 -> "amd64", arm64 -> "arm64"
+          # os: linux | macOS | windows
+          publish_tool() {
+            local repo=$1 tool=$2 tag=$3
+            local ver=${tag#v}
+            for plat in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
+              local os=${plat%-*}
+              local arch=${plat#*-}
+              local pdos
+              case "$os" in
+                linux)   pdos=linux ;;
+                darwin)  pdos=macOS ;;
+                windows) pdos=windows ;;
+              esac
+              local zip="${tool}_${ver}_${pdos}_${arch}.zip"
+              local url="https://github.com/${repo}/releases/download/${tag}/${zip}"
+              echo "↓ $url"
+              curl -fsSL -o "$zip" "$url"
+              rm -rf extracted && mkdir extracted
+              unzip -q "$zip" -d extracted
+              local exename="$tool"
+              [ "$os" = "windows" ] && exename="${tool}.exe"
+              local bin="extracted/${exename}"
+              if [ ! -f "$bin" ]; then
+                # PD sometimes wraps single-file too
+                bin=$(find extracted -maxdepth 2 -type f -name "$exename" | head -n1)
+              fi
+              local sha=$(sha256sum "$bin" | cut -d' ' -f1)
+              SHAS["${tool}/${ver}/${plat}"]=$sha
+              gcloud storage cp "$bin" \
+                "gs://${RUNTIMES_BUCKET}/${tool}/${ver}/${plat}/${exename}" \
+                --project=silkstrand-prod
+              echo "  sha256=$sha"
+            done
+            # Emit Go-friendly snippet for this tool.
+            {
+              echo "    {"
+              echo "        Name:    \"${tool}\","
+              echo "        Version: \"${ver}\","
+              echo "        SHA256: map[string]string{"
+              for plat in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
+                echo "            \"${plat}\": \"${SHAS["${tool}/${ver}/${plat}"]}\","
+              done
+              echo "        },"
+              echo "    },"
+            } >> ../pdpins-snippet.go.txt
+          }
+
+          : > ../pdpins-snippet.go.txt
+          publish_tool projectdiscovery/naabu  naabu  "$NAABU"
+          publish_tool projectdiscovery/httpx  httpx  "$HTTPX"
+          publish_tool projectdiscovery/nuclei nuclei "$NUCLEI"
+
+      - name: Curate + publish nuclei-templates
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TVER: ${{ inputs.templates_version }}
+        run: |
+          set -e
+          mkdir -p tmpl-work && cd tmpl-work
+          # Latest nuclei-templates upstream tag.
+          UPSTREAM=$(gh release view --repo projectdiscovery/nuclei-templates --json tagName -q .tagName)
+          echo "Upstream nuclei-templates: $UPSTREAM"
+          gh release download "$UPSTREAM" \
+            --repo projectdiscovery/nuclei-templates \
+            --archive=tar.gz --output upstream.tar.gz
+          mkdir extracted
+          tar -xzf upstream.tar.gz -C extracted --strip-components=1
+          # Apply the D14 catalog defaults: drop these directory roots.
+          for dir in fuzzing headless dns ssl; do
+            rm -rf "extracted/$dir" || true
+          done
+          # Repack.
+          tar -czf "silkstrand-templates-${TVER}.tar.gz" -C extracted .
+          SHA=$(sha256sum "silkstrand-templates-${TVER}.tar.gz" | cut -d' ' -f1)
+          gcloud storage cp "silkstrand-templates-${TVER}.tar.gz" \
+            "gs://${RUNTIMES_BUCKET}/nuclei-templates/${TVER}.tar.gz" \
+            --project=silkstrand-prod
+          {
+            echo ""
+            echo "// nucleiTemplatesPin (paste over the existing var)"
+            echo "var nucleiTemplatesPin = struct {"
+            echo "    Version string"
+            echo "    SHA256  string"
+            echo "}{"
+            echo "    Version: \"${TVER}\","
+            echo "    SHA256:  \"${SHA}\","
+            echo "}"
+          } >> ../pdpins-snippet.go.txt
+          echo "templates sha256=$SHA"
+
+      - name: Print pdpins.go snippet
+        run: |
+          echo ""
+          echo "===== Paste into agent/internal/runner/recon/pdpins.go ====="
+          echo ""
+          cat pdpins-snippet.go.txt
+          echo ""
+          echo "==========================================================="
+
+      - uses: actions/upload-artifact@v8
+        with:
+          name: pdpins-snippet
+          path: pdpins-snippet.go.txt
