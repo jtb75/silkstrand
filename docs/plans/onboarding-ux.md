@@ -38,7 +38,7 @@ Ongoing, the same admin expects to:
 | 2c | Agent self-registration | ✅ | ✅ | Agents page shows status / heartbeat. |
 | 3a | Customer allowlist YAML on agent | ✅ (agent side) | ❌ | SCP'd by hand; agent pushes snapshot to server but UI doesn't render it. |
 | 3b | Server has snapshot for an agent | ✅ (`agent_allowlists`) | ❌ | No viewer/diff surface. |
-| 4 | Create discovery target (CIDR / range) | ✅ | ⚠️ | Targets form only surfaces compliance-engine types. Schema supports more. |
+| 4 | Create discovery target (CIDR / range) | ✅ | ✅ | Targets form has a Kind toggle (Compliance / Discovery) with type picker + identifier + optional ports/rate/httpx/nuclei toggles. |
 | 5 | Kick discovery scan | ✅ (`POST /api/v1/scans {scan_type:discovery}`) | ✅ | Scans page has a scan-type picker; discovery uses the global `discovery` bundle seeded in migration 015. |
 | 5 | Watch asset ingestion | ✅ | ✅ | Assets page + detail drawer. |
 | 6a | Promote discovered → compliance target | ✅ | ✅ | Gated by allowlist status (v0.1.35). |
@@ -80,7 +80,7 @@ backend surface, so we can parallelize later if useful.
 | PR | Title | Backend | Frontend | Size | Unblocks |
 |---|---|---|---|---|---|
 | ~~O1~~ | ~~Install token button~~ | — | — | — | **Already shipped** (re-check missed it on plan draft). |
-| O2 | Discovery target creation | minor (target_type whitelist check) | Targets form branch | M | Self-serve CIDR/range target creation. |
+| O2 | Discovery target creation | — | Targets form branch | M | **✅ shipped** |
 | O3 | Discovery scan launcher | migration 015 (global discovery bundle row) | Scans page scan-type picker | S | **✅ shipped** |
 | O4 | Allowlist viewer | `GET /api/v1/agents/{id}/allowlist` | Agents detail panel | S | Closes the "what does my agent accept" question |
 | O5 | Target edit flow | none | Targets form reuse | M | Rename / re-identify / config edit |
@@ -88,7 +88,7 @@ backend surface, so we can parallelize later if useful.
 | O7 | Audit surface v1 | `GET /api/v1/audit-log` (new, read-only) | new Audit page | M–L | Day-two transparency |
 | O8 | Correlation rule predicate builder adoption | none | CorrelationRules form split + new ActionListEditor | M | Nit polish; defer unless asked |
 
-Suggested execution order: **O2 → O4 → O5 → O7** (O1, O3, O6 done).
+Suggested execution order: **O4 → O5 → O7** (O1, O2, O3, O6 done).
 
 Each PR cycles through stage → tag → prod the same way we've been doing,
 averaging ~1 tag per PR.
