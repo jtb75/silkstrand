@@ -110,6 +110,19 @@ export interface CorrelationRule {
   created_by?: string;
 }
 
+export type ChannelType = 'webhook' | 'slack' | 'email' | 'pagerduty';
+
+export interface NotificationChannel {
+  id: string;
+  tenant_id: string;
+  name: string;
+  type: ChannelType;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export type AssetEventType =
   | 'new_asset'
   | 'asset_gone'
