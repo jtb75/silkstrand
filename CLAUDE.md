@@ -298,6 +298,7 @@ GET    /api/v1/agents/downloads            # Per-platform agent binary URLs
 GET    /api/v1/agents
 POST   /api/v1/agents
 GET    /api/v1/agents/{id}
+GET    /api/v1/agents/{id}/allowlist      # Agent's most recently reported scan allowlist snapshot
 POST   /api/v1/agents/{id}/rotate-key
 POST   /api/v1/agents/{id}/upgrade
 DELETE /api/v1/agents/{id}
