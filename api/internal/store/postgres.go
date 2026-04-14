@@ -166,7 +166,7 @@ func (s *PostgresStore) DeleteTarget(ctx context.Context, id string) error {
 func (s *PostgresStore) ListScans(ctx context.Context) ([]model.Scan, error) {
 	tenantID := TenantID(ctx)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, tenant_id, agent_id, target_id, bundle_id, status, started_at, completed_at, created_at
+		`SELECT id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at
 		 FROM scans WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("listing scans: %w", err)
@@ -176,7 +176,7 @@ func (s *PostgresStore) ListScans(ctx context.Context) ([]model.Scan, error) {
 	var scans []model.Scan
 	for rows.Next() {
 		var sc model.Scan
-		if err := rows.Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt); err != nil {
+		if err := rows.Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning scan row: %w", err)
 		}
 		scans = append(scans, sc)
@@ -188,9 +188,9 @@ func (s *PostgresStore) GetScan(ctx context.Context, id string) (*model.Scan, er
 	tenantID := TenantID(ctx)
 	var sc model.Scan
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, agent_id, target_id, bundle_id, status, started_at, completed_at, created_at
+		`SELECT id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at
 		 FROM scans WHERE id = $1 AND tenant_id = $2`, id, tenantID).
-		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
+		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -212,13 +212,18 @@ func (s *PostgresStore) CreateScan(ctx context.Context, req model.CreateScanRequ
 		return nil, fmt.Errorf("target not found")
 	}
 
+	scanType := req.ScanType
+	if scanType == "" {
+		scanType = model.ScanTypeCompliance
+	}
+
 	var sc model.Scan
 	err = s.db.QueryRowContext(ctx,
-		`INSERT INTO scans (tenant_id, agent_id, target_id, bundle_id, status)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, tenant_id, agent_id, target_id, bundle_id, status, started_at, completed_at, created_at`,
-		tenantID, target.AgentID, req.TargetID, req.BundleID, model.ScanStatusPending).
-		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
+		`INSERT INTO scans (tenant_id, agent_id, target_id, bundle_id, scan_type, status)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at`,
+		tenantID, target.AgentID, req.TargetID, req.BundleID, scanType, model.ScanStatusPending).
+		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("creating scan: %w", err)
 	}
@@ -460,6 +465,21 @@ func (s *PostgresStore) GetTargetByID(ctx context.Context, id string) (*model.Ta
 		return nil, fmt.Errorf("getting target by id: %w", err)
 	}
 	return &t, nil
+}
+
+func (s *PostgresStore) GetScanByID(ctx context.Context, id string) (*model.Scan, error) {
+	var sc model.Scan
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, agent_id, target_id, bundle_id, scan_type, status, started_at, completed_at, created_at
+		 FROM scans WHERE id = $1`, id).
+		Scan(&sc.ID, &sc.TenantID, &sc.AgentID, &sc.TargetID, &sc.BundleID, &sc.ScanType, &sc.Status, &sc.StartedAt, &sc.CompletedAt, &sc.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting scan by id: %w", err)
+	}
+	return &sc, nil
 }
 
 // --- Bundles ---
@@ -1129,4 +1149,311 @@ func (s *PostgresStore) UpsertBundle(ctx context.Context, b model.Bundle) (*mode
 		return nil, fmt.Errorf("upserting bundle: %w", err)
 	}
 	return &out, nil
+}
+
+// --- Recon (ADR 003 R1a): discovered_assets + asset_events ---
+
+const assetSelectCols = `id, tenant_id, host(ip), port, hostname, service, version,
+		technologies, cves, compliance_status, source, environment,
+		first_seen, last_seen, last_scan_id, missed_scan_count, metadata,
+		created_at, updated_at`
+
+func scanAsset(scanner interface {
+	Scan(dest ...interface{}) error
+}, a *model.DiscoveredAsset) error {
+	return scanner.Scan(
+		&a.ID, &a.TenantID, &a.IP, &a.Port, &a.Hostname, &a.Service, &a.Version,
+		&a.Technologies, &a.CVEs, &a.ComplianceStatus, &a.Source, &a.Environment,
+		&a.FirstSeen, &a.LastSeen, &a.LastScanID, &a.MissedScanCount, &a.Metadata,
+		&a.CreatedAt, &a.UpdatedAt,
+	)
+}
+
+// UpsertDiscoveredAsset inserts or updates a (tenant, ip, port) row from
+// a discovery scan. Returns the new row plus the previous row (nil if
+// this is a fresh asset) so the caller can derive asset_events by diff.
+// Runs in a transaction.
+func (s *PostgresStore) UpsertDiscoveredAsset(ctx context.Context, scanID string, in DiscoveredAssetInput) (*model.DiscoveredAsset, *model.DiscoveredAsset, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Read previous state (may be empty).
+	var oldAsset model.DiscoveredAsset
+	hadOld := true
+	err = tx.QueryRowContext(ctx,
+		`SELECT `+assetSelectCols+` FROM discovered_assets
+		 WHERE tenant_id = $1 AND ip = $2 AND port = $3 FOR UPDATE`,
+		in.TenantID, in.IP, in.Port).Scan(
+		&oldAsset.ID, &oldAsset.TenantID, &oldAsset.IP, &oldAsset.Port, &oldAsset.Hostname,
+		&oldAsset.Service, &oldAsset.Version, &oldAsset.Technologies, &oldAsset.CVEs,
+		&oldAsset.ComplianceStatus, &oldAsset.Source, &oldAsset.Environment,
+		&oldAsset.FirstSeen, &oldAsset.LastSeen, &oldAsset.LastScanID, &oldAsset.MissedScanCount,
+		&oldAsset.Metadata, &oldAsset.CreatedAt, &oldAsset.UpdatedAt)
+	if err == sql.ErrNoRows {
+		hadOld = false
+	} else if err != nil {
+		return nil, nil, fmt.Errorf("reading old asset: %w", err)
+	}
+
+	tech := in.Technologies
+	if len(tech) == 0 {
+		tech = json.RawMessage("[]")
+	}
+	cves := in.CVEs
+	if len(cves) == 0 {
+		cves = json.RawMessage("[]")
+	}
+
+	var hostname, service, version *string
+	if in.Hostname != "" {
+		hostname = &in.Hostname
+	}
+	if in.Service != "" {
+		service = &in.Service
+	}
+	if in.Version != "" {
+		version = &in.Version
+	}
+
+	var newAsset model.DiscoveredAsset
+	err = tx.QueryRowContext(ctx,
+		`INSERT INTO discovered_assets
+		   (tenant_id, ip, port, hostname, service, version, technologies, cves,
+		    source, environment, first_seen, last_seen, last_scan_id, missed_scan_count)
+		 VALUES ($1, $2::INET, $3, $4, $5, $6, $7, $8, 'discovered', $9, NOW(), NOW(), $10, 0)
+		 ON CONFLICT (tenant_id, ip, port) DO UPDATE SET
+		   hostname          = COALESCE(EXCLUDED.hostname, discovered_assets.hostname),
+		   service           = COALESCE(EXCLUDED.service,  discovered_assets.service),
+		   version           = COALESCE(EXCLUDED.version,  discovered_assets.version),
+		   technologies      = EXCLUDED.technologies,
+		   cves              = EXCLUDED.cves,
+		   environment       = COALESCE(EXCLUDED.environment, discovered_assets.environment),
+		   last_seen         = NOW(),
+		   last_scan_id      = EXCLUDED.last_scan_id,
+		   missed_scan_count = 0,
+		   updated_at        = NOW()
+		 RETURNING `+assetSelectCols,
+		in.TenantID, in.IP, in.Port, hostname, service, version, tech, cves,
+		in.Environment, scanID).Scan(
+		&newAsset.ID, &newAsset.TenantID, &newAsset.IP, &newAsset.Port, &newAsset.Hostname,
+		&newAsset.Service, &newAsset.Version, &newAsset.Technologies, &newAsset.CVEs,
+		&newAsset.ComplianceStatus, &newAsset.Source, &newAsset.Environment,
+		&newAsset.FirstSeen, &newAsset.LastSeen, &newAsset.LastScanID, &newAsset.MissedScanCount,
+		&newAsset.Metadata, &newAsset.CreatedAt, &newAsset.UpdatedAt,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("upserting asset: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("commit: %w", err)
+	}
+	if !hadOld {
+		return &newAsset, nil, nil
+	}
+	return &newAsset, &oldAsset, nil
+}
+
+// AppendAssetEvents inserts a batch of events. Caller derives them from
+// the (old, new) tuple returned by UpsertDiscoveredAsset.
+func (s *PostgresStore) AppendAssetEvents(ctx context.Context, events []model.AssetEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO asset_events (tenant_id, asset_id, scan_id, event_type, severity, payload, occurred_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW())`)
+	if err != nil {
+		return fmt.Errorf("prepare events insert: %w", err)
+	}
+	defer stmt.Close()
+	for _, e := range events {
+		payload := e.Payload
+		if len(payload) == 0 {
+			payload = json.RawMessage("{}")
+		}
+		if _, err := stmt.ExecContext(ctx, e.TenantID, e.AssetID, e.ScanID, e.EventType, e.Severity, payload); err != nil {
+			return fmt.Errorf("inserting event: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// GetAssetByID returns one asset, tenant-scoped.
+func (s *PostgresStore) GetAssetByID(ctx context.Context, id string) (*model.DiscoveredAsset, error) {
+	tenantID := TenantID(ctx)
+	var a model.DiscoveredAsset
+	err := scanAsset(s.db.QueryRowContext(ctx,
+		`SELECT `+assetSelectCols+` FROM discovered_assets WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID), &a)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting asset: %w", err)
+	}
+	return &a, nil
+}
+
+// ListAssets paginates the asset table for the calling tenant.
+// Filter is translated to WHERE clauses; CVE count uses a partial index.
+func (s *PostgresStore) ListAssets(ctx context.Context, f AssetFilter) ([]model.DiscoveredAsset, int, error) {
+	tenantID := TenantID(ctx)
+	if f.PageSize <= 0 {
+		f.PageSize = 50
+	}
+	if f.PageSize > 200 {
+		f.PageSize = 200
+	}
+	if f.Page <= 0 {
+		f.Page = 1
+	}
+
+	where := []string{"tenant_id = $1"}
+	args := []interface{}{tenantID}
+	add := func(clause string, val interface{}) {
+		args = append(args, val)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if f.Service != "" {
+		add("service = $%d", f.Service)
+	}
+	if len(f.ServiceIn) > 0 {
+		add("service = ANY($%d)", f.ServiceIn)
+	}
+	if f.IPCIDR != "" {
+		add("ip <<= $%d::cidr", f.IPCIDR)
+	}
+	if f.Source != "" {
+		add("source = $%d", f.Source)
+	}
+	if f.ComplianceStatus != "" {
+		add("compliance_status = $%d", f.ComplianceStatus)
+	}
+	if f.HasCVECountGTE > 0 {
+		add("jsonb_array_length(cves) >= $%d", f.HasCVECountGTE)
+	}
+	if f.NewSinceDuration > 0 {
+		add("first_seen >= NOW() - make_interval(hours => $%d)", int(f.NewSinceDuration.Hours()))
+	}
+	if f.ChangedSinceDuration > 0 {
+		add("last_seen >= NOW() - make_interval(hours => $%d)", int(f.ChangedSinceDuration.Hours()))
+	}
+	if f.Q != "" {
+		q := "%" + f.Q + "%"
+		add("(hostname ILIKE $%d OR service ILIKE $%[1]d OR version ILIKE $%[1]d OR host(ip) ILIKE $%[1]d)", q)
+	}
+
+	sortCol := "last_seen"
+	switch f.SortBy {
+	case "first_seen", "ip", "service":
+		sortCol = f.SortBy
+	case "cve_count":
+		sortCol = "jsonb_array_length(cves)"
+	}
+	dir := "ASC"
+	if f.SortDesc || f.SortBy == "" || f.SortBy == "last_seen" || f.SortBy == "first_seen" {
+		dir = "DESC"
+	}
+
+	var total int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM discovered_assets WHERE "+joinWith(where, " AND "), args...).
+		Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting assets: %w", err)
+	}
+
+	args = append(args, f.PageSize, (f.Page-1)*f.PageSize)
+	query := fmt.Sprintf(
+		"SELECT %s FROM discovered_assets WHERE %s ORDER BY %s %s LIMIT $%d OFFSET $%d",
+		assetSelectCols, joinWith(where, " AND "), sortCol, dir,
+		len(args)-1, len(args))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing assets: %w", err)
+	}
+	defer rows.Close()
+	var out []model.DiscoveredAsset
+	for rows.Next() {
+		var a model.DiscoveredAsset
+		if err := scanAsset(rows, &a); err != nil {
+			return nil, 0, fmt.Errorf("scan asset: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, total, rows.Err()
+}
+
+func joinWith(parts []string, sep string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += sep
+		}
+		out += p
+	}
+	return out
+}
+
+// ListAssetEventsByAsset returns the most recent N events for an asset.
+func (s *PostgresStore) ListAssetEventsByAsset(ctx context.Context, assetID string, limit int) ([]model.AssetEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, asset_id, scan_id, event_type, severity, payload, occurred_at
+		 FROM asset_events WHERE asset_id = $1 ORDER BY occurred_at DESC LIMIT $2`,
+		assetID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing asset events: %w", err)
+	}
+	defer rows.Close()
+	var out []model.AssetEvent
+	for rows.Next() {
+		var e model.AssetEvent
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.AssetID, &e.ScanID, &e.EventType, &e.Severity, &e.Payload, &e.OccurredAt); err != nil {
+			return nil, fmt.Errorf("scan event: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// UpsertManualAsset is what target-creation calls (D6 unification): make
+// sure a discovered_assets row exists for (tenant_id, ip, port) with
+// source='manual' and return it.
+func (s *PostgresStore) UpsertManualAsset(ctx context.Context, tenantID, ip string, port int, environment *string) (*model.DiscoveredAsset, error) {
+	var a model.DiscoveredAsset
+	err := scanAsset(s.db.QueryRowContext(ctx,
+		`INSERT INTO discovered_assets (tenant_id, ip, port, source, environment)
+		 VALUES ($1, $2::INET, $3, 'manual', $4)
+		 ON CONFLICT (tenant_id, ip, port) DO UPDATE SET
+		   environment = COALESCE(EXCLUDED.environment, discovered_assets.environment),
+		   updated_at  = NOW()
+		 RETURNING `+assetSelectCols,
+		tenantID, ip, port, environment), &a)
+	if err != nil {
+		return nil, fmt.Errorf("upserting manual asset: %w", err)
+	}
+	return &a, nil
+}
+
+// SetTargetAsset wires a target row to a discovered_assets row.
+func (s *PostgresStore) SetTargetAsset(ctx context.Context, targetID, assetID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE targets SET asset_id = $1, updated_at = NOW() WHERE id = $2`,
+		assetID, targetID)
+	if err != nil {
+		return fmt.Errorf("setting target asset: %w", err)
+	}
+	return nil
 }

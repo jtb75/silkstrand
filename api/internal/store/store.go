@@ -47,6 +47,9 @@ type Store interface {
 	// Targets (non-tenant-scoped, for directive enrichment)
 	GetTargetByID(ctx context.Context, id string) (*model.Target, error)
 
+	// Scans (non-tenant-scoped, for agent message ingest)
+	GetScanByID(ctx context.Context, id string) (*model.Scan, error)
+
 	// Bundles
 	GetBundle(ctx context.Context, id string) (*model.Bundle, error)
 	ListBundlesForTenant(ctx context.Context, tenantID string) ([]model.Bundle, error)
@@ -107,6 +110,47 @@ type Store interface {
 
 	// Health
 	Ping(ctx context.Context) error
+
+	// Recon (ADR 003 R1a) — discovered_assets + asset_events.
+	UpsertDiscoveredAsset(ctx context.Context, scanID string, in DiscoveredAssetInput) (newAsset *model.DiscoveredAsset, oldAsset *model.DiscoveredAsset, err error)
+	AppendAssetEvents(ctx context.Context, events []model.AssetEvent) error
+	GetAssetByID(ctx context.Context, id string) (*model.DiscoveredAsset, error)
+	ListAssets(ctx context.Context, filter AssetFilter) (items []model.DiscoveredAsset, total int, err error)
+	ListAssetEventsByAsset(ctx context.Context, assetID string, limit int) ([]model.AssetEvent, error)
+	UpsertManualAsset(ctx context.Context, tenantID, ip string, port int, environment *string) (*model.DiscoveredAsset, error)
+	SetTargetAsset(ctx context.Context, targetID, assetID string) error
+}
+
+// DiscoveredAssetInput is what the agent's asset_discovered payload
+// becomes after parsing. The store upserts on (tenant_id, ip, port).
+type DiscoveredAssetInput struct {
+	TenantID     string
+	IP           string
+	Port         int
+	Hostname     string
+	Service      string
+	Version      string
+	Technologies json.RawMessage
+	CVEs         json.RawMessage
+	Environment  *string
+}
+
+// AssetFilter is the parsed query for ListAssets. All zero-value
+// fields are ignored. R1a ships canned filter chips on top of this.
+type AssetFilter struct {
+	Service          string
+	ServiceIn        []string
+	IPCIDR           string
+	HasCVECountGTE   int
+	Source           string
+	ComplianceStatus string
+	NewSinceDuration time.Duration // first_seen >= now - dur
+	ChangedSinceDuration time.Duration // last_seen >= now - dur
+	Q                string
+	SortBy           string // last_seen|first_seen|ip|service|cve_count
+	SortDesc         bool
+	Page             int
+	PageSize         int
 }
 
 type contextKey string

@@ -81,6 +81,7 @@ func run() error {
 	probeH := handler.NewProbeHandler(pgStore, ps, cfg.CredentialEncryptionKey)
 	bundlesH := handler.NewBundlesHandler(pgStore)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
+	assetH := handler.NewAssetHandler(pgStore)
 
 	// Router
 	mux := http.NewServeMux()
@@ -140,6 +141,9 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/scans", scanH.List)
 	apiMux.HandleFunc("GET /api/v1/scans/{id}", scanH.Get)
 	apiMux.HandleFunc("DELETE /api/v1/scans/{id}", scanH.Delete)
+
+	apiMux.HandleFunc("GET /api/v1/assets", assetH.List)
+	apiMux.HandleFunc("GET /api/v1/assets/{id}", assetH.Get)
 
 	// Apply auth + tenant middleware to API routes
 	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))
@@ -232,6 +236,21 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub) func(a
 			if err := s.UpdateAgentHeartbeat(ctx, agentID, hb.Version); err != nil {
 				slog.Error("updating agent heartbeat", "agent_id", agentID, "error", err)
 			}
+
+		case websocket.TypeAssetDiscovered:
+			handleAssetDiscovered(ctx, s, agentID, msg.Payload)
+
+		case websocket.TypeDiscoveryCompleted:
+			var payload websocket.DiscoveryCompletedPayload
+			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+				slog.Error("parsing discovery_completed payload", "agent_id", agentID, "error", err)
+				return
+			}
+			if err := s.UpdateScanStatus(ctx, payload.ScanID, model.ScanStatusCompleted); err != nil {
+				slog.Error("updating discovery scan to completed", "scan_id", payload.ScanID, "error", err)
+			}
+			slog.Info("discovery completed", "agent_id", agentID, "scan_id", payload.ScanID,
+				"assets_found", payload.AssetsFound, "hosts_scanned", payload.HostsScanned)
 
 		default:
 			slog.Warn("unknown message type from agent", "agent_id", agentID, "type", msg.Type)
@@ -341,4 +360,141 @@ func redisPingFunc(ps *pubsub.PubSub) func(context.Context) error {
 		return nil
 	}
 	return ps.Ping
+}
+
+// handleAssetDiscovered processes a batch of asset findings from an agent
+// during a discovery scan. Each asset is upserted into discovered_assets
+// and any deltas vs. the prior row are appended to asset_events. Per
+// ADR 003 D9 we process inline (no buffering) so the Assets page sees
+// progress live.
+func handleAssetDiscovered(ctx context.Context, s store.Store, agentID string, payload json.RawMessage) {
+	var batch websocket.AssetDiscoveredPayload
+	if err := json.Unmarshal(payload, &batch); err != nil {
+		slog.Error("parsing asset_discovered payload", "agent_id", agentID, "error", err)
+		return
+	}
+
+	scan, err := s.GetScanByID(ctx, batch.ScanID)
+	if err != nil || scan == nil {
+		slog.Error("loading discovery scan", "scan_id", batch.ScanID, "error", err)
+		return
+	}
+
+	// First message flips pending → running.
+	if scan.Status == model.ScanStatusPending {
+		if err := s.UpdateScanStatus(ctx, scan.ID, model.ScanStatusRunning); err != nil {
+			slog.Error("updating discovery scan to running", "scan_id", scan.ID, "error", err)
+		}
+	}
+
+	for _, a := range batch.Assets {
+		in := store.DiscoveredAssetInput{
+			TenantID:     scan.TenantID,
+			IP:           a.IP,
+			Port:         a.Port,
+			Hostname:     a.Hostname,
+			Service:      a.Service,
+			Version:      a.Version,
+			Technologies: a.Technologies,
+			CVEs:         a.CVEs,
+		}
+		newAsset, oldAsset, err := s.UpsertDiscoveredAsset(ctx, scan.ID, in)
+		if err != nil {
+			slog.Error("upserting discovered asset", "scan_id", scan.ID, "ip", a.IP, "port", a.Port, "error", err)
+			continue
+		}
+		events := deriveAssetEvents(scan.TenantID, scan.ID, oldAsset, newAsset)
+		if err := s.AppendAssetEvents(ctx, events); err != nil {
+			slog.Error("appending asset events", "asset_id", newAsset.ID, "error", err)
+		}
+	}
+}
+
+// deriveAssetEvents diffs the old and new asset rows and emits the
+// corresponding asset_events. Algorithm follows the API plan §7 Q3.
+func deriveAssetEvents(tenantID, scanID string, old, new *model.DiscoveredAsset) []model.AssetEvent {
+	if new == nil {
+		return nil
+	}
+	var events []model.AssetEvent
+	mk := func(eventType string, payload json.RawMessage) {
+		sid := scanID
+		events = append(events, model.AssetEvent{
+			TenantID:  tenantID,
+			AssetID:   new.ID,
+			ScanID:    &sid,
+			EventType: eventType,
+			Payload:   payload,
+		})
+	}
+
+	if old == nil {
+		mk(model.AssetEventNewAsset, mustJSON(map[string]any{
+			"service": derefString(new.Service),
+			"version": derefString(new.Version),
+			"port":    new.Port,
+		}))
+		return events
+	}
+
+	if derefString(old.Service) != derefString(new.Service) || derefString(old.Version) != derefString(new.Version) {
+		mk(model.AssetEventVersionChanged, mustJSON(map[string]any{
+			"from_service": derefString(old.Service), "to_service": derefString(new.Service),
+			"from_version": derefString(old.Version), "to_version": derefString(new.Version),
+		}))
+	}
+
+	added, removed := diffCVEIDs(old.CVEs, new.CVEs)
+	for _, id := range added {
+		mk(model.AssetEventNewCVE, mustJSON(map[string]string{"cve_id": id}))
+	}
+	for _, id := range removed {
+		mk(model.AssetEventCVEResolved, mustJSON(map[string]string{"cve_id": id}))
+	}
+	return events
+}
+
+func diffCVEIDs(oldCVEs, newCVEs json.RawMessage) (added, removed []string) {
+	oldIDs := cveIDSet(oldCVEs)
+	newIDs := cveIDSet(newCVEs)
+	for id := range newIDs {
+		if !oldIDs[id] {
+			added = append(added, id)
+		}
+	}
+	for id := range oldIDs {
+		if !newIDs[id] {
+			removed = append(removed, id)
+		}
+	}
+	return added, removed
+}
+
+func cveIDSet(raw json.RawMessage) map[string]bool {
+	out := map[string]bool{}
+	if len(raw) == 0 {
+		return out
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return out
+	}
+	for _, item := range arr {
+		if id, ok := item["id"].(string); ok && id != "" {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }

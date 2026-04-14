@@ -4,14 +4,16 @@ import "encoding/json"
 
 // Message type constants for the agent WebSocket protocol.
 const (
-	TypeDirective   = "directive"
-	TypeScanStarted = "scan_started"
-	TypeScanResults = "scan_results"
-	TypeScanError   = "scan_error"
-	TypeHeartbeat   = "heartbeat"
-	TypeUpgrade     = "upgrade"
-	TypeProbe       = "probe"
-	TypeProbeResult = "probe_result"
+	TypeDirective          = "directive"
+	TypeScanStarted        = "scan_started"
+	TypeScanResults        = "scan_results"
+	TypeScanError          = "scan_error"
+	TypeHeartbeat          = "heartbeat"
+	TypeUpgrade            = "upgrade"
+	TypeProbe              = "probe"
+	TypeProbeResult        = "probe_result"
+	TypeAssetDiscovered    = "asset_discovered"   // ADR 003 R1a
+	TypeDiscoveryCompleted = "discovery_completed" // ADR 003 R1a
 )
 
 // UpgradePayload tells the agent to fetch a new binary and restart.
@@ -41,6 +43,7 @@ type ProbeResultPayload struct {
 // DirectivePayload is sent from server to agent with scan instructions.
 type DirectivePayload struct {
 	ScanID           string          `json:"scan_id"`
+	ScanType         string          `json:"scan_type,omitempty"` // "compliance" (default) | "discovery"
 	BundleID         string          `json:"bundle_id"`
 	BundleName       string          `json:"bundle_name"`
 	BundleVersion    string          `json:"bundle_version"`
@@ -49,7 +52,39 @@ type DirectivePayload struct {
 	TargetType       string          `json:"target_type"`
 	TargetIdentifier string          `json:"target_identifier"`
 	TargetConfig     json.RawMessage `json:"target_config"`
-	Credentials      json.RawMessage `json:"credentials,omitempty"`
+	Credentials      json.RawMessage `json:"credentials,omitempty"` // empty for discovery
+}
+
+// AssetDiscoveredPayload is sent from agent to server during a discovery
+// scan, carrying a batch of discovered (ip, port, service, ...) tuples.
+// The agent emits these incrementally per ADR 003 D9 — process inline,
+// don't wait for discovery_completed.
+type AssetDiscoveredPayload struct {
+	ScanID   string                  `json:"scan_id"`
+	BatchSeq int                     `json:"batch_seq,omitempty"`
+	Stage    string                  `json:"stage,omitempty"` // naabu|httpx|nuclei
+	Assets   []DiscoveredAssetUpsert `json:"assets"`
+}
+
+// DiscoveredAssetUpsert is one normalized asset finding the agent
+// streams up. JSONB-shaped fields are pass-through.
+type DiscoveredAssetUpsert struct {
+	IP           string          `json:"ip"`
+	Port         int             `json:"port"`
+	Hostname     string          `json:"hostname,omitempty"`
+	Service      string          `json:"service,omitempty"`
+	Version      string          `json:"version,omitempty"`
+	Technologies json.RawMessage `json:"technologies,omitempty"`
+	CVEs         json.RawMessage `json:"cves,omitempty"`
+	ObservedAt   string          `json:"observed_at"` // RFC3339; agent's clock
+}
+
+// DiscoveryCompletedPayload is sent from agent to server when a
+// discovery scan finishes successfully.
+type DiscoveryCompletedPayload struct {
+	ScanID       string `json:"scan_id"`
+	AssetsFound  int    `json:"assets_found"`
+	HostsScanned int    `json:"hosts_scanned"`
 }
 
 // ScanStartedPayload is sent from agent to server when scan execution begins.
@@ -70,9 +105,10 @@ type HeartbeatPayload struct {
 }
 
 // NewDirectiveMessage creates a Message containing an enriched scan directive.
-func NewDirectiveMessage(scanID, bundleID, bundleName, bundleVersion, bundleURL, targetID, targetType, targetIdentifier string, targetConfig, credentials json.RawMessage) Message {
+func NewDirectiveMessage(scanID, scanType, bundleID, bundleName, bundleVersion, bundleURL, targetID, targetType, targetIdentifier string, targetConfig, credentials json.RawMessage) Message {
 	payload := DirectivePayload{
 		ScanID:           scanID,
+		ScanType:         scanType,
 		BundleID:         bundleID,
 		BundleName:       bundleName,
 		BundleVersion:    bundleVersion,
