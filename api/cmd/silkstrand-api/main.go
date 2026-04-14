@@ -21,6 +21,7 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/handler"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
+	"github.com/jtb75/silkstrand/api/internal/notify"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/rules"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -84,6 +85,9 @@ func run() error {
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 	assetH := handler.NewAssetHandler(pgStore)
 	rulesH := handler.NewCorrelationRulesHandler(pgStore)
+	notifDispatcher := notify.New(pgStore, cfg.CredentialEncryptionKey)
+	globalNotifier = notifDispatcher // exposed for runRuleActions (see bottom of file)
+	channelsH := handler.NewNotificationChannelsHandler(pgStore, cfg.CredentialEncryptionKey)
 
 	// Router
 	mux := http.NewServeMux()
@@ -153,6 +157,12 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/correlation-rules/{id}", rulesH.Get)
 	apiMux.HandleFunc("PUT /api/v1/correlation-rules/{id}", rulesH.Update)
 	apiMux.HandleFunc("DELETE /api/v1/correlation-rules/{id}", rulesH.Delete)
+
+	apiMux.HandleFunc("GET /api/v1/notification-channels", channelsH.List)
+	apiMux.HandleFunc("POST /api/v1/notification-channels", channelsH.Create)
+	apiMux.HandleFunc("GET /api/v1/notification-channels/{id}", channelsH.Get)
+	apiMux.HandleFunc("PUT /api/v1/notification-channels/{id}", channelsH.Update)
+	apiMux.HandleFunc("DELETE /api/v1/notification-channels/{id}", channelsH.Delete)
 
 	// Apply auth + tenant middleware to API routes
 	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))
@@ -455,6 +465,43 @@ func runRuleActions(ctx context.Context, s store.Store, ruleSet []model.Correlat
 				"rule", act.RuleName, "action", act.Type,
 				"asset", asset.ID, "bundle", bundleID)
 
+		case rules.ActionNotify:
+			if globalNotifier == nil {
+				continue
+			}
+			channel, _ := act.Params["channel"].(string)
+			if channel == "" {
+				continue
+			}
+			severity, _ := act.Params["severity"].(string)
+			if severity == "" {
+				severity = notify.SeverityInfo
+			}
+			title, _ := act.Params["title"].(string)
+			if title == "" {
+				title = "Rule " + act.RuleName + " fired"
+			}
+			message, _ := act.Params["message"].(string)
+			globalNotifier.DispatchAsync(notify.Event{
+				TenantID:    asset.TenantID,
+				ChannelName: channel,
+				Severity:    severity,
+				Title:       title,
+				Message:     message,
+				AssetID:     asset.ID,
+				RuleID:      act.RuleID,
+				RuleName:    act.RuleName,
+				Payload: map[string]any{
+					"ip":      asset.IP,
+					"port":    asset.Port,
+					"service": derefString(asset.Service),
+					"version": derefString(asset.Version),
+				},
+			})
+			slog.Info("rule.fired",
+				"rule", act.RuleName, "action", act.Type,
+				"asset", asset.ID, "channel", channel)
+
 		case rules.ActionAutoCreateTarget:
 			bundleID := act.BundleID()
 			if bundleID == "" {
@@ -570,3 +617,9 @@ func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+// globalNotifier is set during server init so runRuleActions can
+// dispatch without threading the dispatcher through signature churn.
+// There is exactly one Dispatcher per process; it's safe to stash
+// in a package var.
+var globalNotifier *notify.Dispatcher

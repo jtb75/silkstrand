@@ -130,6 +130,16 @@ type Store interface {
 	GetRule(ctx context.Context, id string) (*model.CorrelationRule, error)
 	UpsertRule(ctx context.Context, r model.CorrelationRule) (*model.CorrelationRule, error)
 	DeleteRule(ctx context.Context, id string) error
+
+	// Notification channels + deliveries (ADR 003 R1c / D12).
+	ListNotificationChannels(ctx context.Context) ([]model.NotificationChannel, error)
+	GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error)
+	GetNotificationChannelByName(ctx context.Context, tenantID, name string) (*model.NotificationChannel, error)
+	CreateNotificationChannel(ctx context.Context, c model.NotificationChannel) (*model.NotificationChannel, error)
+	UpdateNotificationChannel(ctx context.Context, c model.NotificationChannel) (*model.NotificationChannel, error)
+	DeleteNotificationChannel(ctx context.Context, id string) error
+	InsertNotificationDelivery(ctx context.Context, d model.NotificationDelivery) error
+	ListNotificationDeliveries(ctx context.Context, limit int) ([]model.NotificationDelivery, error)
 }
 
 // DiscoveredAssetInput is what the agent's asset_discovered payload

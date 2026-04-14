@@ -137,11 +137,16 @@ func (h *CorrelationRulesHandler) parseRule(r *http.Request) (*model.Correlation
 	for _, a := range body.Actions {
 		t, _ := a["type"].(string)
 		switch t {
-		case rules.ActionSuggestTarget, rules.ActionAutoCreateTarget:
-		case rules.ActionNotify, rules.ActionRunOneShotScan:
-			return nil, errors.New("action type " + t + " not yet supported (R1c)")
+		case rules.ActionSuggestTarget, rules.ActionAutoCreateTarget, rules.ActionNotify:
+		case rules.ActionRunOneShotScan:
+			return nil, errors.New("action type " + t + " not yet supported (R1c-c)")
 		default:
 			return nil, errors.New("unknown action type: " + t)
+		}
+		if t == rules.ActionNotify {
+			if _, ok := a["channel"].(string); !ok {
+				return nil, errors.New("notify action requires a 'channel' string")
+			}
 		}
 	}
 	enabled := true
