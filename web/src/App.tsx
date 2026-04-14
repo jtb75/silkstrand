@@ -5,6 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Targets from './pages/Targets';
+import Assets from './pages/Assets';
 import Agents from './pages/Agents';
 import Scans from './pages/Scans';
 import ScanResults from './pages/ScanResults';
@@ -36,6 +37,8 @@ export default function App() {
             {/* Protected app */}
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/assets" element={<Assets />} />
+              <Route path="/assets/:id" element={<Assets />} />
               <Route path="/targets" element={<Targets />} />
               <Route path="/agents" element={<Agents />} />
               <Route path="/scans" element={<Scans />} />

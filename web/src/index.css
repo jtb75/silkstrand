@@ -443,3 +443,91 @@ a:hover {
 .modal label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; font-size: 14px; color: #374151; }
 .modal input, .modal textarea { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* --- ADR 003 R1a Assets page --- */
+
+.tab-bar { display: flex; gap: 8px; margin: 8px 0; border-bottom: 1px solid #e0e0e0; }
+.tab {
+  background: transparent;
+  border: none;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  border-bottom: 2px solid transparent;
+  color: #666;
+}
+.tab:hover { color: #333; }
+.tab-active { color: #1f2a4a; border-bottom-color: #1f2a4a; font-weight: 600; }
+
+.filter-chips { margin: 12px 0; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.chip {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 16px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #444;
+}
+.chip:hover { background: #ebebeb; }
+.chip-active { background: #1f2a4a; color: #fff; border-color: #1f2a4a; }
+.chip-clear { background: transparent; border: none; color: #888; }
+.chip-meta { font-size: 13px; color: #666; }
+
+.badge-cve-critical, .badge-cve-high { background: #d32f2f; color: #fff; }
+.badge-cve-medium { background: #f57c00; color: #fff; }
+.badge-cve-low, .badge-cve-info { background: #757575; color: #fff; }
+
+.badge-allowlist-allowlisted { background: #c8e6c9; color: #1b5e20; }
+.badge-allowlist-out-of-policy { background: #ffcdd2; color: #b71c1c; }
+.badge-allowlist-unknown { background: #eceff1; color: #607d8b; }
+
+/* Drawer */
+.drawer-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.25);
+  z-index: 100;
+}
+.drawer {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: min(480px, 100%);
+  background: #fff;
+  box-shadow: -4px 0 16px rgba(0,0,0,0.15);
+  z-index: 101;
+  display: flex; flex-direction: column;
+}
+.drawer-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #eee;
+}
+.drawer-header h2 { margin: 0; font-size: 16px; }
+.drawer-body { padding: 16px; overflow-y: auto; }
+.drawer-body section { margin-bottom: 16px; }
+.drawer-body h3 { font-size: 14px; margin: 8px 0; color: #444; }
+
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 4px 12px; font-size: 13px; }
+.kv dt { color: #666; }
+.kv dd { margin: 0; }
+
+.cve-list { list-style: none; padding: 0; margin: 0; }
+.cve { padding: 4px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+.cve-critical { color: #b71c1c; }
+.cve-high { color: #d32f2f; }
+.cve-medium { color: #ef6c00; }
+
+.event-timeline { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+.event {
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0;
+  display: grid;
+  grid-template-columns: 24px 140px 120px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+.event-icon { font-weight: 700; text-align: center; }
+.event-time { color: #666; }
+.event-type { font-family: monospace; color: #444; }
+.event-summary { color: #222; }

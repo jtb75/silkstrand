@@ -7,6 +7,8 @@ import type {
   CreateAgentResponse,
   AgentDownloads,
   Bundle,
+  AssetListResponse,
+  AssetDetailResponse,
 } from './types';
 
 // DC API base URL is resolved at call time from the active tenant context.
@@ -105,6 +107,47 @@ export const getScan = (id: string) => request<Scan>(`/api/v1/scans/${id}`);
 export const deleteScan = (id: string) =>
   request<void>(`/api/v1/scans/${id}`, { method: 'DELETE' });
 export const listBundles = () => request<Bundle[]>('/api/v1/bundles');
+
+// Assets (ADR 003 R1a)
+export interface AssetFilterParams {
+  service?: string;
+  service_in?: string[];
+  ip?: string;
+  source?: 'manual' | 'discovered';
+  compliance_status?: string;
+  cve_count_gte?: number;
+  new_since?: string;     // e.g. "7d"
+  changed_since?: string; // e.g. "7d"
+  q?: string;
+  sort_by?: 'last_seen' | 'first_seen' | 'ip' | 'service' | 'cve_count';
+  sort_dir?: 'asc' | 'desc';
+  page?: number;
+  page_size?: number;
+}
+
+function buildAssetQuery(params: AssetFilterParams): string {
+  const u = new URLSearchParams();
+  if (params.service) u.set('service', params.service);
+  if (params.service_in?.length) u.set('service_in', params.service_in.join(','));
+  if (params.ip) u.set('ip', params.ip);
+  if (params.source) u.set('source', params.source);
+  if (params.compliance_status) u.set('compliance_status', params.compliance_status);
+  if (params.cve_count_gte != null) u.set('cve_count_gte', String(params.cve_count_gte));
+  if (params.new_since) u.set('new_since', params.new_since);
+  if (params.changed_since) u.set('changed_since', params.changed_since);
+  if (params.q) u.set('q', params.q);
+  if (params.sort_by) u.set('sort_by', params.sort_by);
+  if (params.sort_dir) u.set('sort_dir', params.sort_dir);
+  if (params.page) u.set('page', String(params.page));
+  if (params.page_size) u.set('page_size', String(params.page_size));
+  return u.toString();
+}
+
+export const listAssets = (params: AssetFilterParams = {}) =>
+  request<AssetListResponse>(`/api/v1/assets?${buildAssetQuery(params)}`);
+
+export const getAsset = (id: string, eventsLimit = 50) =>
+  request<AssetDetailResponse>(`/api/v1/assets/${id}?events=${eventsLimit}`);
 
 // Agents
 export const listAgents = () => request<Agent[]>('/api/v1/agents');
