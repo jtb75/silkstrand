@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listTargets, createTarget, deleteTarget, listAgents, probeTarget, updateTarget } from '../api/client';
-import type { Target, TargetType, CreateTargetRequest, Agent } from '../api/types';
+import type { Target, TargetType, CreateTargetRequest, UpdateTargetRequest, Agent } from '../api/types';
 import CredentialModal from '../components/CredentialModal';
 
 // Supported technologies for the target creation form. The `type` value is
@@ -61,6 +61,7 @@ export default function Targets() {
 
   // Form state — technology-specific config is a free-form dict that
   // mirrors the config JSON each driver will see on the agent side.
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [kind, setKind] = useState<Kind>('compliance');
   const [techType, setTechType] = useState<TargetType>('postgresql');
   const [discoveryType, setDiscoveryType] = useState<DiscoveryType>('cidr');
@@ -80,20 +81,33 @@ export default function Targets() {
     queryFn: listAgents,
   });
 
+  function resetForm() {
+    setEditingId(null);
+    setKind('compliance');
+    setTechType('postgresql');
+    setDiscoveryType('cidr');
+    setIdentifier('');
+    setAgentId('');
+    setEnvironment('');
+    setConfig(TECHNOLOGIES[0].defaults);
+    setDiscoveryCfg(DISCOVERY_DEFAULTS);
+  }
+
   const createMutation = useMutation({
     mutationFn: (req: CreateTargetRequest) => createTarget(req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['targets'] });
       setShowForm(false);
-      // Reset form
-      setKind('compliance');
-      setTechType('postgresql');
-      setDiscoveryType('cidr');
-      setIdentifier('');
-      setAgentId('');
-      setEnvironment('');
-      setConfig(TECHNOLOGIES[0].defaults);
-      setDiscoveryCfg(DISCOVERY_DEFAULTS);
+      resetForm();
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, req }: { id: string; req: UpdateTargetRequest }) => updateTarget(id, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['targets'] });
+      setShowForm(false);
+      resetForm();
     },
   });
 
@@ -118,8 +132,7 @@ export default function Targets() {
     setConfig((prev) => ({ ...prev, [key]: value }));
   }
 
-  function handleCreate(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function buildPayload(): CreateTargetRequest {
     if (kind === 'discovery') {
       const cfg: Record<string, unknown> = {
         include_httpx: discoveryCfg.includeHttpx,
@@ -129,22 +142,67 @@ export default function Targets() {
       if (ports) cfg.ports = ports;
       const rate = parseInt(discoveryCfg.ratePps, 10);
       if (!isNaN(rate) && rate > 0) cfg.rate_pps = rate;
-      createMutation.mutate({
+      return {
         type: discoveryType,
         identifier,
         environment: environment || undefined,
         agent_id: agentId || undefined,
         config: cfg,
-      });
-      return;
+      };
     }
-    createMutation.mutate({
+    return {
       type: techType,
       identifier,
       environment: environment || undefined,
       agent_id: agentId || undefined,
       config,
-    });
+    };
+  }
+
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const p = buildPayload();
+    if (editingId) {
+      // Type stays locked on edit (delete + recreate to change shape).
+      // Empty-string env or agent_id collapses to "don't change" server-side;
+      // clearing them isn't supported in v1.
+      updateMutation.mutate({
+        id: editingId,
+        req: {
+          identifier: p.identifier,
+          environment: p.environment,
+          agent_id: p.agent_id,
+          config: p.config,
+        },
+      });
+      return;
+    }
+    createMutation.mutate(p);
+  }
+
+  function handleEdit(t: Target) {
+    const tKind: Kind = isDiscoveryType(t.type) ? 'discovery' : 'compliance';
+    setEditingId(t.id);
+    setKind(tKind);
+    setIdentifier(t.identifier);
+    setAgentId(t.agent_id ?? '');
+    setEnvironment(t.environment ?? '');
+    if (tKind === 'compliance') {
+      setTechType(t.type as TargetType);
+      const cfgObj = (t.config ?? {}) as Record<string, unknown>;
+      const tech = TECHNOLOGIES.find((x) => x.value === t.type);
+      setConfig({ ...(tech?.defaults ?? {}), ...cfgObj });
+    } else {
+      setDiscoveryType(t.type as DiscoveryType);
+      const cfgObj = (t.config ?? {}) as Record<string, unknown>;
+      setDiscoveryCfg({
+        ports: typeof cfgObj.ports === 'string' ? cfgObj.ports : '',
+        ratePps: typeof cfgObj.rate_pps === 'number' ? String(cfgObj.rate_pps) : '',
+        includeHttpx: cfgObj.include_httpx !== false,
+        includeNuclei: cfgObj.include_nuclei !== false,
+      });
+    }
+    setShowForm(true);
   }
 
   async function handleProbe(id: string) {
@@ -173,13 +231,26 @@ export default function Targets() {
     <div>
       <div className="page-header">
         <h1>Targets</h1>
-        <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
+        <button
+          className="btn btn-primary"
+          onClick={() => {
+            if (showForm) {
+              setShowForm(false);
+              resetForm();
+            } else {
+              setShowForm(true);
+            }
+          }}
+        >
           {showForm ? 'Cancel' : 'New Target'}
         </button>
       </div>
 
       {showForm && (
-        <form className="form-card" onSubmit={handleCreate}>
+        <form className="form-card" onSubmit={handleSubmit}>
+          {editingId && (
+            <h3 style={{ marginTop: 0 }}>Edit target</h3>
+          )}
           <div className="form-group">
             <label>Kind</label>
             <div style={{ display: 'flex', gap: 16 }}>
@@ -190,6 +261,7 @@ export default function Targets() {
                   value="compliance"
                   checked={kind === 'compliance'}
                   onChange={() => setKind('compliance')}
+                  disabled={!!editingId}
                 />{' '}Compliance (database engine)
               </label>
               <label style={{ fontWeight: 'normal' }}>
@@ -199,9 +271,15 @@ export default function Targets() {
                   value="discovery"
                   checked={kind === 'discovery'}
                   onChange={() => { setKind('discovery'); setIdentifier(''); }}
+                  disabled={!!editingId}
                 />{' '}Discovery (network range)
               </label>
             </div>
+            {editingId && (
+              <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+                Kind and type are locked on edit — delete and recreate to change target shape.
+              </p>
+            )}
             {kind === 'discovery' && (
               <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
                 Discovery targets are fed to naabu → httpx → nuclei when the
@@ -219,6 +297,7 @@ export default function Targets() {
                 value={techType}
                 onChange={(e) => handleTechChange(e.target.value as TargetType)}
                 required
+                disabled={!!editingId}
               >
                 {TECHNOLOGIES.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
@@ -235,6 +314,7 @@ export default function Targets() {
                 value={discoveryType}
                 onChange={(e) => setDiscoveryType(e.target.value as DiscoveryType)}
                 required
+                disabled={!!editingId}
               >
                 {DISCOVERY_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
@@ -306,11 +386,19 @@ export default function Targets() {
               Scans page to populate the Assets inventory for this target.
             </p>
           )}
-          <button type="submit" className="btn btn-primary" disabled={createMutation.isPending}>
-            {createMutation.isPending ? 'Creating…' : 'Create Target'}
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={createMutation.isPending || updateMutation.isPending}
+          >
+            {(createMutation.isPending || updateMutation.isPending)
+              ? 'Saving…'
+              : editingId ? 'Save changes' : 'Create Target'}
           </button>
-          {createMutation.error && (
-            <p className="error">{(createMutation.error as Error).message}</p>
+          {(createMutation.error || updateMutation.error) && (
+            <p className="error">
+              {((createMutation.error ?? updateMutation.error) as Error).message}
+            </p>
           )}
         </form>
       )}
@@ -383,6 +471,9 @@ export default function Targets() {
                       </button>
                     </>
                   )}
+                  <button className="btn btn-sm" style={{ marginRight: 6 }} onClick={() => handleEdit(t)}>
+                    Edit
+                  </button>
                   <button className="btn btn-danger btn-sm" onClick={() => handleDelete(t.id)} disabled={deleteMutation.isPending}>
                     Delete
                   </button>
