@@ -174,40 +174,16 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 		return
 	}
 
-	// Look up and decrypt credentials (may be nil). Prefers
-	// credential_sources (type=static); falls back to legacy credentials
-	// table through the ADR 004 C0 rollback window.
+	// Discovery scans don't carry credentials. Compliance scans do; fetch
+	// from credential_sources (type=static), falling back to the legacy
+	// credentials table through the ADR 004 C0 rollback window.
+	scanType := d.ScanType
+	if scanType == "" {
+		scanType = "compliance"
+	}
 	var creds json.RawMessage
-	encryptedCreds, _, credErr := h.store.GetStaticCredentialForTarget(ctx, d.TargetID)
-	switch {
-	case credErr != nil:
-		slog.Info("credential.fetch",
-			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-			"outcome", "error", "error", credErr)
-	case encryptedCreds == nil:
-		slog.Info("credential.fetch",
-			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-			"outcome", "miss")
-	default:
-		if len(h.credKey) > 0 {
-			decrypted, err := crypto.Decrypt(encryptedCreds, h.credKey)
-			if err != nil {
-				slog.Info("credential.fetch",
-					"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-					"outcome", "decrypt_error", "error", err)
-			} else {
-				creds = json.RawMessage(decrypted)
-				slog.Info("credential.fetch",
-					"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-					"outcome", "ok")
-			}
-		} else {
-			// No encryption key configured — pass through as-is (local dev).
-			creds = encryptedCreds
-			slog.Info("credential.fetch",
-				"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-				"outcome", "ok_plaintext")
-		}
+	if scanType == "compliance" {
+		creds = h.fetchCredentialForDirective(ctx, d)
 	}
 
 	// Build enriched directive message
@@ -216,15 +192,49 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 		bundleURL = *bundle.GCSPath
 	}
 	msg := websocket.NewDirectiveMessage(
-		d.ScanID, d.BundleID, bundle.Name, bundle.Version, bundleURL,
+		d.ScanID, scanType, d.BundleID, bundle.Name, bundle.Version, bundleURL,
 		d.TargetID, target.Type, target.Identifier, target.Config, creds,
 	)
 
 	if err := h.hub.Send(agentID, msg); err != nil {
 		slog.Error("forwarding directive to agent", "agent_id", agentID, "scan_id", d.ScanID, "error", err)
 	} else {
-		slog.Info("forwarded directive to agent", "agent_id", agentID, "scan_id", d.ScanID)
+		slog.Info("forwarded directive to agent", "agent_id", agentID, "scan_id", d.ScanID, "scan_type", scanType)
 	}
+}
+
+func (h *AgentHandler) fetchCredentialForDirective(ctx context.Context, d pubsub.Directive) json.RawMessage {
+	encryptedCreds, _, credErr := h.store.GetStaticCredentialForTarget(ctx, d.TargetID)
+	switch {
+	case credErr != nil:
+		slog.Info("credential.fetch",
+			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+			"outcome", "error", "error", credErr)
+		return nil
+	case encryptedCreds == nil:
+		slog.Info("credential.fetch",
+			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+			"outcome", "miss")
+		return nil
+	}
+	if len(h.credKey) == 0 {
+		// No encryption key configured — pass through as-is (local dev).
+		slog.Info("credential.fetch",
+			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+			"outcome", "ok_plaintext")
+		return encryptedCreds
+	}
+	decrypted, err := crypto.Decrypt(encryptedCreds, h.credKey)
+	if err != nil {
+		slog.Info("credential.fetch",
+			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+			"outcome", "decrypt_error", "error", err)
+		return nil
+	}
+	slog.Info("credential.fetch",
+		"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+		"outcome", "ok")
+	return decrypted
 }
 
 // SelfDelete is called by the agent itself during uninstall, authed with
