@@ -25,6 +25,33 @@ const TECHNOLOGIES: {
     defaults: { host: '', port: 3306, database: '' } },
 ];
 
+// Discovery target types (ADR 003 R1a). The identifier shape varies —
+// CIDR for subnets, an A-B range for host ranges, a bare IP/hostname for
+// single hosts. The agent's allowlist YAML is the ultimate gate; these
+// type labels just pick the right placeholder.
+type DiscoveryType = 'cidr' | 'network_range' | 'host';
+const DISCOVERY_TYPES: { value: DiscoveryType; label: string; placeholder: string }[] = [
+  { value: 'cidr',          label: 'CIDR',          placeholder: '10.0.0.0/16' },
+  { value: 'network_range', label: 'IP range',      placeholder: '10.0.0.1-10.0.0.254' },
+  { value: 'host',          label: 'Single host',   placeholder: '10.0.0.5 or db.example.com' },
+];
+
+type Kind = 'compliance' | 'discovery';
+
+interface DiscoveryCfg {
+  ports: string;
+  ratePps: string;
+  includeHttpx: boolean;
+  includeNuclei: boolean;
+}
+
+const DISCOVERY_DEFAULTS: DiscoveryCfg = {
+  ports: '',
+  ratePps: '',
+  includeHttpx: true,
+  includeNuclei: true,
+};
+
 export default function Targets() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
@@ -34,11 +61,14 @@ export default function Targets() {
 
   // Form state — technology-specific config is a free-form dict that
   // mirrors the config JSON each driver will see on the agent side.
+  const [kind, setKind] = useState<Kind>('compliance');
   const [techType, setTechType] = useState<TargetType>('postgresql');
+  const [discoveryType, setDiscoveryType] = useState<DiscoveryType>('cidr');
   const [identifier, setIdentifier] = useState('');
   const [agentId, setAgentId] = useState<string>('');
   const [environment, setEnvironment] = useState('');
   const [config, setConfig] = useState<Record<string, unknown>>(TECHNOLOGIES[0].defaults);
+  const [discoveryCfg, setDiscoveryCfg] = useState<DiscoveryCfg>(DISCOVERY_DEFAULTS);
 
   const { data: targets, isLoading, error } = useQuery<Target[]>({
     queryKey: ['targets'],
@@ -56,11 +86,14 @@ export default function Targets() {
       queryClient.invalidateQueries({ queryKey: ['targets'] });
       setShowForm(false);
       // Reset form
+      setKind('compliance');
       setTechType('postgresql');
+      setDiscoveryType('cidr');
       setIdentifier('');
       setAgentId('');
       setEnvironment('');
       setConfig(TECHNOLOGIES[0].defaults);
+      setDiscoveryCfg(DISCOVERY_DEFAULTS);
     },
   });
 
@@ -87,6 +120,24 @@ export default function Targets() {
 
   function handleCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (kind === 'discovery') {
+      const cfg: Record<string, unknown> = {
+        include_httpx: discoveryCfg.includeHttpx,
+        include_nuclei: discoveryCfg.includeNuclei,
+      };
+      const ports = discoveryCfg.ports.trim();
+      if (ports) cfg.ports = ports;
+      const rate = parseInt(discoveryCfg.ratePps, 10);
+      if (!isNaN(rate) && rate > 0) cfg.rate_pps = rate;
+      createMutation.mutate({
+        type: discoveryType,
+        identifier,
+        environment: environment || undefined,
+        agent_id: agentId || undefined,
+        config: cfg,
+      });
+      return;
+    }
     createMutation.mutate({
       type: techType,
       identifier,
@@ -130,26 +181,81 @@ export default function Targets() {
       {showForm && (
         <form className="form-card" onSubmit={handleCreate}>
           <div className="form-group">
-            <label htmlFor="tech">Technology</label>
-            <select
-              id="tech"
-              value={techType}
-              onChange={(e) => handleTechChange(e.target.value as TargetType)}
-              required
-            >
-              {TECHNOLOGIES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
+            <label>Kind</label>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <label style={{ fontWeight: 'normal' }}>
+                <input
+                  type="radio"
+                  name="kind"
+                  value="compliance"
+                  checked={kind === 'compliance'}
+                  onChange={() => setKind('compliance')}
+                />{' '}Compliance (database engine)
+              </label>
+              <label style={{ fontWeight: 'normal' }}>
+                <input
+                  type="radio"
+                  name="kind"
+                  value="discovery"
+                  checked={kind === 'discovery'}
+                  onChange={() => { setKind('discovery'); setIdentifier(''); }}
+                />{' '}Discovery (network range)
+              </label>
+            </div>
+            {kind === 'discovery' && (
+              <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+                Discovery targets are fed to naabu → httpx → nuclei when the
+                Scans page kicks a discovery scan. The agent's allowlist YAML
+                is the ultimate gate — anything outside it is refused.
+              </p>
+            )}
           </div>
 
+          {kind === 'compliance' && (
+            <div className="form-group">
+              <label htmlFor="tech">Technology</label>
+              <select
+                id="tech"
+                value={techType}
+                onChange={(e) => handleTechChange(e.target.value as TargetType)}
+                required
+              >
+                {TECHNOLOGIES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {kind === 'discovery' && (
+            <div className="form-group">
+              <label htmlFor="discovery-type">Discovery target type</label>
+              <select
+                id="discovery-type"
+                value={discoveryType}
+                onChange={(e) => setDiscoveryType(e.target.value as DiscoveryType)}
+                required
+              >
+                {DISCOVERY_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="form-group">
-            <label htmlFor="identifier">Name</label>
+            <label htmlFor="identifier">
+              {kind === 'discovery' ? 'Target' : 'Name'}
+            </label>
             <input
               id="identifier"
               type="text"
               required
-              placeholder="e.g. studio-prod-postgres"
+              placeholder={
+                kind === 'discovery'
+                  ? DISCOVERY_TYPES.find((t) => t.value === discoveryType)?.placeholder
+                  : 'e.g. studio-prod-postgres'
+              }
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
             />
@@ -180,12 +286,26 @@ export default function Targets() {
             />
           </div>
 
-          <ConnectionFields techType={techType} config={config} onChange={setConfigField} />
+          {kind === 'compliance' && (
+            <ConnectionFields techType={techType} config={config} onChange={setConfigField} />
+          )}
 
-          <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
-            After creating, click <strong>Credential</strong> on the row to set the
-            username and password the agent will use to connect.
-          </p>
+          {kind === 'discovery' && (
+            <DiscoveryOptions value={discoveryCfg} onChange={setDiscoveryCfg} />
+          )}
+
+          {kind === 'compliance' && (
+            <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
+              After creating, click <strong>Credential</strong> on the row to set the
+              username and password the agent will use to connect.
+            </p>
+          )}
+          {kind === 'discovery' && (
+            <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
+              After creating, start a <strong>Discovery</strong> scan from the
+              Scans page to populate the Assets inventory for this target.
+            </p>
+          )}
           <button type="submit" className="btn btn-primary" disabled={createMutation.isPending}>
             {createMutation.isPending ? 'Creating…' : 'Create Target'}
           </button>
@@ -247,18 +367,22 @@ export default function Targets() {
                         : `✗ ${probeResult[t.id].msg.slice(0, 40)}${probeResult[t.id].msg.length > 40 ? '…' : ''}`}
                     </span>
                   )}
-                  <button
-                    className="btn btn-sm"
-                    style={{ marginRight: 6 }}
-                    onClick={() => handleProbe(t.id)}
-                    disabled={probeBusy[t.id]}
-                    title="Send a lightweight connection test through the agent"
-                  >
-                    {probeBusy[t.id] ? 'Testing…' : 'Test'}
-                  </button>
-                  <button className="btn btn-sm" style={{ marginRight: 6 }} onClick={() => setCredTarget(t)}>
-                    Credential
-                  </button>
+                  {!isDiscoveryType(t.type) && (
+                    <>
+                      <button
+                        className="btn btn-sm"
+                        style={{ marginRight: 6 }}
+                        onClick={() => handleProbe(t.id)}
+                        disabled={probeBusy[t.id]}
+                        title="Send a lightweight connection test through the agent"
+                      >
+                        {probeBusy[t.id] ? 'Testing…' : 'Test'}
+                      </button>
+                      <button className="btn btn-sm" style={{ marginRight: 6 }} onClick={() => setCredTarget(t)}>
+                        Credential
+                      </button>
+                    </>
+                  )}
                   <button className="btn btn-danger btn-sm" onClick={() => handleDelete(t.id)} disabled={deleteMutation.isPending}>
                     Delete
                   </button>
@@ -276,9 +400,67 @@ export default function Targets() {
   );
 }
 
+function isDiscoveryType(type: string): boolean {
+  return DISCOVERY_TYPES.some((d) => d.value === type);
+}
+
 function techLabel(type: string): string {
   const t = TECHNOLOGIES.find((x) => x.value === type);
-  return t ? t.label : type;
+  if (t) return t.label;
+  const d = DISCOVERY_TYPES.find((x) => x.value === type);
+  if (d) return d.label;
+  return type;
+}
+
+function DiscoveryOptions({
+  value, onChange,
+}: {
+  value: DiscoveryCfg;
+  onChange: (next: DiscoveryCfg) => void;
+}) {
+  return (
+    <>
+      <div className="form-group">
+        <label htmlFor="ports">Ports (optional)</label>
+        <input
+          id="ports"
+          type="text"
+          placeholder="e.g. 80,443,5432 or 1-1000 (leave blank for naabu defaults)"
+          value={value.ports}
+          onChange={(e) => onChange({ ...value, ports: e.target.value })}
+        />
+      </div>
+      <div className="form-group">
+        <label htmlFor="rate_pps">Rate (packets/sec, optional)</label>
+        <input
+          id="rate_pps"
+          type="number"
+          min={1}
+          placeholder="agent allowlist caps this — blank uses the cap"
+          value={value.ratePps}
+          onChange={(e) => onChange({ ...value, ratePps: e.target.value })}
+        />
+      </div>
+      <div className="form-group">
+        <label style={{ fontWeight: 'normal' }}>
+          <input
+            type="checkbox"
+            checked={value.includeHttpx}
+            onChange={(e) => onChange({ ...value, includeHttpx: e.target.checked })}
+          />{' '}Run httpx (service fingerprinting on open HTTP(S) ports)
+        </label>
+      </div>
+      <div className="form-group">
+        <label style={{ fontWeight: 'normal' }}>
+          <input
+            type="checkbox"
+            checked={value.includeNuclei}
+            onChange={(e) => onChange({ ...value, includeNuclei: e.target.checked })}
+          />{' '}Run nuclei (CVE / tech detection templates)
+        </label>
+      </div>
+    </>
+  );
 }
 
 function ConnectionFields({
