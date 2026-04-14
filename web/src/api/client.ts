@@ -223,6 +223,9 @@ export interface UpsertAssetSetRequest {
 export const createAssetSet = (req: UpsertAssetSetRequest) =>
   request<AssetSet>('/api/v1/asset-sets', { method: 'POST', body: JSON.stringify(req) });
 
+export const updateAssetSet = (id: string, req: UpsertAssetSetRequest) =>
+  request<AssetSet>(`/api/v1/asset-sets/${id}`, { method: 'PUT', body: JSON.stringify(req) });
+
 export const deleteAssetSet = (id: string) =>
   request<void>(`/api/v1/asset-sets/${id}`, { method: 'DELETE' });
 

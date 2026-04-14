@@ -162,7 +162,7 @@ silkstrand/
 | **R1c-b** | D13 asset sets (saved JSONB predicates + preview) | ✅ shipped |
 | **R1c-c** | D13 one-shot scan dispatcher; `run_one_shot_scan` rule action; completion rollup; ephemeral target cleanup | ✅ shipped |
 | **R1.5 (admin UI)** | Rules / Channels / Asset Sets / One-shot pages | ✅ shipped |
-| **R1.5 (deferred)** | Notification retry worker · D14 per-tenant template selection · update flow on rules/channels UI · visual predicate builder | ⏸ |
+| **R1.5 (deferred)** | Notification retry worker · D14 per-tenant template selection · visual predicate builder | ⏸ |
 | **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential auto-binding (with ADR 004 C1) | ⏳ planned |
 | **R3+** | Vault credential resolver (ADR 004 C3); DNS zone enumeration; Azure/GCP cloud discovery | ⏳ planned |
 
@@ -217,7 +217,6 @@ All sensitive Cloud Run env vars (DATABASE_URL, REDIS_URL, JWT_SECRET, INTERNAL_
 - AWS cloud discovery (ADR 003 R2 — `target_type: aws_account`, cloud-native credential auto-binding via `MasterUserSecret`)
 - Per-tenant template selection (D14) — backoffice catalog + tenant settings + directive extension
 - Notification retry worker (failed `notification_deliveries` rows stay failed; rule must re-fire to retry)
-- Update flow on rules/channels/asset-sets in the UI (current admin pages are create + delete only — workaround: delete + recreate)
 - Visual predicate builder (raw JSON textarea is v1)
 - Frontend pagination for list endpoints
 - Agent WebSocket origin restriction for production
