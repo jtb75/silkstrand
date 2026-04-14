@@ -13,6 +13,7 @@ export default function Layout() {
         <div className="sidebar-brand">SilkStrand</div>
         <nav className="sidebar-nav">
           <NavLink to="/" end>Dashboard</NavLink>
+          <NavLink to="/assets">Assets</NavLink>
           <NavLink to="/targets">Targets</NavLink>
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/scans">Scans</NavLink>

@@ -7,7 +7,8 @@ export type TargetType =
   | 'aurora_mysql'
   | 'host'
   | 'cidr'
-  | 'cloud';
+  | 'cloud'
+  | 'network_range';
 
 export interface Target {
   id: string;
@@ -41,14 +42,81 @@ export interface Scan {
   id: string;
   tenant_id: string;
   agent_id?: string;
-  target_id: string;
+  target_id?: string;
   bundle_id: string;
+  scan_type?: 'compliance' | 'discovery';
   status: 'pending' | 'running' | 'completed' | 'failed';
   started_at?: string;
   completed_at?: string;
   created_at: string;
   results?: ScanResult[];
   summary?: ScanSummary;
+}
+
+// ADR 003 R1a — Asset / discovery types.
+export type AssetSource = 'manual' | 'discovered';
+
+export interface CVE {
+  id: string;
+  severity?: 'critical' | 'high' | 'medium' | 'low' | 'info';
+  template?: string;
+  found_at?: string;
+}
+
+export interface DiscoveredAsset {
+  id: string;
+  tenant_id: string;
+  ip: string;
+  port: number;
+  hostname?: string;
+  service?: string;
+  version?: string;
+  technologies: unknown;
+  cves: CVE[] | unknown;
+  compliance_status?: string;
+  source: AssetSource;
+  environment?: string;
+  first_seen: string;
+  last_seen: string;
+  last_scan_id?: string;
+  missed_scan_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AssetEventType =
+  | 'new_asset'
+  | 'asset_gone'
+  | 'asset_reappeared'
+  | 'new_cve'
+  | 'cve_resolved'
+  | 'version_changed'
+  | 'port_opened'
+  | 'port_closed'
+  | 'compliance_pass'
+  | 'compliance_fail';
+
+export interface AssetEvent {
+  id: string;
+  tenant_id: string;
+  asset_id: string;
+  scan_id?: string;
+  event_type: AssetEventType;
+  severity?: string;
+  payload: unknown;
+  occurred_at: string;
+}
+
+export interface AssetListResponse {
+  items: DiscoveredAsset[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+export interface AssetDetailResponse {
+  asset: DiscoveredAsset;
+  events: AssetEvent[];
 }
 
 export interface ScanResult {
