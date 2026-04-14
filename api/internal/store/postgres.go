@@ -1976,3 +1976,56 @@ func (s *PostgresStore) CreateScanForOneShot(ctx context.Context, tenantID, agen
 	}
 	return &sc, nil
 }
+
+// OnChildScanTerminal ticks a one-shot parent's progress when one of
+// its child scans reaches a terminal status. Runs the counter bump +
+// conditional status/completed_at flip atomically. Safe to call for
+// scans that aren't part of a one-shot — returns nil.
+func (s *PostgresStore) OnChildScanTerminal(ctx context.Context, scanID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var parentID sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT parent_one_shot_id FROM scans WHERE id = $1`, scanID).
+		Scan(&parentID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return fmt.Errorf("loading scan parent: %w", err)
+	}
+	if !parentID.Valid {
+		return nil
+	}
+
+	// Bump counter + compute new status in one UPDATE.
+	var newTotal, newCompleted int
+	var newStatus string
+	err = tx.QueryRowContext(ctx,
+		`UPDATE one_shot_scans
+		    SET completed_targets = completed_targets + 1,
+		        status = CASE
+		                   WHEN total_targets IS NOT NULL
+		                    AND completed_targets + 1 >= total_targets THEN 'completed'
+		                   ELSE status
+		                 END,
+		        completed_at = CASE
+		                         WHEN total_targets IS NOT NULL
+		                          AND completed_targets + 1 >= total_targets THEN NOW()
+		                         ELSE completed_at
+		                       END
+		  WHERE id = $1
+		  RETURNING COALESCE(total_targets, 0), completed_targets, status`,
+		parentID.String).Scan(&newTotal, &newCompleted, &newStatus)
+	if err != nil {
+		return fmt.Errorf("ticking one-shot parent: %w", err)
+	}
+	_ = newTotal
+	_ = newCompleted
+	_ = newStatus
+
+	return tx.Commit()
+}
