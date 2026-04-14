@@ -185,21 +185,27 @@ func assetField(path string, a *model.DiscoveredAsset) (any, bool) {
 	case "last_seen":
 		return a.LastSeen.Format(time.RFC3339), true
 	}
-	// Composite paths.
+	// Composite paths. Presence tracks whether the lookup produced any
+	// values — empty arrays ≡ not present so $exists:false matches the
+	// obvious case.
 	if strings.HasPrefix(path, "technologies.") {
 		tag := strings.TrimPrefix(path, "technologies.")
-		return technologiesContains(a.Technologies, tag), true
+		matches := technologiesContains(a.Technologies, tag)
+		return matches, len(matches) > 0
 	}
 	if path == "cves" {
-		return cvesIDs(a.CVEs), true
+		ids := cvesIDs(a.CVEs)
+		return ids, len(ids) > 0
 	}
 	if strings.HasPrefix(path, "cves.") {
 		key := strings.TrimPrefix(path, "cves.")
 		switch key {
 		case "severity":
-			return cvesSeverities(a.CVEs), true
+			sev := cvesSeverities(a.CVEs)
+			return sev, len(sev) > 0
 		case "id":
-			return cvesIDs(a.CVEs), true
+			ids := cvesIDs(a.CVEs)
+			return ids, len(ids) > 0
 		}
 	}
 	return nil, false
