@@ -172,10 +172,9 @@ func encryptSecretsInConfig(chType string, raw json.RawMessage, encKey []byte, i
 		if url, ok := cfg["url"].(string); !ok || url == "" {
 			return nil, errors.New("webhook config requires url")
 		}
-		switch sec, _ := cfg["secret"].(string); {
-		case sec == "" || sec == "(set)":
+		if sec, _ := cfg["secret"].(string); sec == "" || sec == "(set)" {
 			delete(cfg, "secret")
-		default:
+		} else {
 			enc, err := notify.EncryptSecret(sec, encKey)
 			if err != nil {
 				return nil, err
@@ -184,13 +183,12 @@ func encryptSecretsInConfig(chType string, raw json.RawMessage, encKey []byte, i
 		}
 	case model.ChannelTypeSlack:
 		sec, _ := cfg["webhook_url"].(string)
-		switch {
-		case sec == "" || sec == "(set)":
+		if sec == "" || sec == "(set)" {
 			if isNew {
 				return nil, errors.New("slack config requires webhook_url")
 			}
 			delete(cfg, "webhook_url")
-		default:
+		} else {
 			enc, err := notify.EncryptSecret(sec, encKey)
 			if err != nil {
 				return nil, err
