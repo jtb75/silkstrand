@@ -210,6 +210,50 @@ export const updateNotificationChannel = (id: string, req: UpsertChannelRequest)
 export const deleteNotificationChannel = (id: string) =>
   request<void>(`/api/v1/notification-channels/${id}`, { method: 'DELETE' });
 
+// Asset sets (ADR 003 R1c-b)
+import type { AssetSet, AssetSetPreview, OneShotScan } from './types';
+export const listAssetSets = () => request<AssetSet[]>('/api/v1/asset-sets');
+
+export interface UpsertAssetSetRequest {
+  name: string;
+  description?: string;
+  predicate: Record<string, unknown>;
+}
+
+export const createAssetSet = (req: UpsertAssetSetRequest) =>
+  request<AssetSet>('/api/v1/asset-sets', { method: 'POST', body: JSON.stringify(req) });
+
+export const deleteAssetSet = (id: string) =>
+  request<void>(`/api/v1/asset-sets/${id}`, { method: 'DELETE' });
+
+export const previewAssetSet = (id: string) =>
+  request<AssetSetPreview>(`/api/v1/asset-sets/${id}/preview`);
+
+export const previewAssetSetAdhoc = (predicate: Record<string, unknown>) =>
+  request<AssetSetPreview>('/api/v1/asset-sets/preview', {
+    method: 'POST',
+    body: JSON.stringify({ predicate }),
+  });
+
+// One-shot scans (ADR 003 R1c-c)
+export const listOneShotScans = () => request<OneShotScan[]>('/api/v1/one-shot-scans');
+
+export interface CreateOneShotScanRequest {
+  bundle_id: string;
+  agent_id: string;
+  asset_set_id?: string;
+  inline_predicate?: Record<string, unknown>;
+  max_concurrency?: number;
+  rate_limit_pps?: number;
+  triggered_by?: string;
+}
+
+export const createOneShotScan = (req: CreateOneShotScanRequest) =>
+  request<OneShotScan>('/api/v1/one-shot-scans', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+
 // Agents
 export const listAgents = () => request<Agent[]>('/api/v1/agents');
 export const createAgent = (name: string, version?: string) =>
