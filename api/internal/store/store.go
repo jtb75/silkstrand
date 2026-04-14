@@ -131,6 +131,17 @@ type Store interface {
 	UpsertRule(ctx context.Context, r model.CorrelationRule) (*model.CorrelationRule, error)
 	DeleteRule(ctx context.Context, id string) error
 
+	// Asset sets (ADR 003 R1c / D13). ResolveAssetSet runs the saved
+	// predicate against the tenant's inventory and returns matching
+	// rows — used by the one-shot scan dispatcher (R1c-c) and the
+	// preview endpoint.
+	ListAssetSets(ctx context.Context) ([]model.AssetSet, error)
+	GetAssetSet(ctx context.Context, id string) (*model.AssetSet, error)
+	CreateAssetSet(ctx context.Context, s model.AssetSet) (*model.AssetSet, error)
+	UpdateAssetSet(ctx context.Context, s model.AssetSet) (*model.AssetSet, error)
+	DeleteAssetSet(ctx context.Context, id string) error
+	ListAllAssetsForTenant(ctx context.Context, tenantID string) ([]model.DiscoveredAsset, error)
+
 	// Notification channels + deliveries (ADR 003 R1c / D12).
 	ListNotificationChannels(ctx context.Context) ([]model.NotificationChannel, error)
 	GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error)

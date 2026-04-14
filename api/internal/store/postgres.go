@@ -1772,3 +1772,112 @@ func (s *PostgresStore) ListNotificationDeliveries(ctx context.Context, limit in
 	}
 	return out, rows.Err()
 }
+
+// --- ADR 003 R1c-b: asset sets ---
+
+const assetSetSelectCols = `id, tenant_id, name, description, predicate, created_at, updated_at`
+
+func scanAssetSet(row interface {
+	Scan(...interface{}) error
+}, s *model.AssetSet) error {
+	return row.Scan(&s.ID, &s.TenantID, &s.Name, &s.Description, &s.Predicate, &s.CreatedAt, &s.UpdatedAt)
+}
+
+func (s *PostgresStore) ListAssetSets(ctx context.Context) ([]model.AssetSet, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+assetSetSelectCols+` FROM asset_sets WHERE tenant_id = $1 ORDER BY name`,
+		tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list asset sets: %w", err)
+	}
+	defer rows.Close()
+	var out []model.AssetSet
+	for rows.Next() {
+		var s model.AssetSet
+		if err := scanAssetSet(rows, &s); err != nil {
+			return nil, fmt.Errorf("scan asset set: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetAssetSet(ctx context.Context, id string) (*model.AssetSet, error) {
+	tenantID := TenantID(ctx)
+	var set model.AssetSet
+	err := scanAssetSet(s.db.QueryRowContext(ctx,
+		`SELECT `+assetSetSelectCols+` FROM asset_sets WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID), &set)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get asset set: %w", err)
+	}
+	return &set, nil
+}
+
+func (s *PostgresStore) CreateAssetSet(ctx context.Context, in model.AssetSet) (*model.AssetSet, error) {
+	var out model.AssetSet
+	err := scanAssetSet(s.db.QueryRowContext(ctx,
+		`INSERT INTO asset_sets (tenant_id, name, description, predicate)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING `+assetSetSelectCols,
+		in.TenantID, in.Name, in.Description, in.Predicate), &out)
+	if err != nil {
+		return nil, fmt.Errorf("create asset set: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) UpdateAssetSet(ctx context.Context, in model.AssetSet) (*model.AssetSet, error) {
+	tenantID := TenantID(ctx)
+	var out model.AssetSet
+	err := scanAssetSet(s.db.QueryRowContext(ctx,
+		`UPDATE asset_sets
+		    SET description = $1, predicate = $2, updated_at = NOW()
+		  WHERE id = $3 AND tenant_id = $4
+		  RETURNING `+assetSetSelectCols,
+		in.Description, in.Predicate, in.ID, tenantID), &out)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("update asset set: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) DeleteAssetSet(ctx context.Context, id string) error {
+	tenantID := TenantID(ctx)
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM asset_sets WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("delete asset set: %w", err)
+	}
+	return nil
+}
+
+// ListAllAssetsForTenant returns every asset for the tenant. Used by
+// asset set preview and the one-shot scan dispatcher to fan out
+// predicates in-memory. Fine at R1 scale (tenants have thousands of
+// assets at most); switch to a SQL compiler when a tenant breaks
+// that assumption.
+func (s *PostgresStore) ListAllAssetsForTenant(ctx context.Context, tenantID string) ([]model.DiscoveredAsset, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+assetSelectCols+` FROM discovered_assets WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list all assets: %w", err)
+	}
+	defer rows.Close()
+	var out []model.DiscoveredAsset
+	for rows.Next() {
+		var a model.DiscoveredAsset
+		if err := scanAsset(rows, &a); err != nil {
+			return nil, fmt.Errorf("scan asset: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}

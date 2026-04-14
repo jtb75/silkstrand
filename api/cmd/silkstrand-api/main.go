@@ -88,6 +88,7 @@ func run() error {
 	notifDispatcher := notify.New(pgStore, cfg.CredentialEncryptionKey)
 	globalNotifier = notifDispatcher // exposed for runRuleActions (see bottom of file)
 	channelsH := handler.NewNotificationChannelsHandler(pgStore, cfg.CredentialEncryptionKey)
+	assetSetsH := handler.NewAssetSetsHandler(pgStore)
 
 	// Router
 	mux := http.NewServeMux()
@@ -163,6 +164,14 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/notification-channels/{id}", channelsH.Get)
 	apiMux.HandleFunc("PUT /api/v1/notification-channels/{id}", channelsH.Update)
 	apiMux.HandleFunc("DELETE /api/v1/notification-channels/{id}", channelsH.Delete)
+
+	apiMux.HandleFunc("GET /api/v1/asset-sets", assetSetsH.List)
+	apiMux.HandleFunc("POST /api/v1/asset-sets", assetSetsH.Create)
+	apiMux.HandleFunc("POST /api/v1/asset-sets/preview", assetSetsH.PreviewAdhoc)
+	apiMux.HandleFunc("GET /api/v1/asset-sets/{id}", assetSetsH.Get)
+	apiMux.HandleFunc("PUT /api/v1/asset-sets/{id}", assetSetsH.Update)
+	apiMux.HandleFunc("DELETE /api/v1/asset-sets/{id}", assetSetsH.Delete)
+	apiMux.HandleFunc("GET /api/v1/asset-sets/{id}/preview", assetSetsH.Preview)
 
 	// Apply auth + tenant middleware to API routes
 	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))
