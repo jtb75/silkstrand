@@ -73,6 +73,9 @@ func (h *AssetHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	if events == nil {
+		events = []model.AssetEvent{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"asset":  asset,
 		"events": events,
