@@ -7,8 +7,6 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/model"
 )
 
-func sp(s string) *string { return &s }
-
 func mkAsset() *model.DiscoveredAsset {
 	pg := "postgresql"
 	v := "16.2"
