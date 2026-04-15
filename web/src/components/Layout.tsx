@@ -17,7 +17,7 @@ export default function Layout() {
           <NavLink to="/findings">Findings</NavLink>
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/scans">Scans</NavLink>
-          {isAdmin && <NavLink to="/asset-sets">Asset Sets</NavLink>}
+          {isAdmin && <NavLink to="/collections">Collections</NavLink>}
           {isAdmin && <NavLink to="/rules">Rules</NavLink>}
           {isAdmin && <NavLink to="/one-shot-scans">One-shot</NavLink>}
           <NavLink to="/settings">Settings</NavLink>

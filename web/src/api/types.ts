@@ -92,6 +92,12 @@ export interface DiscoveredAsset {
   allowlist_checked_at?: string;
   created_at: string;
   updated_at: string;
+  // P4-backend: optional inline roll-ups so the Assets table can render
+  // Coverage and max-severity without a second round-trip per row.
+  endpoints_count?: number;
+  risk?: RiskRollup;
+  coverage?: CoverageFlags;
+  resource_type?: string;
 }
 
 export type AllowlistStatus = 'allowlisted' | 'out_of_policy' | 'unknown';
@@ -141,6 +147,76 @@ export interface AssetSet {
 export interface AssetSetPreview {
   count: number;
   sample: DiscoveredAsset[];
+}
+
+// ADR 006 D5 — Collections replace asset_sets with an expanded `scope`.
+export type CollectionScope = 'asset' | 'endpoint' | 'finding';
+export type WidgetKind = 'list' | 'count' | 'chart';
+
+export interface Collection {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description?: string;
+  scope: CollectionScope;
+  predicate: Record<string, unknown>;
+  is_dashboard_widget: boolean;
+  widget_kind?: WidgetKind;
+  widget_title?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollectionPreview {
+  count: number;
+  // Sample shape depends on scope; rendered generically in the UI.
+  sample: Array<Record<string, unknown>>;
+}
+
+// Coverage + risk roll-ups returned inline on the asset detail response.
+// P4-backend extends /api/v1/assets/{id} to include these alongside the
+// existing DiscoveredAsset row. They are optional for backwards-compat.
+export interface CoverageFlags {
+  scan_configured: boolean;
+  creds_mapped: boolean;
+}
+
+export interface RiskRollup {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+  max_severity?: 'critical' | 'high' | 'medium' | 'low' | 'info';
+  delta_since_last_scan?: number;
+  top_findings?: Array<{ id: string; title: string; severity: string }>;
+}
+
+export interface CoverageRollup {
+  endpoints_total: number;
+  endpoints_with_scan: number;
+  endpoints_with_creds: number;
+  last_scan_at?: string;
+  next_scan_at?: string;
+  gaps: Array<{
+    endpoint_id: string;
+    ip: string;
+    port: number;
+    service?: string;
+    reason: 'no_scan' | 'no_creds' | 'recent_failure';
+  }>;
+}
+
+export interface AssetEndpoint {
+  id: string;
+  asset_id: string;
+  port: number;
+  protocol?: string;
+  service?: string;
+  version?: string;
+  fingerprint?: Record<string, unknown>;
+  findings_count?: number;
+  coverage?: CoverageFlags;
 }
 
 export interface OneShotScan {
@@ -193,6 +269,15 @@ export interface AssetListResponse {
 export interface AssetDetailResponse {
   asset: DiscoveredAsset;
   events: AssetEvent[];
+  // P4-backend extensions (ADR 006). Optional: older backends omit them.
+  risk?: RiskRollup;
+  coverage?: CoverageRollup;
+  endpoints?: AssetEndpoint[];
+  provenance?: {
+    first_target_id?: string;
+    first_agent_id?: string;
+    first_scan_id?: string;
+  };
 }
 
 export interface ScanResult {
