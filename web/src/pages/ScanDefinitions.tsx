@@ -11,7 +11,7 @@ import {
   getScanDefinitionCoverage,
   listBundles,
   listAgents,
-  listAssetSets,
+  listCollections,
   type UpsertScanDefinitionRequest,
 } from '../api/client';
 import type {
@@ -20,7 +20,7 @@ import type {
   ScanDefinitionScopeKind,
   Bundle,
   Agent,
-  AssetSet,
+  Collection,
 } from '../api/types';
 
 // Scopes the user can pick in the form. The backend's CHECK constraint
@@ -86,11 +86,13 @@ export default function ScanDefinitions() {
     enabled: showForm,
   });
 
-  // Asset Sets are the closest stand-in for Collections until the
-  // collections API lands in Phase 5. Users pick one when scope=collection.
-  const { data: assetSets } = useQuery<AssetSet[]>({
-    queryKey: ['asset-sets'],
-    queryFn: listAssetSets,
+  // Collections power the scope=collection picker. Filter to
+  // endpoint-scoped collections only — compliance scans bind to
+  // asset_endpoints, so asset- or finding-scoped collections don't
+  // make sense as a scan target.
+  const { data: collections } = useQuery<Collection[]>({
+    queryKey: ['collections', { scope: 'endpoint' }],
+    queryFn: () => listCollections({ scope: 'endpoint' }),
     enabled: showForm && scopeKind === 'collection',
   });
 
@@ -293,7 +295,7 @@ export default function ScanDefinitions() {
 
           {scopeKind === 'collection' && (
             <div className="form-group">
-              <label htmlFor="sd-collection">Collection (asset set)</label>
+              <label htmlFor="sd-collection">Collection</label>
               <select
                 id="sd-collection"
                 value={collectionId}
@@ -301,8 +303,8 @@ export default function ScanDefinitions() {
                 required
               >
                 <option value="">Select…</option>
-                {assetSets?.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
+                {collections?.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
             </div>

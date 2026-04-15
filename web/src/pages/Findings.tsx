@@ -4,13 +4,13 @@ import {
   listFindings,
   suppressFinding,
   reopenFinding,
-  listAssetSets,
+  listCollections,
 } from '../api/client';
 import type {
   Finding,
   FindingSourceKind,
   FindingStatus,
-  AssetSet,
+  Collection,
 } from '../api/types';
 
 type Tab = 'vulnerabilities' | 'compliance';
@@ -52,9 +52,9 @@ export default function Findings() {
   const [since, setSince] = useState('');
   const [until, setUntil] = useState('');
 
-  const { data: assetSets } = useQuery<AssetSet[]>({
-    queryKey: ['asset-sets'],
-    queryFn: listAssetSets,
+  const { data: collections } = useQuery<Collection[]>({
+    queryKey: ['collections', { scope: 'finding' }],
+    queryFn: () => listCollections({ scope: 'finding' }),
   });
 
   const params = useMemo(() => ({
@@ -132,8 +132,8 @@ export default function Findings() {
           <label htmlFor="f-coll" style={{ display: 'block', fontSize: 12 }}>Collection</label>
           <select id="f-coll" value={collectionId} onChange={(e) => setCollectionId(e.target.value)}>
             <option value="">All</option>
-            {assetSets?.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
+            {collections?.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </div>

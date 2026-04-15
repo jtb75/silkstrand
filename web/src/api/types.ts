@@ -134,21 +134,6 @@ export interface NotificationChannel {
   updated_at: string;
 }
 
-export interface AssetSet {
-  id: string;
-  tenant_id: string;
-  name: string;
-  description?: string;
-  predicate: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AssetSetPreview {
-  count: number;
-  sample: DiscoveredAsset[];
-}
-
 // ADR 006 D5 — Collections replace asset_sets with an expanded `scope`.
 export type CollectionScope = 'asset' | 'endpoint' | 'finding';
 export type WidgetKind = 'list' | 'count' | 'chart';
