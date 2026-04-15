@@ -1,6 +1,6 @@
 # ADR 006: Asset-first data model
 
-**Status:** Proposed
+**Status:** Accepted (P1–P3 shipped v0.1.49)
 **Date:** 2026-04-15
 **Related:** [ADR 003](./003-recon-pipeline.md) (recon pipeline that produced
 today's `discovered_assets`), [ADR 004](./004-credential-resolver.md) (credential

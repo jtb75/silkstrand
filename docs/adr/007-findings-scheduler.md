@@ -1,6 +1,6 @@
 # ADR 007: Unified findings + scan definitions and scheduler
 
-**Status:** Proposed
+**Status:** Accepted (P4–P5 shipped v0.1.49)
 **Date:** 2026-04-15
 **Related:** [ADR 003](./003-recon-pipeline.md) (recon pipeline — produces today's
 cve list on `discovered_assets`), [ADR 004](./004-credential-resolver.md)
