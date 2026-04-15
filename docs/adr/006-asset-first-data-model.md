@@ -289,6 +289,33 @@ join table keeps `assets` narrow and lets us answer richer questions later
 nullable-with-ON-DELETE-SET-NULL because dropping a target shouldn't cascade
 into asset history.
 
+### D10. UUID randomness invariant
+
+Every `id UUID` column in every table created by this ADR (and ADR 007)
+uses `DEFAULT uuid_generate_v4()`. No code path — handler, migration, seed,
+or test fixture — may insert a row with an ID chosen by the inserting
+code, with **two** narrow exceptions:
+
+1. **Reserved system rows** with a callout comment in the migration. Today
+   this is just the global discovery bundle
+   (`11111111-1111-1111-1111-111111111111`) from migration `015`, which
+   the agent runner references as `DISCOVERY_BUNDLE_ID` in the frontend.
+   Any future reserved row must get its own migration with a comment
+   explaining why a random UUID wouldn't work.
+2. **Dev-only seed scripts** in `scripts/seed-*.sql`, clearly scoped to
+   `make seed` against localhost. These MUST NOT be applied to any
+   staging or production database — a check in the P1 migration audits
+   the database for the well-known dev-seed pattern
+   (`00000000-0000-0000-0000-0000000000XX`) and fails the migration if it
+   finds any rows outside the bundles table's reserved-id range, to
+   prevent a repeat of the "dev seed leaked into prod" incident that
+   produced today's `00000000-…-000000000031` bundle rows in prod.
+
+UUIDs are not an authorization mechanism — tenant middleware enforces
+row-level access — but a guessable ID is a smell that makes every
+downstream log / URL / audit trail weaker. Keeping this invariant
+explicit avoids future drift.
+
 ## Consequences
 
 **Positive:**
