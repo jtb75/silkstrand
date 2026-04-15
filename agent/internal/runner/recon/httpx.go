@@ -39,6 +39,10 @@ func runHTTPX(ctx context.Context, inputs []string, onFinding func(HTTPXFinding)
 		"-status-code",
 		"-title",
 		"-no-color",
+		// Slow-responding devices (printers, IoT, embedded) often miss
+		// httpx's 5s default. 15s is enough for first-connect latency
+		// without dragging scans out meaningfully.
+		"-timeout", "15",
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	stdin, err := cmd.StdinPipe()
@@ -68,7 +72,7 @@ func runHTTPX(ctx context.Context, inputs []string, onFinding func(HTTPXFinding)
 		var line struct {
 			URL          string   `json:"url"`
 			Host         string   `json:"host"`
-			IP           string   `json:"ip"`
+			IP           string   `json:"host_ip"`
 			Port         string   `json:"port"`
 			Title        string   `json:"title"`
 			Webserver    string   `json:"webserver"`
