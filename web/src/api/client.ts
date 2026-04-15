@@ -197,21 +197,8 @@ export const updateCorrelationRule = (id: string, req: UpsertRuleRequest) =>
 export const deleteCorrelationRule = (id: string) =>
   request<void>(`/api/v1/correlation-rules/${id}`, { method: 'DELETE' });
 
-// Collections (ADR 006 D5) — minimal shape for the Credentials mapping UX
-export interface Collection {
-  id: string;
-  tenant_id: string;
-  name: string;
-  description?: string | null;
-  scope: 'asset' | 'endpoint' | 'finding';
-  predicate: Record<string, unknown>;
-  is_dashboard_widget: boolean;
-  widget_kind?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export const listCollections = () => request<Collection[]>('/api/v1/collections');
+// Collection type + listCollections are defined in the "Collections
+// (ADR 006 D5)" section below; consumed by the Credentials mapping UX here.
 
 // ---------------------------------------------------------------
 // Credential sources + mappings (ADR 004 C0 + ADR 006 P6 / P5-b)
