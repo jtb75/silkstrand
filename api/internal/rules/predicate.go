@@ -17,8 +17,8 @@ package rules
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"regexp"
 	"strings"
@@ -26,12 +26,6 @@ import (
 
 	"github.com/jtb75/silkstrand/api/internal/model"
 )
-
-// ErrNotImplemented is retained as the sentinel for subject-mismatch
-// on finding-scope evaluation (e.g., nil subject). P4 wires the real
-// finding-scope lookup below; callers that pass the wrong subject type
-// still get a typed error via the scope-dispatcher.
-var ErrNotImplemented = errors.New("finding-scope predicate received unsupported subject")
 
 // Scope is the runtime classification of a collection predicate target.
 // Mirrors model.CollectionScope* constants.
@@ -58,10 +52,12 @@ type EndpointView struct {
 //
 //	ScopeAsset    → *model.Asset
 //	ScopeEndpoint → EndpointView (value, not pointer) or *EndpointView
-//	ScopeFinding  → *model.Finding (currently returns ErrNotImplemented)
+//	ScopeFinding  → *model.Finding
 //
 // An empty predicate matches anything. Malformed predicates return
-// (false, error) — callers typically log and skip the rule.
+// (false, error) — callers typically log and skip the rule. A subject
+// whose type does not match the scope is treated as "no match" (logged
+// via slog.Warn) rather than an error — fail-closed dispatch.
 func Match(predicate json.RawMessage, scope Scope, subject any) (bool, error) {
 	if len(predicate) == 0 {
 		return true, nil
@@ -70,9 +66,18 @@ func Match(predicate json.RawMessage, scope Scope, subject any) (bool, error) {
 	if err := json.Unmarshal(predicate, &node); err != nil {
 		return false, fmt.Errorf("invalid predicate: %w", err)
 	}
-	lookup, err := lookupFor(scope, subject)
+	lookup, mismatch, err := lookupFor(scope, subject)
 	if err != nil {
 		return false, err
+	}
+	if mismatch {
+		// Fail-closed: a scope/subject mismatch is a caller bug, but we
+		// refuse to let it either crash the rule engine or silently match.
+		// Log and treat as "no match".
+		slog.Warn("predicate scope mismatch",
+			"scope", scope,
+			"subject_type", fmt.Sprintf("%T", subject))
+		return false, nil
 	}
 	return evalNode(node, lookup)
 }
@@ -81,14 +86,19 @@ func Match(predicate json.RawMessage, scope Scope, subject any) (bool, error) {
 // (value, present).
 type fieldLookup func(path string) (any, bool)
 
-func lookupFor(scope Scope, subject any) (fieldLookup, error) {
+// lookupFor resolves the per-scope field lookup for a subject. The second
+// return value, `mismatch`, is true when the subject type is wrong for the
+// scope — callers treat mismatch as "fail-closed: no match, no error".
+// Actual errors (unsupported scope, malformed EndpointView) still flow
+// through the third return.
+func lookupFor(scope Scope, subject any) (fieldLookup, bool, error) {
 	switch scope {
 	case ScopeAsset:
 		a, ok := subject.(*model.Asset)
 		if !ok || a == nil {
-			return nil, fmt.Errorf("asset-scope predicate expects *model.Asset, got %T", subject)
+			return nil, true, nil
 		}
-		return assetLookup(a), nil
+		return assetLookup(a), false, nil
 	case ScopeEndpoint:
 		var v EndpointView
 		switch s := subject.(type) {
@@ -96,24 +106,24 @@ func lookupFor(scope Scope, subject any) (fieldLookup, error) {
 			v = s
 		case *EndpointView:
 			if s == nil {
-				return nil, fmt.Errorf("endpoint-scope predicate got nil EndpointView")
+				return nil, true, nil
 			}
 			v = *s
 		default:
-			return nil, fmt.Errorf("endpoint-scope predicate expects EndpointView, got %T", subject)
+			return nil, true, nil
 		}
 		if v.Asset == nil || v.Endpoint == nil {
-			return nil, fmt.Errorf("endpoint-scope EndpointView must carry both Asset and Endpoint")
+			return nil, true, nil
 		}
-		return endpointLookup(v), nil
+		return endpointLookup(v), false, nil
 	case ScopeFinding:
 		f, ok := subject.(*model.Finding)
 		if !ok || f == nil {
-			return nil, fmt.Errorf("finding-scope predicate expects *model.Finding, got %T: %w", subject, ErrNotImplemented)
+			return nil, true, nil
 		}
-		return findingLookup(f), nil
+		return findingLookup(f), false, nil
 	default:
-		return nil, fmt.Errorf("unsupported predicate scope: %s", scope)
+		return nil, false, fmt.Errorf("unsupported predicate scope: %s", scope)
 	}
 }
 

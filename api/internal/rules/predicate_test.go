@@ -154,20 +154,40 @@ func TestFindingScope(t *testing.T) {
 	mustMatchFinding(t, `{"$and":[{"severity":"high"},{"status":"open"}]}`, true)
 }
 
+// Fail-closed dispatch: a wrong subject for the scope returns (false, nil)
+// and logs a warning. The rule engine must never crash on a mis-wired rule,
+// and must never silently match when the scope and subject disagree.
 func TestFindingScopeWrongSubject(t *testing.T) {
-	_, err := Match(json.RawMessage(`{"severity":"high"}`), ScopeFinding, nil)
-	if err == nil {
-		t.Fatal("finding scope should reject nil subject")
+	got, err := Match(json.RawMessage(`{"severity":"high"}`), ScopeFinding, nil)
+	if err != nil {
+		t.Fatalf("nil finding subject: unexpected err %v", err)
 	}
-	_, err = Match(json.RawMessage(`{"severity":"high"}`), ScopeFinding, "not a finding")
-	if err == nil {
-		t.Fatal("finding scope should reject non-*model.Finding subject")
+	if got {
+		t.Fatal("nil finding subject should not match")
+	}
+	got, err = Match(json.RawMessage(`{"severity":"high"}`), ScopeFinding, "not a finding")
+	if err != nil {
+		t.Fatalf("wrong finding subject type: unexpected err %v", err)
+	}
+	if got {
+		t.Fatal("wrong finding subject type should not match")
 	}
 }
 
 func TestWrongSubjectType(t *testing.T) {
-	_, err := Match(json.RawMessage(`{"ip":"10.0.0.5"}`), ScopeAsset, "not an asset")
-	if err == nil {
-		t.Fatal("expected error on wrong subject type")
+	got, err := Match(json.RawMessage(`{"ip":"10.0.0.5"}`), ScopeAsset, "not an asset")
+	if err != nil {
+		t.Fatalf("wrong asset subject type: unexpected err %v", err)
+	}
+	if got {
+		t.Fatal("wrong asset subject type should not match")
+	}
+	// Endpoint scope with a non-EndpointView subject.
+	got, err = Match(json.RawMessage(`{"service":"postgresql"}`), ScopeEndpoint, 42)
+	if err != nil {
+		t.Fatalf("wrong endpoint subject type: unexpected err %v", err)
+	}
+	if got {
+		t.Fatal("wrong endpoint subject type should not match")
 	}
 }

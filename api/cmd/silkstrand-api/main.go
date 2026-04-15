@@ -630,9 +630,18 @@ func runRuleActions(ctx context.Context, s store.Store, notifier *notify.Dispatc
 			slog.Info("rule.fired",
 				"rule", act.RuleName, "action", act.Type,
 				"asset", asset.ID, "endpoint", ep.ID, "bundle", act.BundleID())
-			// TODO(P3): persist suggestion on asset_endpoints (needs a
-			// suggestions column or a side table — product decision
-			// gated on P3 findings + UI reshape).
+			// TODO(post-P5): rule fires and is logged, but the suggestion
+			// is intentionally not persisted. The Dashboard's "Suggested
+			// Actions" widget computes coverage gaps live from
+			// scan_definitions + credential_mappings, so there is no DB
+			// writeback required for the Phase-5 surface.
+			//
+			// If a future workflow needs persisted suggestions (e.g. an
+			// approval queue, or aging metrics on "how long has this
+			// suggestion been ignored"), add either:
+			//   * an `asset_endpoints.suggestions` JSONB column, or
+			//   * a dedicated `suggested_actions` side table
+			// — whichever matches the product shape at that time.
 
 		case rules.ActionAutoCreateTarget:
 			slog.Info("rule.fired.no_op_until_p3",

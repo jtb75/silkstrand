@@ -19,7 +19,9 @@ export default function Layout() {
           <NavLink to="/scans">Scans</NavLink>
           {isAdmin && <NavLink to="/collections">Collections</NavLink>}
           {isAdmin && <NavLink to="/rules">Rules</NavLink>}
-          {isAdmin && <NavLink to="/one-shot-scans">One-shot</NavLink>}
+          {/* One-shot scans are manual-only scan_definitions post-refactor;
+              they live under Scans → Definitions. Route kept in App.tsx so
+              old deep-links don't 404, but no top-level nav entry. */}
           <NavLink to="/settings">Settings</NavLink>
         </nav>
       </aside>
