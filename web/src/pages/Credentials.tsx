@@ -228,7 +228,7 @@ function MapToCollectionPanel({
   const queryClient = useQueryClient();
   const { data: collections } = useQuery({
     queryKey: ['collections'],
-    queryFn: listCollections,
+    queryFn: () => listCollections(),
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
