@@ -1341,3 +1341,458 @@ func (s *PostgresStore) InsertNotificationDelivery(ctx context.Context, d model.
 	}
 	return nil
 }
+
+// ======================================================================
+// P4 — Correlation-rule CRUD (ADR 006 D6).
+// ======================================================================
+
+const ruleCols = `id, tenant_id, name, version, enabled, trigger, event_type_filter, body, created_at, created_by`
+
+func scanRule(r *model.CorrelationRule, row interface{ Scan(...any) error }) error {
+	return row.Scan(&r.ID, &r.TenantID, &r.Name, &r.Version, &r.Enabled,
+		&r.Trigger, &r.EventTypeFilter, &r.Body, &r.CreatedAt, &r.CreatedBy)
+}
+
+// ListCorrelationRules returns only the latest version per (tenant, name).
+// Disabled rows are included — callers can filter client-side.
+func (s *PostgresStore) ListCorrelationRules(ctx context.Context) ([]model.CorrelationRule, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT ON (name) `+ruleCols+`
+		   FROM correlation_rules
+		  WHERE tenant_id = $1
+		  ORDER BY name, version DESC`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing rules: %w", err)
+	}
+	defer rows.Close()
+	var out []model.CorrelationRule
+	for rows.Next() {
+		var r model.CorrelationRule
+		if err := scanRule(&r, rows); err != nil {
+			return nil, fmt.Errorf("scanning rule: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetCorrelationRule(ctx context.Context, id string) (*model.CorrelationRule, error) {
+	tenantID := TenantID(ctx)
+	var r model.CorrelationRule
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+ruleCols+` FROM correlation_rules WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	if err := scanRule(&r, row); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting rule: %w", err)
+	}
+	return &r, nil
+}
+
+func (s *PostgresStore) CreateCorrelationRule(ctx context.Context, r model.CorrelationRule) (*model.CorrelationRule, error) {
+	tenantID := TenantID(ctx)
+	if len(r.Body) == 0 {
+		r.Body = json.RawMessage(`{}`)
+	}
+	var out model.CorrelationRule
+	row := s.db.QueryRowContext(ctx,
+		`INSERT INTO correlation_rules (tenant_id, name, version, enabled, trigger, event_type_filter, body, created_by)
+		 VALUES ($1, $2, 1, $3, $4, $5, $6, $7)
+		 RETURNING `+ruleCols,
+		tenantID, r.Name, r.Enabled, r.Trigger, r.EventTypeFilter, r.Body, r.CreatedBy)
+	if err := scanRule(&out, row); err != nil {
+		return nil, fmt.Errorf("creating rule: %w", err)
+	}
+	return &out, nil
+}
+
+// UpdateCorrelationRule auto-versions: the existing row stays (for
+// history) but gets disabled, and a new row is inserted with
+// version = max(version)+1. Returns the new row.
+func (s *PostgresStore) UpdateCorrelationRule(ctx context.Context, r model.CorrelationRule) (*model.CorrelationRule, error) {
+	tenantID := TenantID(ctx)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var maxVersion int
+	var name string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT name, MAX(version) FROM correlation_rules
+		  WHERE tenant_id = $1 AND name = (SELECT name FROM correlation_rules WHERE id = $2 AND tenant_id = $1)
+		  GROUP BY name`, tenantID, r.ID).Scan(&name, &maxVersion); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("looking up rule: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE correlation_rules SET enabled = FALSE
+		  WHERE tenant_id = $1 AND name = $2`, tenantID, name); err != nil {
+		return nil, fmt.Errorf("disabling prior versions: %w", err)
+	}
+	if len(r.Body) == 0 {
+		r.Body = json.RawMessage(`{}`)
+	}
+	var out model.CorrelationRule
+	row := tx.QueryRowContext(ctx,
+		`INSERT INTO correlation_rules (tenant_id, name, version, enabled, trigger, event_type_filter, body, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 RETURNING `+ruleCols,
+		tenantID, name, maxVersion+1, r.Enabled, r.Trigger, r.EventTypeFilter, r.Body, r.CreatedBy)
+	if err := scanRule(&out, row); err != nil {
+		return nil, fmt.Errorf("inserting new rule version: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return &out, nil
+}
+
+// DeleteCorrelationRule is a soft delete: it disables every version of
+// the rule's name (consistent with ADR 003 R1b's prior semantics).
+func (s *PostgresStore) DeleteCorrelationRule(ctx context.Context, id string) error {
+	tenantID := TenantID(ctx)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE correlation_rules SET enabled = FALSE
+		  WHERE tenant_id = $1
+		    AND name = (SELECT name FROM correlation_rules WHERE id = $2 AND tenant_id = $1)`,
+		tenantID, id)
+	if err != nil {
+		return fmt.Errorf("deleting rule: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ======================================================================
+// P4 — Read surface for preview / members / coverage / endpoint detail.
+// ======================================================================
+
+func (s *PostgresStore) ListAllAssetsTenant(ctx context.Context) ([]model.Asset, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, host(primary_ip), hostname, fingerprint, resource_type, source, environment,
+		        first_seen, last_seen, created_at
+		   FROM assets WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing assets: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Asset
+	for rows.Next() {
+		var a model.Asset
+		if err := rows.Scan(&a.ID, &a.TenantID, &a.PrimaryIP, &a.Hostname, &a.Fingerprint,
+			&a.ResourceType, &a.Source, &a.Environment, &a.FirstSeen, &a.LastSeen, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListEndpointsForAssetTenant(ctx context.Context, assetID string) ([]model.AssetEndpoint, error) {
+	tenantID := TenantID(ctx)
+	// Tenant safety: join to assets to filter.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.id, e.asset_id, e.port, e.protocol, e.service, e.version, e.technologies,
+		        e.compliance_status, e.allowlist_status, e.allowlist_checked_at,
+		        e.last_scan_id, e.missed_scan_count, e.metadata,
+		        e.first_seen, e.last_seen, e.created_at, e.updated_at
+		   FROM asset_endpoints e
+		   JOIN assets a ON a.id = e.asset_id
+		  WHERE e.asset_id = $1 AND a.tenant_id = $2`, assetID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing endpoints: %w", err)
+	}
+	defer rows.Close()
+	var out []model.AssetEndpoint
+	for rows.Next() {
+		var e model.AssetEndpoint
+		if err := rows.Scan(&e.ID, &e.AssetID, &e.Port, &e.Protocol, &e.Service, &e.Version,
+			&e.Technologies, &e.ComplianceStatus, &e.AllowlistStatus, &e.AllowlistCheckedAt,
+			&e.LastScanID, &e.MissedScanCount, &e.Metadata,
+			&e.FirstSeen, &e.LastSeen, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetAssetEndpointByID(ctx context.Context, endpointID string) (*model.AssetEndpoint, *model.Asset, error) {
+	tenantID := TenantID(ctx)
+	var e model.AssetEndpoint
+	var a model.Asset
+	err := s.db.QueryRowContext(ctx,
+		`SELECT e.id, e.asset_id, e.port, e.protocol, e.service, e.version, e.technologies,
+		        e.compliance_status, e.allowlist_status, e.allowlist_checked_at,
+		        e.last_scan_id, e.missed_scan_count, e.metadata,
+		        e.first_seen, e.last_seen, e.created_at, e.updated_at,
+		        a.id, a.tenant_id, host(a.primary_ip), a.hostname, a.fingerprint, a.resource_type, a.source, a.environment,
+		        a.first_seen, a.last_seen, a.created_at
+		   FROM asset_endpoints e
+		   JOIN assets a ON a.id = e.asset_id
+		  WHERE e.id = $1 AND a.tenant_id = $2`, endpointID, tenantID).
+		Scan(&e.ID, &e.AssetID, &e.Port, &e.Protocol, &e.Service, &e.Version,
+			&e.Technologies, &e.ComplianceStatus, &e.AllowlistStatus, &e.AllowlistCheckedAt,
+			&e.LastScanID, &e.MissedScanCount, &e.Metadata,
+			&e.FirstSeen, &e.LastSeen, &e.CreatedAt, &e.UpdatedAt,
+			&a.ID, &a.TenantID, &a.PrimaryIP, &a.Hostname, &a.Fingerprint, &a.ResourceType,
+			&a.Source, &a.Environment, &a.FirstSeen, &a.LastSeen, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting endpoint: %w", err)
+	}
+	return &e, &a, nil
+}
+
+func (s *PostgresStore) ListAllEndpointViewsTenant(ctx context.Context) ([]EndpointRow, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT a.id, a.tenant_id, host(a.primary_ip), a.hostname, a.fingerprint, a.resource_type, a.source, a.environment,
+		        a.first_seen, a.last_seen, a.created_at,
+		        e.id, e.asset_id, e.port, e.protocol, e.service, e.version, e.technologies,
+		        e.compliance_status, e.allowlist_status, e.allowlist_checked_at,
+		        e.last_scan_id, e.missed_scan_count, e.metadata,
+		        e.first_seen, e.last_seen, e.created_at, e.updated_at
+		   FROM asset_endpoints e
+		   JOIN assets a ON a.id = e.asset_id
+		  WHERE a.tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing endpoint views: %w", err)
+	}
+	defer rows.Close()
+	var out []EndpointRow
+	for rows.Next() {
+		var r EndpointRow
+		if err := rows.Scan(
+			&r.Asset.ID, &r.Asset.TenantID, &r.Asset.PrimaryIP, &r.Asset.Hostname, &r.Asset.Fingerprint,
+			&r.Asset.ResourceType, &r.Asset.Source, &r.Asset.Environment,
+			&r.Asset.FirstSeen, &r.Asset.LastSeen, &r.Asset.CreatedAt,
+			&r.Endpoint.ID, &r.Endpoint.AssetID, &r.Endpoint.Port, &r.Endpoint.Protocol,
+			&r.Endpoint.Service, &r.Endpoint.Version, &r.Endpoint.Technologies,
+			&r.Endpoint.ComplianceStatus, &r.Endpoint.AllowlistStatus, &r.Endpoint.AllowlistCheckedAt,
+			&r.Endpoint.LastScanID, &r.Endpoint.MissedScanCount, &r.Endpoint.Metadata,
+			&r.Endpoint.FirstSeen, &r.Endpoint.LastSeen, &r.Endpoint.CreatedAt, &r.Endpoint.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+const findingCols = `id, tenant_id, asset_endpoint_id, scan_id, source_kind, source, source_id,
+	cve_id, severity, title, status, evidence, remediation, first_seen, last_seen, resolved_at`
+
+func scanFinding(f *model.Finding, row interface{ Scan(...any) error }) error {
+	return row.Scan(&f.ID, &f.TenantID, &f.AssetEndpointID, &f.ScanID, &f.SourceKind, &f.Source,
+		&f.SourceID, &f.CVEID, &f.Severity, &f.Title, &f.Status, &f.Evidence, &f.Remediation,
+		&f.FirstSeen, &f.LastSeen, &f.ResolvedAt)
+}
+
+func (s *PostgresStore) ListAllFindingsTenant(ctx context.Context) ([]model.Finding, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+findingCols+` FROM findings WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing findings: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Finding
+	for rows.Next() {
+		var f model.Finding
+		if err := scanFinding(&f, rows); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListFindingsForEndpoint(ctx context.Context, endpointID string) ([]model.Finding, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+findingCols+` FROM findings
+		  WHERE asset_endpoint_id = $1 AND tenant_id = $2
+		  ORDER BY severity, last_seen DESC`, endpointID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing findings for endpoint: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Finding
+	for rows.Next() {
+		var f model.Finding
+		if err := scanFinding(&f, rows); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) CountEndpointsByAsset(ctx context.Context) (map[string]int, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT a.id, COUNT(e.id)
+		   FROM assets a LEFT JOIN asset_endpoints e ON e.asset_id = a.id
+		  WHERE a.tenant_id = $1
+		  GROUP BY a.id`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("counting endpoints: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
+// EndpointsWithScanDefinitionByAsset returns, per asset id, the set of
+// endpoint ids that have at least one scan_definitions row targeting
+// them directly (scope_kind='asset_endpoint').
+func (s *PostgresStore) EndpointsWithScanDefinitionByAsset(ctx context.Context) (map[string]map[string]struct{}, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT e.asset_id, e.id
+		   FROM scan_definitions sd
+		   JOIN asset_endpoints e ON e.id = sd.asset_endpoint_id
+		  WHERE sd.tenant_id = $1 AND sd.scope_kind = 'asset_endpoint'`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("scan def coverage: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]map[string]struct{}{}
+	for rows.Next() {
+		var aid, eid string
+		if err := rows.Scan(&aid, &eid); err != nil {
+			return nil, err
+		}
+		if out[aid] == nil {
+			out[aid] = map[string]struct{}{}
+		}
+		out[aid][eid] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) LastScanAtByAsset(ctx context.Context) (map[string]time.Time, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.asset_id, MAX(s.completed_at)
+		   FROM scans s
+		   JOIN asset_endpoints e ON e.id = s.asset_endpoint_id
+		  WHERE s.tenant_id = $1 AND s.completed_at IS NOT NULL
+		  GROUP BY e.asset_id`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("last scan by asset: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var aid string
+		var t sql.NullTime
+		if err := rows.Scan(&aid, &t); err != nil {
+			return nil, err
+		}
+		if t.Valid {
+			out[aid] = t.Time
+		}
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) NextScanAtByAsset(ctx context.Context) (map[string]time.Time, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.asset_id, MIN(sd.next_run_at)
+		   FROM scan_definitions sd
+		   JOIN asset_endpoints e ON e.id = sd.asset_endpoint_id
+		  WHERE sd.tenant_id = $1 AND sd.enabled = TRUE AND sd.next_run_at IS NOT NULL
+		  GROUP BY e.asset_id`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("next scan by asset: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var aid string
+		var t sql.NullTime
+		if err := rows.Scan(&aid, &t); err != nil {
+			return nil, err
+		}
+		if t.Valid {
+			out[aid] = t.Time
+		}
+	}
+	return out, rows.Err()
+}
+
+// FindingsSeverityByEndpoint returns open-finding severity counts keyed
+// by endpoint id: { endpointID: { "critical": N, "high": N, ... } }.
+func (s *PostgresStore) FindingsSeverityByEndpoint(ctx context.Context) (map[string]map[string]int, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT asset_endpoint_id, COALESCE(severity, 'info'), COUNT(*)
+		   FROM findings
+		  WHERE tenant_id = $1 AND status = 'open'
+		  GROUP BY asset_endpoint_id, severity`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("finding severity rollup: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]map[string]int{}
+	for rows.Next() {
+		var eid, sev string
+		var n int
+		if err := rows.Scan(&eid, &sev, &n); err != nil {
+			return nil, err
+		}
+		if out[eid] == nil {
+			out[eid] = map[string]int{}
+		}
+		out[eid][sev] = n
+	}
+	return out, rows.Err()
+}
+
+// CollectionsWithCredentialMappings returns collections that have at
+// least one credential_mapping row — the set we evaluate against each
+// endpoint to decide coverage.endpoints_with_credential_mapping.
+func (s *PostgresStore) CollectionsWithCredentialMappings(ctx context.Context) ([]model.Collection, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT c.id, c.tenant_id, c.name, c.description, c.scope, c.predicate,
+		        c.is_dashboard_widget, c.widget_kind, c.created_at, c.updated_at, c.created_by
+		   FROM collections c
+		   JOIN credential_mappings m ON m.collection_id = c.id
+		  WHERE c.tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("collections with mappings: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Collection
+	for rows.Next() {
+		var c model.Collection
+		if err := rows.Scan(&c.ID, &c.TenantID, &c.Name, &c.Description, &c.Scope, &c.Predicate,
+			&c.IsDashboardWidget, &c.WidgetKind, &c.CreatedAt, &c.UpdatedAt, &c.CreatedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
