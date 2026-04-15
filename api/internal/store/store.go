@@ -1,103 +1,68 @@
+// Package store defines the data access interface. All tenant-scoped
+// methods read the tenant id from context (see TenantID). Non-tenant-scoped
+// methods are called out explicitly in the godoc for each method.
+//
+// This file is the P1 asset-first refactor shape: the recon pipeline
+// model (DiscoveredAsset / AssetSet / OneShotScan / NotificationChannel)
+// is gone; Asset / AssetEndpoint / Collection / Finding / ScanDefinition
+// are its successors. Real implementations live in postgres.go; methods
+// that return errNotImplemented are P2+ work per the execution plan.
 package store
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jtb75/silkstrand/api/internal/model"
 )
 
-// Store defines the data access interface. All methods are tenant-scoped
-// via the tenant ID stored in the context.
+// ErrNotImplemented is returned from store methods that are part of the
+// asset-first surface but whose implementations land in later phases
+// (P2: ingest + rules, P3: findings + scheduler, P4: collections query).
+var ErrNotImplemented = errors.New("store method not implemented in P1")
+
+// Store defines the data access interface.
 type Store interface {
-	// Targets
+	// --- Platform ---------------------------------------------------
+
+	// Targets (CIDR / network_range only post-ADR-006 D8).
 	ListTargets(ctx context.Context) ([]model.Target, error)
 	GetTarget(ctx context.Context, id string) (*model.Target, error)
+	GetTargetByID(ctx context.Context, id string) (*model.Target, error) // not tenant-scoped
 	CreateTarget(ctx context.Context, req model.CreateTargetRequest) (*model.Target, error)
 	UpdateTarget(ctx context.Context, id string, req model.UpdateTargetRequest) (*model.Target, error)
 	DeleteTarget(ctx context.Context, id string) error
 
-	// Scans
-	ListScans(ctx context.Context) ([]model.Scan, error)
-	GetScan(ctx context.Context, id string) (*model.Scan, error)
-	CreateScan(ctx context.Context, req model.CreateScanRequest) (*model.Scan, error)
-	UpdateScanStatus(ctx context.Context, id string, status string) error
-	FailScan(ctx context.Context, id, reason string) error
-	DeleteScan(ctx context.Context, id string) error
-
-	// Scan Results
-	CreateScanResults(ctx context.Context, scanID string, results []model.ScanResult) error
-	GetScanResults(ctx context.Context, scanID string) ([]model.ScanResult, error)
-
 	// Agents
 	GetAgent(ctx context.Context, id string) (*model.Agent, error)
-	GetAgentByID(ctx context.Context, id string) (*model.Agent, error) // not tenant-scoped, for WSS auth
+	GetAgentByID(ctx context.Context, id string) (*model.Agent, error)
 	CreateAgent(ctx context.Context, req model.CreateAgentRequest) (*model.Agent, string, error)
-	UpdateAgentStatus(ctx context.Context, id string, status string) error
+	UpdateAgentStatus(ctx context.Context, id, status string) error
 	UpdateAgentHeartbeat(ctx context.Context, id, version string) error
 	RotateAgentKey(ctx context.Context, id string) (string, error)
 	PromoteAgentKey(ctx context.Context, id string) error
 	ListAgents(ctx context.Context) ([]model.Agent, error)
+	ListAllAgents(ctx context.Context) ([]model.Agent, error)
 	DeleteAgent(ctx context.Context, id string) error
 
-	// Install tokens (one-time bootstrap credentials)
+	// Install tokens
 	CreateInstallToken(ctx context.Context, tenantID string, tokenHash []byte, expiresAt time.Time, createdBy string) error
 	ConsumeInstallToken(ctx context.Context, tokenHash []byte, agentID string) (tenantID string, err error)
-
-	// Targets (non-tenant-scoped, for directive enrichment)
-	GetTargetByID(ctx context.Context, id string) (*model.Target, error)
-
-	// Scans (non-tenant-scoped, for agent message ingest)
-	GetScanByID(ctx context.Context, id string) (*model.Scan, error)
 
 	// Bundles
 	GetBundle(ctx context.Context, id string) (*model.Bundle, error)
 	ListBundlesForTenant(ctx context.Context, tenantID string) ([]model.Bundle, error)
 	UpsertBundle(ctx context.Context, b model.Bundle) (*model.Bundle, error)
 
-	// Credential Sources (ADR 004 C0 — sole surface since the legacy
-	// `credentials` table was dropped in migration 014).
-	CreateCredentialSource(ctx context.Context, tenantID, srcType string, config json.RawMessage) (string, error)
-	GetCredentialSource(ctx context.Context, id string) (*model.CredentialSource, error)
-	GetCredentialSourceByTarget(ctx context.Context, targetID string) (*model.CredentialSource, error)
-	UpdateCredentialSourceConfig(ctx context.Context, id string, config json.RawMessage) error
-	DeleteCredentialSource(ctx context.Context, id string) error
-	SetTargetCredentialSource(ctx context.Context, targetID, sourceID string) error
-	ClearTargetCredentialSource(ctx context.Context, targetID string) error
-
-	// UpsertStaticCredentialSource ensures a `static`-type credential_sources
-	// row exists for the target, pointed at by targets.credential_source_id,
-	// carrying the given type + AES-GCM encrypted blob. Idempotent.
-	UpsertStaticCredentialSource(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) error
-
-	// GetStaticCredentialForTarget resolves the credential bytes + type for a
-	// target, preferring credential_sources (type=static) and falling back to
-	// the legacy credentials table. Returns (nil, "", nil) when neither is set.
-	GetStaticCredentialForTarget(ctx context.Context, targetID string) ([]byte, string, error)
-
-	// HasCredentialForTarget is the read-path equivalent of HasCredential,
-	// preferring credential_sources with legacy fallback.
-	HasCredentialForTarget(ctx context.Context, targetID string) (bool, string, error)
-
-	// DeleteCredentialForTarget removes both the credential_sources row (if
-	// linked via static) and the legacy credentials row. Returns sql.ErrNoRows
-	// if nothing existed in either place.
-	DeleteCredentialForTarget(ctx context.Context, tenantID, targetID string) error
-
-	// Tenants (internal, not tenant-scoped)
+	// Tenants (internal)
 	CreateTenant(ctx context.Context, name string) (*model.Tenant, error)
 	ListAllTenants(ctx context.Context) ([]model.Tenant, error)
 	GetTenantByID(ctx context.Context, id string) (*model.Tenant, error)
-	UpdateTenantStatus(ctx context.Context, id string, status string) error
+	UpdateTenantStatus(ctx context.Context, id, status string) error
 	UpdateTenantConfig(ctx context.Context, id string, config json.RawMessage) error
-	UpdateTenantName(ctx context.Context, id string, name string) error
-
-	// Agents (internal, cross-tenant)
-	ListAllAgents(ctx context.Context) ([]model.Agent, error)
-
-	// Scans (internal)
-	FailRunningScansForAgent(ctx context.Context, agentID string) (int, error)
+	UpdateTenantName(ctx context.Context, id, name string) error
 
 	// Stats
 	GetDCStats(ctx context.Context) (*model.DCStats, error)
@@ -105,122 +70,91 @@ type Store interface {
 	// Health
 	Ping(ctx context.Context) error
 
-	// Recon (ADR 003 R1a) — discovered_assets + asset_events.
-	UpsertDiscoveredAsset(ctx context.Context, scanID string, in DiscoveredAssetInput) (newAsset *model.DiscoveredAsset, oldAsset *model.DiscoveredAsset, err error)
-	AppendAssetEvents(ctx context.Context, events []model.AssetEvent) error
-	GetAssetByID(ctx context.Context, id string) (*model.DiscoveredAsset, error)
-	ListAssets(ctx context.Context, filter AssetFilter) (items []model.DiscoveredAsset, total int, err error)
-	ListAssetEventsByAsset(ctx context.Context, assetID string, limit int) ([]model.AssetEvent, error)
-	UpsertManualAsset(ctx context.Context, tenantID, ip string, port int, environment *string) (*model.DiscoveredAsset, error)
-	SetTargetAsset(ctx context.Context, targetID, assetID string) error
+	// --- Credential sources (ADR 004 C0) ----------------------------
 
-	// Asset state mutations driven by rule actions (ADR 003 R1b).
-	SetAssetComplianceStatus(ctx context.Context, assetID, status string) error
-	SetAssetSuggestion(ctx context.Context, assetID, ruleName, bundleID string) error
+	CreateCredentialSource(ctx context.Context, tenantID, srcType string, config json.RawMessage) (string, error)
+	GetCredentialSource(ctx context.Context, id string) (*model.CredentialSource, error)
+	GetCredentialSourceByTarget(ctx context.Context, targetID string) (*model.CredentialSource, error)
+	UpdateCredentialSourceConfig(ctx context.Context, id string, config json.RawMessage) error
+	DeleteCredentialSource(ctx context.Context, id string) error
+	SetTargetCredentialSource(ctx context.Context, targetID, sourceID string) error
+	ClearTargetCredentialSource(ctx context.Context, targetID string) error
+	UpsertStaticCredentialSource(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) error
+	GetStaticCredentialForTarget(ctx context.Context, targetID string) ([]byte, string, error)
+	HasCredentialForTarget(ctx context.Context, targetID string) (bool, string, error)
+	DeleteCredentialForTarget(ctx context.Context, tenantID, targetID string) error
 
-	// Correlation rules (ADR 003 R1b).
-	ListActiveRules(ctx context.Context, tenantID, trigger string) ([]model.CorrelationRule, error)
-	ListAllRules(ctx context.Context) ([]model.CorrelationRule, error)
-	GetRule(ctx context.Context, id string) (*model.CorrelationRule, error)
-	UpsertRule(ctx context.Context, r model.CorrelationRule) (*model.CorrelationRule, error)
-	DeleteRule(ctx context.Context, id string) error
-
-	// Asset sets (ADR 003 R1c / D13). ResolveAssetSet runs the saved
-	// predicate against the tenant's inventory and returns matching
-	// rows — used by the one-shot scan dispatcher (R1c-c) and the
-	// preview endpoint.
-	ListAssetSets(ctx context.Context) ([]model.AssetSet, error)
-	GetAssetSet(ctx context.Context, id string) (*model.AssetSet, error)
-	CreateAssetSet(ctx context.Context, s model.AssetSet) (*model.AssetSet, error)
-	UpdateAssetSet(ctx context.Context, s model.AssetSet) (*model.AssetSet, error)
-	DeleteAssetSet(ctx context.Context, id string) error
-	ListAllAssetsForTenant(ctx context.Context, tenantID string) ([]model.DiscoveredAsset, error)
-
-	// One-shot scans (ADR 003 R1c-c / D13).
-	ListOneShotScans(ctx context.Context) ([]model.OneShotScan, error)
-	GetOneShotScan(ctx context.Context, id string) (*model.OneShotScan, error)
-	CreateOneShotScan(ctx context.Context, o model.OneShotScan) (*model.OneShotScan, error)
-	UpdateOneShotScanProgress(ctx context.Context, id string, totalTargets int, status string) error
-	CreateScanForOneShot(ctx context.Context, tenantID, agentID, targetID, bundleID, parentID string) (*model.Scan, error)
-
-	// OnChildScanTerminal increments the parent one-shot's
-	// completed_targets counter and transitions its status when the
-	// last child finishes. No-op for scans without a parent. Called
-	// from every scan terminal path (results + error).
-	OnChildScanTerminal(ctx context.Context, scanID string) error
-
-	// Agent allowlist snapshots (ADR 003 D11 follow-up). Informational
-	// mirror of the agent's customer-owned scan policy; used to label
-	// discovered_assets for UI gating.
+	// --- Scans (execution history, ADR 007 D3) ----------------------
 	//
-	// UpsertAgentAllowlist returns changed=true when the snapshot hash
-	// differs from what was previously stored (or no prior row existed).
-	// Callers re-evaluate all owned assets only when changed=true.
-	UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) (changed bool, err error)
-	GetAgentAllowlist(ctx context.Context, agentID string) (*model.AgentAllowlist, error)
+	// The ad-hoc CreateScan surface survives as an internal helper for
+	// the scheduler (P3) and the existing `POST /api/v1/scans` route.
+	// P1 ships a working write path because the Scan handler still
+	// lives (it returns 501 on all non-bundle routes; the list/get
+	// surface otherwise compiles empty).
 
-	// ListAssetsForAgentReeval returns the (id, ip, hostname) tuples for
-	// every discovered_asset whose last_scan was owned by agentID. The
-	// caller evaluates each and writes back via UpdateAssetAllowlistStatus.
-	ListAssetsForAgentReeval(ctx context.Context, agentID string) ([]model.AssetReevalRow, error)
-	UpdateAssetAllowlistStatus(ctx context.Context, assetID, status string) error
+	ListScans(ctx context.Context) ([]model.Scan, error)
+	GetScan(ctx context.Context, id string) (*model.Scan, error)
+	GetScanByID(ctx context.Context, id string) (*model.Scan, error) // not tenant-scoped
+	CreateScan(ctx context.Context, req model.CreateScanRequest) (*model.Scan, error)
+	UpdateScanStatus(ctx context.Context, id, status string) error
+	FailScan(ctx context.Context, id, reason string) error
+	DeleteScan(ctx context.Context, id string) error
+	FailRunningScansForAgent(ctx context.Context, agentID string) (int, error)
 
-	// Notification channels + deliveries (ADR 003 R1c / D12).
-	ListNotificationChannels(ctx context.Context) ([]model.NotificationChannel, error)
-	GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error)
-	GetNotificationChannelByName(ctx context.Context, tenantID, name string) (*model.NotificationChannel, error)
-	CreateNotificationChannel(ctx context.Context, c model.NotificationChannel) (*model.NotificationChannel, error)
-	UpdateNotificationChannel(ctx context.Context, c model.NotificationChannel) (*model.NotificationChannel, error)
-	DeleteNotificationChannel(ctx context.Context, id string) error
-	InsertNotificationDelivery(ctx context.Context, d model.NotificationDelivery) error
-	ListNotificationDeliveries(ctx context.Context, limit int) ([]model.NotificationDelivery, error)
+	// --- Assets + endpoints (ADR 006 D2) ----------------------------
+	//
+	// P1 ships minimal working impls for the read side + a write path
+	// that ingest (P2) will call. The field set is narrow until P2.
+
+	UpsertAsset(ctx context.Context, in UpsertAssetInput) (*model.Asset, error)
+	UpsertAssetEndpoint(ctx context.Context, in UpsertAssetEndpointInput) (*model.AssetEndpoint, error)
+	GetAssetByID(ctx context.Context, id string) (*model.Asset, error)
+	ListAssets(ctx context.Context, filter AssetFilter) (items []model.Asset, total int, err error)
+
+	// --- Collections (ADR 006 D5) -----------------------------------
+
+	CreateCollection(ctx context.Context, c model.Collection) (*model.Collection, error)
+	GetCollection(ctx context.Context, id string) (*model.Collection, error)
+	ListCollections(ctx context.Context) ([]model.Collection, error)
+	UpdateCollection(ctx context.Context, c model.Collection) (*model.Collection, error)
+	DeleteCollection(ctx context.Context, id string) error
 }
 
-// DiscoveredAssetInput is what the agent's asset_discovered payload
-// becomes after parsing. The store upserts on (tenant_id, ip, port).
-type DiscoveredAssetInput struct {
+// --- Helper types passed through the store boundary ------------------
+
+// UpsertAssetInput is what the discovery ingest path (P2) will hand to
+// UpsertAsset. Kept narrow in P1 — P2 extends as ingest requires.
+type UpsertAssetInput struct {
 	TenantID     string
-	IP           string
-	Port         int
+	PrimaryIP    string // "" → leave nil
 	Hostname     string
-	Service      string
-	Version      string
-	Technologies json.RawMessage
-	CVEs         json.RawMessage
+	ResourceType string // empty defaults to 'host'
+	Source       string // 'manual' | 'discovered'
 	Environment  *string
-	// AllowlistStatus, when set, stamps the asset with the caller's
-	// evaluation against the owning agent's reported policy (ADR 003
-	// D11 follow-up). Nil leaves the existing value intact — defaulting
-	// to 'unknown' on fresh inserts.
+	Fingerprint  json.RawMessage
+}
+
+// UpsertAssetEndpointInput mirrors UpsertAssetInput for asset_endpoints.
+type UpsertAssetEndpointInput struct {
+	AssetID         string
+	Port            int
+	Protocol        string // empty defaults to 'tcp'
+	Service         string
+	Version         string
+	Technologies    json.RawMessage
 	AllowlistStatus *string
 }
 
-// AgentAllowlistInput is the agent_allowlists upsert payload.
-type AgentAllowlistInput struct {
-	AgentID      string
-	Hash         string
-	Allow        []string
-	Deny         []string
-	RateLimitPPS int
+// AssetFilter is the parsed query for ListAssets.
+type AssetFilter struct {
+	Source      string
+	Environment string
+	Q           string
+	Page        int
+	PageSize    int
 }
 
-// AssetFilter is the parsed query for ListAssets. All zero-value
-// fields are ignored. R1a ships canned filter chips on top of this.
-type AssetFilter struct {
-	Service          string
-	ServiceIn        []string
-	IPCIDR           string
-	HasCVECountGTE   int
-	Source           string
-	ComplianceStatus string
-	NewSinceDuration time.Duration // first_seen >= now - dur
-	ChangedSinceDuration time.Duration // last_seen >= now - dur
-	Q                string
-	SortBy           string // last_seen|first_seen|ip|service|cve_count
-	SortDesc         bool
-	Page             int
-	PageSize         int
-}
+// --- Context plumbing ------------------------------------------------
 
 type contextKey string
 
