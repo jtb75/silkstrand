@@ -13,6 +13,11 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/websocket"
 )
 
+// ScanHandler serves scan execution history. Per ADR 007 D3 the
+// authoritative scan configuration surface is `scan_definitions`; scans
+// rows remain execution history pointing back at a definition (nullable
+// for the ad-hoc debug path). Results are gone in favor of the
+// `findings` table (P3). Get therefore no longer attaches results.
 type ScanHandler struct {
 	store store.Store
 	ps    *pubsub.PubSub
@@ -48,34 +53,6 @@ func (h *ScanHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "scan not found")
 		return
 	}
-
-	// Attach results
-	results, err := h.store.GetScanResults(r.Context(), id)
-	if err != nil {
-		slog.Error("getting scan results", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to get scan results")
-		return
-	}
-	scan.Results = results
-
-	// Compute summary
-	if len(results) > 0 {
-		summary := &model.ScanSummary{Total: len(results)}
-		for _, r := range results {
-			switch r.Status {
-			case "PASS":
-				summary.Pass++
-			case "FAIL":
-				summary.Fail++
-			case "ERROR":
-				summary.Error++
-			case "NOT_APPLICABLE":
-				summary.NotApplicable++
-			}
-		}
-		scan.Summary = summary
-	}
-
 	writeJSON(w, http.StatusOK, scan)
 }
 
@@ -85,31 +62,29 @@ func (h *ScanHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
 	if req.TargetID == "" || req.BundleID == "" {
 		writeError(w, http.StatusBadRequest, "target_id and bundle_id are required")
 		return
 	}
-
 	scan, err := h.store.CreateScan(r.Context(), req)
 	if err != nil {
 		slog.Error("creating scan", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create scan")
 		return
 	}
-
-	// Publish directive to agent
 	if scan.AgentID != nil && h.ps != nil {
 		agentID := *scan.AgentID
-
 		if !h.hub.IsConnected(agentID) {
 			slog.Warn("agent not connected, scan will wait for agent", "agent_id", agentID, "scan_id", scan.ID)
 		}
-
+		bundleID := ""
+		if scan.BundleID != nil {
+			bundleID = *scan.BundleID
+		}
 		directive := pubsub.Directive{
 			ScanID:   scan.ID,
 			ScanType: scan.ScanType,
-			BundleID: scan.BundleID,
+			BundleID: bundleID,
 		}
 		if scan.TargetID != nil {
 			directive.TargetID = *scan.TargetID
@@ -118,14 +93,9 @@ func (h *ScanHandler) Create(w http.ResponseWriter, r *http.Request) {
 			slog.Error("publishing directive", "agent_id", agentID, "scan_id", scan.ID, "error", err)
 		}
 	}
-
 	writeJSON(w, http.StatusCreated, scan)
 }
 
-// Delete removes a scan (and its results via CASCADE) for the caller's
-// tenant. Running scans are refused — they need to complete or be failed
-// by the agent-disconnect cleanup path first, to avoid orphaning the
-// agent's in-flight work.
 func (h *ScanHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	scan, err := h.store.GetScan(r.Context(), id)

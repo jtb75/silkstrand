@@ -16,8 +16,8 @@ import (
 // Credentials are stored encrypted at rest (AES-256-GCM); the API never
 // returns plaintext after creation — only a presence indicator + type.
 type CredentialsHandler struct {
-	store   store.Store
-	encKey  []byte // optional in dev; required in prod via CREDENTIAL_ENCRYPTION_KEY
+	store  store.Store
+	encKey []byte // optional in dev; required in prod via CREDENTIAL_ENCRYPTION_KEY
 }
 
 func NewCredentialsHandler(s store.Store, encKey []byte) *CredentialsHandler {
