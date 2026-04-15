@@ -163,13 +163,13 @@ silkstrand/
 | **R1c-c** | D13 one-shot scan dispatcher; `run_one_shot_scan` rule action; completion rollup; ephemeral target cleanup | ✅ shipped |
 | **R1.5 (admin UI)** | Rules / Channels / Asset Sets / One-shot pages | ✅ shipped |
 | **R1.5 (deferred)** | Notification retry worker · D14 per-tenant template selection · visual predicate builder in correlation rules (Asset Sets already has it) | ⏸ |
-| **Onboarding UX (O-series)** | Install token button · discovery scan launcher · discovery target creation · allowlist viewer · target edit flow · agent upgrade trigger — all shipped; O7 audit surface in design (ADR 005) | ✅ mostly shipped |
+| **Onboarding UX (O-series)** | Install token button · discovery scan launcher · discovery target creation · allowlist viewer · target edit flow · agent upgrade trigger · scan failure reason on the Scan Results page — all shipped; O7 audit surface in design (ADR 005); live scan-progress in design (`scan-progress-and-sse.md`) | ✅ mostly shipped |
 | **R2** | AWS cloud discovery (`target_type: aws_account`); cloud-native credential auto-binding (with ADR 004 C1) | ⏳ planned |
 | **R3+** | Vault credential resolver (ADR 004 C3); DNS zone enumeration; Azure/GCP cloud discovery | ⏳ planned |
 
 ADR 004 (credential resolver) is at **C0** (plumbing — `credential_sources` is the sole surface with `static` type; legacy `credentials` table dropped in migration 014). C1+ resolvers (AWS Secrets Manager / Vault / etc.) are planned but not started.
 
-Implementation plans live in `docs/plans/r0-r1a-*.md` (data model, API, agent runtime, frontend, synthesis) and `docs/plans/onboarding-ux.md` (zero-to-scan journey + O-series PR split + R2 sketch); design rationale in `docs/adr/`, including ADR 005 (audit events surface) which gates O7.
+Implementation plans live in `docs/plans/r0-r1a-*.md` (data model, API, agent runtime, frontend, synthesis), `docs/plans/onboarding-ux.md` (zero-to-scan journey + O-series PR split + R2 sketch), and `docs/plans/scan-progress-and-sse.md` (per-stage progress events on a reusable SSE framework); design rationale in `docs/adr/`, including ADR 005 (audit events surface) which gates O7.
 
 ### What's Built
 
@@ -222,6 +222,8 @@ All sensitive Cloud Run env vars (DATABASE_URL, REDIS_URL, JWT_SECRET, INTERNAL_
 - Frontend pagination for list endpoints
 - Agent WebSocket origin restriction for production
 - Audit log surfacing (ADR 005 drafted; implementation is the remaining O7 work — plumbing, UI, retention worker)
+- Live scan progress in the UI / agent logs (`docs/plans/scan-progress-and-sse.md` drafted — three PRs: SSE framework, agent emission, UI progress view)
+- Raw agent-log streaming into the UI (out of scope for scan-progress plan; separate future ADR)
 - Clearing `environment` / `agent_id` on a target via the edit form (v1 treats empty-string as "keep existing"; clear-via-dropdown still works for agent)
 
 ## DC API Routes
@@ -340,7 +342,7 @@ Agent-to-API messages use `{"type": "string", "payload": {...}}` envelope.
 | `directive` | server → agent | scan_id, **scan_type** (compliance\|discovery), bundle_id/name/version, target_id/type/identifier/config, credentials (compliance only) |
 | `scan_started` | agent → server | scan_id |
 | `scan_results` | agent → server | scan_id, results (standard schema) — compliance only |
-| `scan_error` | agent → server | scan_id, error |
+| `scan_error` | agent → server | scan_id, error — persisted to `scans.error_message` and rendered on the Scan Results page |
 | `asset_discovered` | agent → server | scan_id, batch_seq, stage (naabu/httpx/nuclei), assets[] — discovery; processed inline |
 | `discovery_completed` | agent → server | scan_id, assets_found, hosts_scanned — terminal for discovery |
 | `probe` / `probe_result` | bidir | One-shot connectivity check (Test Connection button) |
