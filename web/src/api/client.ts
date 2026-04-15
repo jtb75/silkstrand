@@ -197,32 +197,114 @@ export const updateCorrelationRule = (id: string, req: UpsertRuleRequest) =>
 export const deleteCorrelationRule = (id: string) =>
   request<void>(`/api/v1/correlation-rules/${id}`, { method: 'DELETE' });
 
-// Notification channels (ADR 003 R1c-a / D12)
-import type { NotificationChannel } from './types';
-export const listNotificationChannels = () =>
-  request<NotificationChannel[]>('/api/v1/notification-channels');
-
-export interface UpsertChannelRequest {
+// Collections (ADR 006 D5) — minimal shape for the Credentials mapping UX
+export interface Collection {
+  id: string;
+  tenant_id: string;
   name: string;
-  type: 'webhook' | 'slack' | 'email' | 'pagerduty';
-  enabled?: boolean;
+  description?: string | null;
+  scope: 'asset' | 'endpoint' | 'finding';
+  predicate: Record<string, unknown>;
+  is_dashboard_widget: boolean;
+  widget_kind?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const listCollections = () => request<Collection[]>('/api/v1/collections');
+
+// ---------------------------------------------------------------
+// Credential sources + mappings (ADR 004 C0 + ADR 006 P6 / P5-b)
+// ---------------------------------------------------------------
+//
+// One consolidated surface replaces the old notification-channels API.
+// `type` covers static (DB/host auth), the four integration kinds
+// (slack/webhook/email/pagerduty), and the three vault kinds
+// (aws_secrets_manager/hashicorp_vault/cyberark). The API scrubs
+// secret fields on read to the sentinel '(set)'; update requests may
+// leave secret fields blank to preserve the existing value.
+export type CredentialSourceType =
+  | 'static'
+  | 'slack'
+  | 'webhook'
+  | 'email'
+  | 'pagerduty'
+  | 'aws_secrets_manager'
+  | 'hashicorp_vault'
+  | 'cyberark';
+
+export interface CredentialSource {
+  id: string;
+  tenant_id: string;
+  type: CredentialSourceType;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpsertCredentialSourceRequest {
+  type: CredentialSourceType;
   config: Record<string, unknown>;
 }
 
-export const createNotificationChannel = (req: UpsertChannelRequest) =>
-  request<NotificationChannel>('/api/v1/notification-channels', {
+export const listCredentialSources = (type?: CredentialSourceType) =>
+  request<CredentialSource[]>(
+    `/api/v1/credential-sources${type ? `?type=${encodeURIComponent(type)}` : ''}`,
+  );
+
+export const createCredentialSource = (req: UpsertCredentialSourceRequest) =>
+  request<CredentialSource>('/api/v1/credential-sources', {
     method: 'POST',
     body: JSON.stringify(req),
   });
 
-export const updateNotificationChannel = (id: string, req: UpsertChannelRequest) =>
-  request<NotificationChannel>(`/api/v1/notification-channels/${id}`, {
+export const updateCredentialSource = (id: string, config: Record<string, unknown>) =>
+  request<CredentialSource>(`/api/v1/credential-sources/${id}`, {
     method: 'PUT',
-    body: JSON.stringify(req),
+    body: JSON.stringify({ config }),
   });
 
-export const deleteNotificationChannel = (id: string) =>
-  request<void>(`/api/v1/notification-channels/${id}`, { method: 'DELETE' });
+export const deleteCredentialSource = (id: string) =>
+  request<void>(`/api/v1/credential-sources/${id}`, { method: 'DELETE' });
+
+export interface CredentialMapping {
+  id: string;
+  tenant_id: string;
+  collection_id: string;
+  credential_source_id: string;
+  created_at: string;
+}
+
+export const listCredentialMappings = () =>
+  request<CredentialMapping[]>('/api/v1/credential-mappings');
+
+export const createCredentialMapping = (collectionId: string, credentialSourceId: string) =>
+  request<CredentialMapping>('/api/v1/credential-mappings', {
+    method: 'POST',
+    body: JSON.stringify({
+      collection_id: collectionId,
+      credential_source_id: credentialSourceId,
+    }),
+  });
+
+export interface BulkCreateMappingResult {
+  results: Array<{ collection_id: string; mapping_id?: string; error?: string }>;
+}
+
+export const bulkCreateCredentialMappings = (
+  credentialSourceId: string,
+  collectionIds: string[],
+) =>
+  request<BulkCreateMappingResult>('/api/v1/credential-mappings/bulk', {
+    method: 'POST',
+    body: JSON.stringify({
+      credential_source_id: credentialSourceId,
+      collection_ids: collectionIds,
+    }),
+  });
+
+export const deleteCredentialMapping = (id: string) =>
+  request<void>(`/api/v1/credential-mappings/${id}`, { method: 'DELETE' });
 
 // Asset sets (ADR 003 R1c-b)
 import type { AssetSet, AssetSetPreview, OneShotScan } from './types';

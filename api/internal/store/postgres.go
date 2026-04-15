@@ -908,6 +908,101 @@ func (s *PostgresStore) DeleteCredentialForTarget(ctx context.Context, tenantID,
 	return nil
 }
 
+func (s *PostgresStore) ListCredentialSources(ctx context.Context, tenantID string) ([]model.CredentialSource, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, type, config, created_at, updated_at
+		   FROM credential_sources WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing credential sources: %w", err)
+	}
+	defer rows.Close()
+	out := []model.CredentialSource{}
+	for rows.Next() {
+		var cs model.CredentialSource
+		if err := rows.Scan(&cs.ID, &cs.TenantID, &cs.Type, &cs.Config, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning credential source: %w", err)
+		}
+		out = append(out, cs)
+	}
+	return out, rows.Err()
+}
+
+// ======================================================================
+// Credential mappings (ADR 006 P6)
+// ======================================================================
+
+func (s *PostgresStore) ListCredentialMappings(ctx context.Context, tenantID string) ([]model.CredentialMapping, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, collection_id, credential_source_id, created_at
+		   FROM credential_mappings WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing credential mappings: %w", err)
+	}
+	defer rows.Close()
+	out := []model.CredentialMapping{}
+	for rows.Next() {
+		var m model.CredentialMapping
+		if err := rows.Scan(&m.ID, &m.TenantID, &m.CollectionID, &m.CredentialSourceID, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning credential mapping: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetCredentialMapping(ctx context.Context, id string) (*model.CredentialMapping, error) {
+	var m model.CredentialMapping
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, collection_id, credential_source_id, created_at
+		   FROM credential_mappings WHERE id = $1`, id).
+		Scan(&m.ID, &m.TenantID, &m.CollectionID, &m.CredentialSourceID, &m.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting credential mapping: %w", err)
+	}
+	return &m, nil
+}
+
+func (s *PostgresStore) CreateCredentialMapping(ctx context.Context, tenantID, collectionID, credentialSourceID string) (*model.CredentialMapping, error) {
+	var m model.CredentialMapping
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO credential_mappings (tenant_id, collection_id, credential_source_id)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (collection_id, credential_source_id) DO UPDATE SET created_at = credential_mappings.created_at
+		 RETURNING id, tenant_id, collection_id, credential_source_id, created_at`,
+		tenantID, collectionID, credentialSourceID).
+		Scan(&m.ID, &m.TenantID, &m.CollectionID, &m.CredentialSourceID, &m.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("creating credential mapping: %w", err)
+	}
+	return &m, nil
+}
+
+func (s *PostgresStore) DeleteCredentialMapping(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM credential_mappings WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("deleting credential mapping: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *PostgresStore) CountMappingsForSource(ctx context.Context, sourceID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM credential_mappings WHERE credential_source_id = $1`, sourceID).
+		Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting mappings: %w", err)
+	}
+	return n, nil
+}
+
 // ======================================================================
 // Assets + endpoints (ADR 006 D2) — minimal working read impls; write
 // path is wired for P2 ingest to call.
