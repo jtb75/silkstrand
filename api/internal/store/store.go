@@ -118,6 +118,27 @@ type Store interface {
 	ListCollections(ctx context.Context) ([]model.Collection, error)
 	UpdateCollection(ctx context.Context, c model.Collection) (*model.Collection, error)
 	DeleteCollection(ctx context.Context, id string) error
+
+	// --- P2 ingest surface ------------------------------------------
+	//
+	// Discovery ingest path uses these in addition to UpsertAsset /
+	// UpsertAssetEndpoint above. AppendAssetEvents is partition-aware
+	// via the occurred_at column. RecordDiscoverySource logs provenance
+	// per ADR 006 D9.
+	AppendAssetEvents(ctx context.Context, events []model.AssetEvent) error
+	RecordDiscoverySource(ctx context.Context, in DiscoverySourceInput) error
+	ListEndpointsForAsset(ctx context.Context, assetID string) ([]model.AssetEndpoint, error)
+	UpdateEndpointAllowlistStatus(ctx context.Context, endpointID, status string) error
+
+	// Rule-engine loader.
+	ListActiveRulesForTrigger(ctx context.Context, tenantID, trigger string) ([]model.CorrelationRule, error)
+
+	// Agent allowlist snapshot (ADR 003 D11 — restored in migration 018).
+	UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) (changed bool, err error)
+	GetAgentAllowlist(ctx context.Context, agentID string) (*AgentAllowlistSnapshot, error)
+
+	// Notification deliveries (ADR 006 P6 — channel_source_id → credential_sources).
+	InsertNotificationDelivery(ctx context.Context, d model.NotificationDelivery) error
 }
 
 // --- Helper types passed through the store boundary ------------------
@@ -143,6 +164,38 @@ type UpsertAssetEndpointInput struct {
 	Version         string
 	Technologies    json.RawMessage
 	AllowlistStatus *string
+}
+
+// DiscoverySourceInput records provenance for a single discovery event
+// (ADR 006 D9). ScanID is optional so manual asset creation can also
+// log a source row later.
+type DiscoverySourceInput struct {
+	AssetID  string
+	TargetID *string
+	AgentID  *string
+	ScanID   *string
+}
+
+// AgentAllowlistInput is the agent's reported scan-policy snapshot.
+// Matches websocket.AllowlistSnapshotPayload field-for-field.
+type AgentAllowlistInput struct {
+	AgentID      string
+	Hash         string
+	Allow        []string
+	Deny         []string
+	RateLimitPPS int
+}
+
+// AgentAllowlistSnapshot is the stored row, returned for UI display
+// and for rediscovery-free re-evaluation when the snapshot changes.
+type AgentAllowlistSnapshot struct {
+	AgentID      string    `json:"agent_id"`
+	Hash         string    `json:"hash"`
+	Allow        []string  `json:"allow"`
+	Deny         []string  `json:"deny"`
+	RateLimitPPS int       `json:"rate_limit_pps"`
+	ReportedAt   time.Time `json:"reported_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // AssetFilter is the parsed query for ListAssets.
