@@ -42,7 +42,7 @@ export function RecentActivity({ items, isLoading, error }: Props) {
     <div className="dash-card">
       <h3>Recent Activity</h3>
       {isLoading && <p>Loading…</p>}
-      {error && <p className="error">Failed to load activity.</p>}
+      {!!error && <p className="error">Failed to load activity.</p>}
       {!isLoading && !error && items.length === 0 && (
         <p style={{ color: 'var(--muted,#6b7280)', fontSize: 13 }}>
           No recent activity.

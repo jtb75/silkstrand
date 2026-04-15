@@ -45,7 +45,7 @@ export function SuggestedActions({ items, isLoading, error }: Props) {
     <div className="dash-card">
       <h3>Suggested Actions</h3>
       {isLoading && <p>Loading…</p>}
-      {error && <p className="error">Failed to load suggestions.</p>}
+      {!!error && <p className="error">Failed to load suggestions.</p>}
       {!isLoading && !error && items.length === 0 && (
         <p style={{ color: 'var(--muted,#6b7280)', fontSize: 13 }}>
           Nothing to do — coverage is clean.

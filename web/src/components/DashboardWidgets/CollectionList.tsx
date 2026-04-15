@@ -42,7 +42,7 @@ export function CollectionList({
         )}
       </h3>
       {isLoading && <p>Loading…</p>}
-      {error && <p className="error">Failed to load.</p>}
+      {!!error && <p className="error">Failed to load.</p>}
       {!isLoading && !error && rows.length === 0 && (
         <p style={{ color: 'var(--muted,#6b7280)', fontSize: 13 }}>{emptyMessage}</p>
       )}
