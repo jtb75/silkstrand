@@ -3,8 +3,12 @@
 // (type=slack|webhook|email|pagerduty) rather than a separate table.
 // Rule actions reference channels by credential_source_id.
 //
-// P2 ships webhook + Slack. Email + PagerDuty are stubbed and will
-// land in a later hardening pass.
+// P2 ships webhook + Slack (HMAC-signed webhooks + Slack incoming-webhook
+// URLs). Email and PagerDuty are stubbed: the dispatcher records a
+// notification_deliveries row with status='pending' and returns without
+// attempting a send. Tracked as a P6 follow-on — requires an SMTP/Resend
+// sender (with D14 per-tenant templates) for email and the Events API v2
+// flow for PagerDuty. A retry worker will later consume 'pending' rows.
 package notify
 
 import (
@@ -102,8 +106,19 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev Event) error {
 		status, sendErr := d.sendSlack(ctx, src, body)
 		return d.record(ctx, ev, src, status, body, sendErr)
 	case model.CredentialSourceTypeEmail, model.CredentialSourceTypePagerDuty:
-		// TODO(P6): wire actual senders.
-		return d.recordFailure(ctx, ev, src, 0, "channel type not yet implemented: "+src.Type)
+		// TODO(P6 follow-on): email + PagerDuty senders are stubbed.
+		// The dispatcher records a notification_deliveries row with
+		// status='pending' and returns without attempting a send. A real
+		// send path requires:
+		//   * Email: SMTP / Resend integration (pluggable mailer, mirror
+		//     backoffice/internal/mailer) — honor FROM_EMAIL + per-tenant
+		//     template selection (D14).
+		//   * PagerDuty: Events API v2 (routing_key in credential_source
+		//     config, dedup_key derived from rule+asset_endpoint).
+		// Webhook + Slack HMAC signing already landed — see sendWebhook.
+		// Once retry worker exists, it will pick up these 'pending' rows
+		// and drive them to sent/failed.
+		return d.recordPending(ctx, ev, src, "channel type not yet implemented: "+src.Type)
 	default:
 		return d.recordFailure(ctx, ev, src, 0, "unsupported channel source type: "+src.Type)
 	}
@@ -283,6 +298,32 @@ func (d *Dispatcher) record(ctx context.Context, ev Event, src *model.Credential
 		slog.Warn("notify.record_failed", "error", err)
 	}
 	return sendErr
+}
+
+// recordPending writes a notification_deliveries row with status='pending'
+// for channel types that are not yet implemented (email, pagerduty). The
+// future retry worker will consume these rows and drive them to
+// sent/failed. No send attempt is made.
+func (d *Dispatcher) recordPending(ctx context.Context, ev Event, src *model.CredentialSource, note string) error {
+	del := model.NotificationDelivery{
+		TenantID:        ev.TenantID,
+		ChannelSourceID: src.ID,
+		Severity:        &ev.Severity,
+		Status:          model.DeliveryStatusPending,
+		Attempt:         0,
+		Error:           &note,
+	}
+	if ev.RuleID != "" {
+		del.RuleID = &ev.RuleID
+	}
+	if ev.EventID != "" {
+		del.EventID = &ev.EventID
+	}
+	if err := d.store.InsertNotificationDelivery(ctx, del); err != nil {
+		slog.Warn("notify.record_pending_failed", "error", err)
+	}
+	slog.Info("notify.pending_stub", "channel_type", src.Type, "tenant", ev.TenantID, "rule", ev.RuleName)
+	return nil
 }
 
 func (d *Dispatcher) recordFailure(ctx context.Context, ev Event, src *model.CredentialSource, status int, msg string) error {
