@@ -177,7 +177,7 @@ CREATE TABLE collections (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description TEXT,
-    scope TEXT NOT NULL DEFAULT 'endpoint',   -- 'asset' | 'endpoint'
+    scope TEXT NOT NULL DEFAULT 'endpoint',   -- 'asset' | 'endpoint' | 'finding'
     predicate JSONB NOT NULL,
     is_dashboard_widget BOOLEAN NOT NULL DEFAULT FALSE,
     widget_kind TEXT,                         -- 'count' | 'table' | …  (nullable)
@@ -198,6 +198,18 @@ shared between Asset Sets and Rules. No duplication; no new evaluator.
 **URL handling.** `/api/v1/asset-sets/*` returns HTTP 301 to the corresponding
 `/api/v1/collections/*` route for 30 days. After that window the alias
 returns 404 and the route is removed (cleanup in Phase 7).
+
+**`scope = 'finding'` extension.** Collections can also save predicates over
+the `findings` table (ADR 007 D1). This supports the Collections UI tab that
+lets operators save queries like "open critical findings this week" and
+reuse them in dashboard widgets + rule match clauses. The predicate
+evaluator accepts a runtime dispatch on `scope`: asset-scope predicates
+match against `assets` rows, endpoint-scope against `asset_endpoints`, and
+finding-scope against `findings`. Rule engines that dereference a
+`collection_id` at match time must verify the collection's scope is
+compatible with the rule's trigger (e.g., a `new_cve` trigger fires on
+findings, so a finding-scope collection is valid; an asset-scope collection
+is not). See UI shape spec at `docs/plans/ui-shape.md` § Collections.
 
 ### D6. Rules reference collections by id
 
