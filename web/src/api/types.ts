@@ -245,6 +245,70 @@ export interface Bundle {
   target_type: string;
 }
 
+// ADR 007 — scan definitions + findings
+
+export type ScanDefinitionKind = 'compliance' | 'discovery';
+export type ScanDefinitionScopeKind = 'asset_endpoint' | 'collection' | 'cidr';
+
+export interface ScanDefinition {
+  id: string;
+  tenant_id: string;
+  name: string;
+  kind: ScanDefinitionKind;
+  bundle_id?: string;
+  scope_kind: ScanDefinitionScopeKind;
+  asset_endpoint_id?: string;
+  collection_id?: string;
+  cidr?: string;
+  agent_id?: string;
+  schedule?: string; // cron; null = manual
+  enabled: boolean;
+  next_run_at?: string;
+  last_run_at?: string;
+  last_run_status?: string;
+  created_at: string;
+  updated_at: string;
+  created_by?: string;
+}
+
+export interface ScanDefinitionCoverage {
+  scan_definition_id: string;
+  endpoint_count: number;
+  description?: string;
+}
+
+export type FindingSourceKind =
+  | 'network_vuln'
+  | 'network_compliance'
+  | 'bundle_compliance';
+
+export type FindingStatus = 'open' | 'resolved' | 'suppressed';
+
+export interface Finding {
+  id: string;
+  tenant_id: string;
+  asset_endpoint_id: string;
+  scan_id?: string;
+  source_kind: FindingSourceKind;
+  source: string;
+  source_id?: string;
+  cve_id?: string;
+  severity?: string;
+  title: string;
+  status: FindingStatus;
+  evidence?: Record<string, unknown>;
+  remediation?: string;
+  first_seen: string;
+  last_seen: string;
+  resolved_at?: string;
+  // Display helpers — these may be populated server-side via joins on the
+  // list handler so the UI can render "asset:port" without an extra lookup.
+  asset_ip?: string;
+  asset_hostname?: string;
+  endpoint_port?: number;
+  collection_id?: string;
+}
+
 // Auth / memberships
 
 export interface User {

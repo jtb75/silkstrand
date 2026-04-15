@@ -323,3 +323,115 @@ export const probeTarget = (targetId: string) =>
     `/api/v1/targets/${targetId}/probe`,
     { method: 'POST' },
   );
+
+// ─── ADR 007 — Scan definitions + Findings ───────────────────────────────
+import type {
+  ScanDefinition,
+  ScanDefinitionKind,
+  ScanDefinitionScopeKind,
+  ScanDefinitionCoverage,
+  Finding,
+  FindingSourceKind,
+  FindingStatus,
+} from './types';
+
+export interface UpsertScanDefinitionRequest {
+  name: string;
+  kind: ScanDefinitionKind;
+  bundle_id?: string;
+  scope_kind: ScanDefinitionScopeKind;
+  asset_endpoint_id?: string;
+  collection_id?: string;
+  cidr?: string;
+  agent_id?: string;
+  schedule?: string | null;
+  enabled?: boolean;
+}
+
+export const listScanDefinitions = () =>
+  request<ScanDefinition[]>('/api/v1/scan-definitions');
+
+export const getScanDefinition = (id: string) =>
+  request<ScanDefinition>(`/api/v1/scan-definitions/${id}`);
+
+export const createScanDefinition = (req: UpsertScanDefinitionRequest) =>
+  request<ScanDefinition>('/api/v1/scan-definitions', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+
+export const updateScanDefinition = (id: string, req: UpsertScanDefinitionRequest) =>
+  request<ScanDefinition>(`/api/v1/scan-definitions/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+
+export const deleteScanDefinition = (id: string) =>
+  request<void>(`/api/v1/scan-definitions/${id}`, { method: 'DELETE' });
+
+export const executeScanDefinition = (id: string) =>
+  request<{ scan_id: string }>(`/api/v1/scan-definitions/${id}/execute`, {
+    method: 'POST',
+  });
+
+export const enableScanDefinition = (id: string) =>
+  request<ScanDefinition>(`/api/v1/scan-definitions/${id}/enable`, { method: 'POST' });
+
+export const disableScanDefinition = (id: string) =>
+  request<ScanDefinition>(`/api/v1/scan-definitions/${id}/disable`, { method: 'POST' });
+
+export const getScanDefinitionCoverage = (id: string) =>
+  request<ScanDefinitionCoverage>(`/api/v1/scan-definitions/${id}/coverage`);
+
+export interface FindingFilterParams {
+  source_kind?: FindingSourceKind | FindingSourceKind[];
+  source?: string;
+  severity?: string;
+  status?: FindingStatus;
+  asset_endpoint_id?: string;
+  collection_id?: string;
+  cve_id?: string;
+  scan_id?: string;
+  since?: string;
+  until?: string;
+  q?: string;
+  page?: number;
+  page_size?: number;
+}
+
+function buildFindingQuery(params: FindingFilterParams): string {
+  const u = new URLSearchParams();
+  if (params.source_kind) {
+    const kinds = Array.isArray(params.source_kind)
+      ? params.source_kind
+      : [params.source_kind];
+    kinds.forEach((k) => u.append('source_kind', k));
+  }
+  if (params.source) u.set('source', params.source);
+  if (params.severity) u.set('severity', params.severity);
+  if (params.status) u.set('status', params.status);
+  if (params.asset_endpoint_id) u.set('asset_endpoint_id', params.asset_endpoint_id);
+  if (params.collection_id) u.set('collection_id', params.collection_id);
+  if (params.cve_id) u.set('cve_id', params.cve_id);
+  if (params.scan_id) u.set('scan_id', params.scan_id);
+  if (params.since) u.set('since', params.since);
+  if (params.until) u.set('until', params.until);
+  if (params.q) u.set('q', params.q);
+  if (params.page) u.set('page', String(params.page));
+  if (params.page_size) u.set('page_size', String(params.page_size));
+  return u.toString();
+}
+
+export const listFindings = (params: FindingFilterParams = {}) => {
+  const qs = buildFindingQuery(params);
+  return request<Finding[]>(`/api/v1/findings${qs ? `?${qs}` : ''}`);
+};
+
+export const getFinding = (id: string) =>
+  request<Finding>(`/api/v1/findings/${id}`);
+
+export const suppressFinding = (id: string) =>
+  request<Finding>(`/api/v1/findings/${id}/suppress`, { method: 'POST' });
+
+export const reopenFinding = (id: string) =>
+  request<Finding>(`/api/v1/findings/${id}/reopen`, { method: 'POST' });

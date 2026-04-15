@@ -14,7 +14,7 @@ export default function Layout() {
         <nav className="sidebar-nav">
           <NavLink to="/" end>Dashboard</NavLink>
           <NavLink to="/assets">Assets</NavLink>
-          <NavLink to="/targets">Targets</NavLink>
+          <NavLink to="/findings">Findings</NavLink>
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/scans">Scans</NavLink>
           {isAdmin && <NavLink to="/asset-sets">Asset Sets</NavLink>}
