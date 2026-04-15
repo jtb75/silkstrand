@@ -27,9 +27,11 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/model"
 )
 
-// ErrNotImplemented is kept for forward compatibility — finding-scope
-// predicates short-circuit to this until P3 ships the findings model.
-var ErrNotImplemented = errors.New("finding-scope predicates land with P3 findings ingest")
+// ErrNotImplemented is retained as the sentinel for subject-mismatch
+// on finding-scope evaluation (e.g., nil subject). P4 wires the real
+// finding-scope lookup below; callers that pass the wrong subject type
+// still get a typed error via the scope-dispatcher.
+var ErrNotImplemented = errors.New("finding-scope predicate received unsupported subject")
 
 // Scope is the runtime classification of a collection predicate target.
 // Mirrors model.CollectionScope* constants.
@@ -63,12 +65,6 @@ type EndpointView struct {
 func Match(predicate json.RawMessage, scope Scope, subject any) (bool, error) {
 	if len(predicate) == 0 {
 		return true, nil
-	}
-	if scope == ScopeFinding {
-		// P3-backend wires this; for now the engine's compatibility check
-		// already filters finding-triggered rules away from this path, so
-		// hitting it is a programmer error.
-		return false, ErrNotImplemented
 	}
 	var node any
 	if err := json.Unmarshal(predicate, &node); err != nil {
@@ -110,6 +106,12 @@ func lookupFor(scope Scope, subject any) (fieldLookup, error) {
 			return nil, fmt.Errorf("endpoint-scope EndpointView must carry both Asset and Endpoint")
 		}
 		return endpointLookup(v), nil
+	case ScopeFinding:
+		f, ok := subject.(*model.Finding)
+		if !ok || f == nil {
+			return nil, fmt.Errorf("finding-scope predicate expects *model.Finding, got %T: %w", subject, ErrNotImplemented)
+		}
+		return findingLookup(f), nil
 	default:
 		return nil, fmt.Errorf("unsupported predicate scope: %s", scope)
 	}
@@ -304,6 +306,39 @@ func endpointLookup(v EndpointView) fieldLookup {
 			tag := strings.TrimPrefix(path, "technologies.")
 			matches := technologiesContains(e.Technologies, tag)
 			return matches, len(matches) > 0
+		}
+		return nil, false
+	}
+}
+
+func findingLookup(f *model.Finding) fieldLookup {
+	return func(path string) (any, bool) {
+		switch path {
+		case "severity":
+			return derefString(f.Severity)
+		case "source_kind":
+			return f.SourceKind, f.SourceKind != ""
+		case "source":
+			return f.Source, f.Source != ""
+		case "source_id":
+			return derefString(f.SourceID)
+		case "cve_id":
+			return derefString(f.CVEID)
+		case "status":
+			return f.Status, f.Status != ""
+		case "title":
+			return f.Title, f.Title != ""
+		case "asset_endpoint_id":
+			return f.AssetEndpointID, f.AssetEndpointID != ""
+		case "first_seen":
+			return f.FirstSeen.Format(time.RFC3339), true
+		case "last_seen":
+			return f.LastSeen.Format(time.RFC3339), true
+		case "resolved_at":
+			if f.ResolvedAt == nil {
+				return nil, false
+			}
+			return f.ResolvedAt.Format(time.RFC3339), true
 		}
 		return nil, false
 	}

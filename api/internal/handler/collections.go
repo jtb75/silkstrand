@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/jtb75/silkstrand/api/internal/model"
+	"github.com/jtb75/silkstrand/api/internal/rules"
 	"github.com/jtb75/silkstrand/api/internal/store"
 )
 
@@ -163,9 +165,182 @@ func (h *CollectionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Preview is the ad-hoc predicate evaluator endpoint from the old
-// asset-sets surface. P4 wires the scope-aware evaluator; for now it
-// returns 501 so the UI can feature-flag accordingly.
-func (h *CollectionsHandler) Preview(w http.ResponseWriter, _ *http.Request) {
-	writeError(w, http.StatusNotImplemented, "collection preview lands in P4 with the scope-aware predicate evaluator")
+// previewLimit caps the sample in preview responses (ADR 006 D5 — UI spec).
+const previewLimit = 50
+
+type previewRequest struct {
+	Scope     string          `json:"scope"`
+	Predicate json.RawMessage `json:"predicate"`
+}
+
+// Preview evaluates a predicate and returns {count, sample, scope}.
+// Handles two shapes:
+//   - POST /collections/{id}/preview  (saved collection — empty body OK)
+//   - POST /collections/preview       (ad-hoc — body required)
+func (h *CollectionsHandler) Preview(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var scope string
+	var pred json.RawMessage
+
+	if id != "" {
+		c, err := h.store.GetCollection(r.Context(), id)
+		if err != nil {
+			slog.Error("preview: load collection", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		if c == nil {
+			writeError(w, http.StatusNotFound, "collection not found")
+			return
+		}
+		scope, pred = c.Scope, c.Predicate
+	} else {
+		var req previewRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.Scope == "" {
+			req.Scope = model.CollectionScopeEndpoint
+		}
+		scope, pred = req.Scope, req.Predicate
+	}
+
+	count, sample, err := evaluateCollection(r.Context(), h.store, scope, pred, previewLimit, false)
+	if err != nil {
+		slog.Error("preview: evaluate", "error", err, "scope", scope)
+		writeError(w, http.StatusInternalServerError, "failed to evaluate predicate")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"scope":  scope,
+		"count":  count,
+		"sample": sample,
+	})
+}
+
+// Members returns the full id list (plus minimal display fields) for
+// rows matching the saved collection's predicate. Not paginated yet —
+// callers that need large lists should page via scope-specific APIs.
+func (h *CollectionsHandler) Members(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	c, err := h.store.GetCollection(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if c == nil {
+		writeError(w, http.StatusNotFound, "collection not found")
+		return
+	}
+	count, members, err := evaluateCollection(r.Context(), h.store, c.Scope, c.Predicate, 0, true)
+	if err != nil {
+		slog.Error("members: evaluate", "error", err, "collection", id)
+		writeError(w, http.StatusInternalServerError, "failed to evaluate predicate")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"scope":   c.Scope,
+		"count":   count,
+		"members": members,
+	})
+}
+
+// evaluateCollection dispatches on scope and runs the predicate matcher
+// in Go. When `limit` is 0 and `all` is true, returns every match.
+// Otherwise samples up to `limit` matches alongside the total count.
+func evaluateCollection(
+	ctx context.Context,
+	s store.Store,
+	scope string,
+	predicate json.RawMessage,
+	limit int,
+	all bool,
+) (count int, sample []any, err error) {
+	switch scope {
+	case model.CollectionScopeAsset:
+		assets, lerr := s.ListAllAssetsTenant(ctx)
+		if lerr != nil {
+			return 0, nil, lerr
+		}
+		for i := range assets {
+			ok, merr := rules.Match(predicate, rules.ScopeAsset, &assets[i])
+			if merr != nil {
+				return 0, nil, merr
+			}
+			if !ok {
+				continue
+			}
+			count++
+			if all || len(sample) < limit {
+				sample = append(sample, map[string]any{
+					"id":        assets[i].ID,
+					"hostname":  assets[i].Hostname,
+					"ip":        assets[i].PrimaryIP,
+					"source":    assets[i].Source,
+					"last_seen": assets[i].LastSeen,
+				})
+			}
+		}
+	case model.CollectionScopeEndpoint:
+		views, lerr := s.ListAllEndpointViewsTenant(ctx)
+		if lerr != nil {
+			return 0, nil, lerr
+		}
+		for i := range views {
+			ev := rules.EndpointView{Asset: &views[i].Asset, Endpoint: &views[i].Endpoint}
+			ok, merr := rules.Match(predicate, rules.ScopeEndpoint, ev)
+			if merr != nil {
+				return 0, nil, merr
+			}
+			if !ok {
+				continue
+			}
+			count++
+			if all || len(sample) < limit {
+				sample = append(sample, map[string]any{
+					"id":         views[i].Endpoint.ID,
+					"asset_id":   views[i].Asset.ID,
+					"ip":         views[i].Asset.PrimaryIP,
+					"hostname":   views[i].Asset.Hostname,
+					"port":       views[i].Endpoint.Port,
+					"service":    views[i].Endpoint.Service,
+					"version":    views[i].Endpoint.Version,
+					"last_seen":  views[i].Endpoint.LastSeen,
+				})
+			}
+		}
+	case model.CollectionScopeFinding:
+		findings, lerr := s.ListAllFindingsTenant(ctx)
+		if lerr != nil {
+			return 0, nil, lerr
+		}
+		for i := range findings {
+			ok, merr := rules.Match(predicate, rules.ScopeFinding, &findings[i])
+			if merr != nil {
+				return 0, nil, merr
+			}
+			if !ok {
+				continue
+			}
+			count++
+			if all || len(sample) < limit {
+				sample = append(sample, map[string]any{
+					"id":                findings[i].ID,
+					"asset_endpoint_id": findings[i].AssetEndpointID,
+					"severity":          findings[i].Severity,
+					"title":             findings[i].Title,
+					"status":            findings[i].Status,
+					"cve_id":            findings[i].CVEID,
+					"last_seen":         findings[i].LastSeen,
+				})
+			}
+		}
+	default:
+		return 0, nil, errors.New("unsupported scope")
+	}
+	if sample == nil {
+		sample = []any{}
+	}
+	return count, sample, nil
 }

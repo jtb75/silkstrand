@@ -112,10 +112,56 @@ func TestEmptyPredicateMatchesAll(t *testing.T) {
 	mustMatchEndpoint(t, `{}`, true)
 }
 
-func TestFindingScopeNotImplemented(t *testing.T) {
+func mkFinding() *model.Finding {
+	sev := "high"
+	cve := "CVE-2024-12345"
+	srcID := "nuclei-ssh-weak-cipher"
+	now := time.Now()
+	return &model.Finding{
+		ID:              "11111111-1111-1111-1111-111111111111",
+		AssetEndpointID: "22222222-2222-2222-2222-222222222222",
+		SourceKind:      model.FindingSourceKindNetworkVuln,
+		Source:          "nuclei",
+		SourceID:        &srcID,
+		CVEID:           &cve,
+		Severity:        &sev,
+		Title:           "Weak SSH cipher",
+		Status:          model.FindingStatusOpen,
+		FirstSeen:       now,
+		LastSeen:        now,
+	}
+}
+
+func mustMatchFinding(t *testing.T, predJSON string, want bool) {
+	t.Helper()
+	got, err := Match(json.RawMessage(predJSON), ScopeFinding, mkFinding())
+	if err != nil {
+		t.Fatalf("predicate %s err: %v", predJSON, err)
+	}
+	if got != want {
+		t.Errorf("predicate %s = %v, want %v", predJSON, got, want)
+	}
+}
+
+func TestFindingScope(t *testing.T) {
+	mustMatchFinding(t, `{"severity":"high"}`, true)
+	mustMatchFinding(t, `{"severity":"low"}`, false)
+	mustMatchFinding(t, `{"source":"nuclei"}`, true)
+	mustMatchFinding(t, `{"source_kind":"network_vuln"}`, true)
+	mustMatchFinding(t, `{"status":"open"}`, true)
+	mustMatchFinding(t, `{"status":{"$in":["open","suppressed"]}}`, true)
+	mustMatchFinding(t, `{"cve_id":{"$regex":"^CVE-2024-"}}`, true)
+	mustMatchFinding(t, `{"$and":[{"severity":"high"},{"status":"open"}]}`, true)
+}
+
+func TestFindingScopeWrongSubject(t *testing.T) {
 	_, err := Match(json.RawMessage(`{"severity":"high"}`), ScopeFinding, nil)
 	if err == nil {
-		t.Fatal("finding scope should return error until P3")
+		t.Fatal("finding scope should reject nil subject")
+	}
+	_, err = Match(json.RawMessage(`{"severity":"high"}`), ScopeFinding, "not a finding")
+	if err == nil {
+		t.Fatal("finding scope should reject non-*model.Finding subject")
 	}
 }
 

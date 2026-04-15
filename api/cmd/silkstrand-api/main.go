@@ -92,7 +92,7 @@ func run() error {
 	scanDefsH := handler.NewScanDefinitionsHandler(nil)
 	credMapH := handler.NewCredentialMappingsHandler(nil)
 	dashH := handler.NewDashboardHandler(nil)
-	rulesH := handler.NewCorrelationRulesHandler(nil)
+	rulesH := handler.NewCorrelationRulesHandler(pgStore)
 
 	mux := http.NewServeMux()
 
@@ -161,6 +161,7 @@ func run() error {
 	// returns 501 (superseded by scan_definitions).
 	apiMux.HandleFunc("GET /api/v1/assets", assetH.List)
 	apiMux.HandleFunc("GET /api/v1/assets/{id}", assetH.Get)
+	apiMux.HandleFunc("GET /api/v1/assets/{id}/endpoints/{endpoint_id}", assetH.GetEndpoint)
 	apiMux.HandleFunc("POST /api/v1/assets/{id}/promote", assetH.Promote)
 
 	// Collections (ADR 006 D5) — working CRUD in P1.
@@ -170,6 +171,8 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/collections/{id}", collectionsH.Get)
 	apiMux.HandleFunc("PUT /api/v1/collections/{id}", collectionsH.Update)
 	apiMux.HandleFunc("DELETE /api/v1/collections/{id}", collectionsH.Delete)
+	apiMux.HandleFunc("POST /api/v1/collections/{id}/preview", collectionsH.Preview)
+	apiMux.HandleFunc("GET /api/v1/collections/{id}/members", collectionsH.Members)
 
 	// Correlation rules — 501 stubs (P2).
 	apiMux.HandleFunc("GET /api/v1/correlation-rules", rulesH.List)

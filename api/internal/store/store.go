@@ -133,6 +133,30 @@ type Store interface {
 	// Rule-engine loader.
 	ListActiveRulesForTrigger(ctx context.Context, tenantID, trigger string) ([]model.CorrelationRule, error)
 
+	// Correlation-rule CRUD (ADR 006 D6; P4 wires the collection-aware
+	// matcher). Tenant-scoped.
+	ListCorrelationRules(ctx context.Context) ([]model.CorrelationRule, error)
+	GetCorrelationRule(ctx context.Context, id string) (*model.CorrelationRule, error)
+	CreateCorrelationRule(ctx context.Context, r model.CorrelationRule) (*model.CorrelationRule, error)
+	UpdateCorrelationRule(ctx context.Context, r model.CorrelationRule) (*model.CorrelationRule, error)
+	DeleteCorrelationRule(ctx context.Context, id string) error
+
+	// P4 read surface for preview / members / coverage roll-ups.
+	ListAllAssetsTenant(ctx context.Context) ([]model.Asset, error)
+	ListEndpointsForAssetTenant(ctx context.Context, assetID string) ([]model.AssetEndpoint, error)
+	GetAssetEndpointByID(ctx context.Context, endpointID string) (*model.AssetEndpoint, *model.Asset, error)
+	ListAllEndpointViewsTenant(ctx context.Context) ([]EndpointRow, error)
+	ListAllFindingsTenant(ctx context.Context) ([]model.Finding, error)
+	ListFindingsForEndpoint(ctx context.Context, endpointID string) ([]model.Finding, error)
+
+	// Coverage helpers.
+	CountEndpointsByAsset(ctx context.Context) (map[string]int, error)
+	EndpointsWithScanDefinitionByAsset(ctx context.Context) (map[string]map[string]struct{}, error)
+	LastScanAtByAsset(ctx context.Context) (map[string]time.Time, error)
+	NextScanAtByAsset(ctx context.Context) (map[string]time.Time, error)
+	FindingsSeverityByEndpoint(ctx context.Context) (map[string]map[string]int, error)
+	CollectionsWithCredentialMappings(ctx context.Context) ([]model.Collection, error)
+
 	// Agent allowlist snapshot (ADR 003 D11 — restored in migration 018).
 	UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) (changed bool, err error)
 	GetAgentAllowlist(ctx context.Context, agentID string) (*AgentAllowlistSnapshot, error)
@@ -196,6 +220,14 @@ type AgentAllowlistSnapshot struct {
 	RateLimitPPS int       `json:"rate_limit_pps"`
 	ReportedAt   time.Time `json:"reported_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// EndpointRow is the flattened (asset, endpoint) pair served to the
+// P4 collection-preview path when scope=endpoint. Matches the shape
+// the rule engine uses (asset + endpoint columns in one struct).
+type EndpointRow struct {
+	Asset    model.Asset
+	Endpoint model.AssetEndpoint
 }
 
 // AssetFilter is the parsed query for ListAssets.
