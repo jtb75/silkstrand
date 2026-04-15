@@ -30,6 +30,7 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/notify"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/rules"
+	"github.com/jtb75/silkstrand/api/internal/scheduler"
 	"github.com/jtb75/silkstrand/api/internal/store"
 	"github.com/jtb75/silkstrand/api/internal/websocket"
 )
@@ -71,7 +72,14 @@ func run() error {
 	websocket.AllowedOrigins = cfg.AllowedOrigins
 	hub := websocket.NewHub()
 	notifier := notify.New(pgStore, cfg.CredentialEncryptionKey)
-	hub.OnMessage = buildOnMessage(pgStore, ps, notifier)
+	sched := scheduler.New(pgStore, ps)
+	hub.OnMessage = buildOnMessage(pgStore, ps, notifier, sched.D)
+
+	// Scheduler goroutine (ADR 007 D4). Started before routes are served
+	// so locally-due definitions dispatch promptly on boot.
+	schedCtx, schedCancel := context.WithCancel(context.Background())
+	defer schedCancel()
+	go sched.Run(schedCtx)
 
 	// Handlers — surviving surface
 	healthH := handler.NewHealthHandler(pgStore, redisPingFunc(ps))
@@ -88,8 +96,8 @@ func run() error {
 	// Handlers — new asset-first surface (collections has working impls;
 	// the rest return 501 in P1).
 	collectionsH := handler.NewCollectionsHandler(pgStore)
-	findingsH := handler.NewFindingsHandler(nil)
-	scanDefsH := handler.NewScanDefinitionsHandler(nil)
+	findingsH := handler.NewFindingsHandler(pgStore)
+	scanDefsH := handler.NewScanDefinitionsHandler(pgStore, sched.D)
 	credMapH := handler.NewCredentialMappingsHandler(pgStore)
 	dashH := handler.NewDashboardHandler(nil)
 	rulesH := handler.NewCorrelationRulesHandler(pgStore)
@@ -194,6 +202,7 @@ func run() error {
 	apiMux.HandleFunc("PUT /api/v1/scan-definitions/{id}", scanDefsH.Update)
 	apiMux.HandleFunc("DELETE /api/v1/scan-definitions/{id}", scanDefsH.Delete)
 	apiMux.HandleFunc("POST /api/v1/scan-definitions/{id}/execute", scanDefsH.Execute)
+	apiMux.HandleFunc("GET /api/v1/scan-definitions/{id}/coverage", scanDefsH.Coverage)
 	apiMux.HandleFunc("POST /api/v1/scan-definitions/{id}/enable", scanDefsH.Enable)
 	apiMux.HandleFunc("POST /api/v1/scan-definitions/{id}/disable", scanDefsH.Disable)
 
@@ -250,7 +259,7 @@ func run() error {
 // buildOnMessage routes agent → server WSS messages. P2 live surface:
 // asset_discovered and allowlist_snapshot ingest against the new
 // asset / asset_endpoint schema; the rule engine fires per endpoint.
-func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatcher) func(agentID string, msg websocket.Message) {
+func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatcher, sched scheduler.Dispatcher) func(agentID string, msg websocket.Message) {
 	return func(agentID string, msg websocket.Message) {
 		ctx := context.Background()
 
@@ -267,19 +276,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			slog.Info("scan started", "agent_id", agentID, "scan_id", payload.ScanID)
 
 		case websocket.TypeScanResults:
-			// P1: findings/scan_results storage is gone. Mark the scan
-			// completed so the UI state machine advances; P3 wires
-			// findings ingest write-through per ADR 007 D2.
-			var wrapper struct {
-				ScanID string `json:"scan_id"`
-			}
-			if err := json.Unmarshal(msg.Payload, &wrapper); err == nil && wrapper.ScanID != "" {
-				if err := s.UpdateScanStatus(ctx, wrapper.ScanID, model.ScanStatusCompleted); err != nil {
-					slog.Error("updating scan to completed", "scan_id", wrapper.ScanID, "error", err)
-				}
-				slog.Info("scan_results received (P1 drop; findings ingest lands in P3)",
-					"agent_id", agentID, "scan_id", wrapper.ScanID)
-			}
+			handleScanResults(ctx, s, agentID, msg.Payload)
 
 		case websocket.TypeScanError:
 			var payload websocket.ScanErrorPayload
@@ -317,7 +314,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			handleAllowlistSnapshot(ctx, s, agentID, msg.Payload)
 
 		case websocket.TypeAssetDiscovered:
-			handleAssetDiscovered(ctx, s, notifier, agentID, msg.Payload)
+			handleAssetDiscovered(ctx, s, notifier, sched, agentID, msg.Payload)
 
 		case websocket.TypeDiscoveryCompleted:
 			var payload websocket.DiscoveryCompletedPayload
@@ -372,7 +369,7 @@ func redisPingFunc(ps *pubsub.PubSub) func(context.Context) error {
 // service, ...) tuples into assets + asset_endpoints, logs provenance,
 // derives asset_events for deltas, and runs the collection-aware rule
 // engine per endpoint.
-func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.Dispatcher, agentID string, payload json.RawMessage) {
+func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.Dispatcher, sched scheduler.Dispatcher, agentID string, payload json.RawMessage) {
 	var batch websocket.AssetDiscoveredPayload
 	if err := json.Unmarshal(payload, &batch); err != nil {
 		slog.Error("parsing asset_discovered payload", "agent_id", agentID, "error", err)
@@ -462,7 +459,8 @@ func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.
 		if err := s.AppendAssetEvents(tctx, events); err != nil {
 			slog.Error("appending asset events", "endpoint", ep.ID, "error", err)
 		}
-		runRuleActions(tctx, s, notifier, activeRules, asset, ep)
+		ingestNucleiFindings(tctx, s, scan.TenantID, scan.ID, ep.ID, a.CVEs)
+		runRuleActions(tctx, s, notifier, sched, activeRules, asset, ep)
 	}
 }
 
@@ -618,7 +616,7 @@ func cvesFromPayload(raw json.RawMessage) []string {
 // dispatch — requires a scan_definition to execute against, which is
 // P3-backend). auto_create_target is accepted but logged as no-op until
 // P3 lands scan_definitions.
-func runRuleActions(ctx context.Context, s store.Store, notifier *notify.Dispatcher, ruleSet []model.CorrelationRule, asset *model.Asset, ep *model.AssetEndpoint) {
+func runRuleActions(ctx context.Context, s store.Store, notifier *notify.Dispatcher, sched scheduler.Dispatcher, ruleSet []model.CorrelationRule, asset *model.Asset, ep *model.AssetEndpoint) {
 	if asset == nil || ep == nil || len(ruleSet) == 0 {
 		return
 	}
@@ -688,16 +686,189 @@ func runRuleActions(ctx context.Context, s store.Store, notifier *notify.Dispatc
 					"rule", act.RuleName)
 				continue
 			}
-			// TODO(P3-backend): invoke
-			//   POST /api/v1/scan-definitions/{id}/execute
-			// codepath once the scheduler lands. For P2 we log the
-			// intent so an operator can trace rule firings.
-			slog.Info("rule.fired.pending_p3",
+			def, err := s.GetScanDefinition(ctx, scanDefID)
+			if err != nil || def == nil {
+				slog.Warn("run_scan_definition: definition missing",
+					"rule", act.RuleName, "scan_definition_id", scanDefID, "error", err)
+				continue
+			}
+			if err := sched.Execute(ctx, *def); err != nil {
+				slog.Warn("run_scan_definition dispatch failed",
+					"rule", act.RuleName, "scan_definition_id", scanDefID, "error", err)
+				continue
+			}
+			slog.Info("rule.fired",
 				"rule", act.RuleName, "action", act.Type,
 				"scan_definition_id", scanDefID,
 				"asset", asset.ID, "endpoint", ep.ID)
 		}
 	}
+}
+
+// ingestNucleiFindings writes one findings row per CVE from the
+// agent's inline cves[] blob on a discovery asset_discovered batch
+// (ADR 007 D2 network_vuln source). The upsert key is
+// (endpoint, source_kind, source, source_id) so rescans update
+// last_seen instead of duplicating.
+func ingestNucleiFindings(ctx context.Context, s store.Store, tenantID, scanID, endpointID string, raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return
+	}
+	sid := scanID
+	for _, hit := range arr {
+		templateID, _ := hit["template_id"].(string)
+		if templateID == "" {
+			if v, ok := hit["id"].(string); ok {
+				templateID = v
+			}
+		}
+		cveID := firstCVE(hit)
+		severity := strPtrOrNil(stringFrom(hit, "severity"))
+		title := stringFrom(hit, "name")
+		if title == "" {
+			title = templateID
+		}
+		if title == "" {
+			title = cveID
+		}
+		evidence, _ := json.Marshal(hit)
+		var cvePtr *string
+		if cveID != "" {
+			c := cveID
+			cvePtr = &c
+		}
+		if _, err := s.UpsertFinding(ctx, store.UpsertFindingInput{
+			TenantID:        tenantID,
+			AssetEndpointID: endpointID,
+			ScanID:          &sid,
+			SourceKind:      model.FindingSourceKindNetworkVuln,
+			Source:          "nuclei",
+			SourceID:        templateID,
+			CVEID:           cvePtr,
+			Severity:        severity,
+			Title:           title,
+			Status:          model.FindingStatusOpen,
+			Evidence:        evidence,
+		}); err != nil {
+			slog.Warn("ingest nuclei finding", "endpoint", endpointID, "template", templateID, "error", err)
+		}
+	}
+}
+
+func firstCVE(hit map[string]any) string {
+	if arr, ok := hit["cves"].([]any); ok {
+		for _, v := range arr {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+			if m, ok := v.(map[string]any); ok {
+				if s, ok := m["id"].(string); ok && s != "" {
+					return s
+				}
+			}
+		}
+	}
+	if s, ok := hit["cve_id"].(string); ok {
+		return s
+	}
+	return ""
+}
+
+func stringFrom(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// handleScanResults writes bundle compliance results to findings and
+// marks the scan completed. The agent's results payload is a JSON
+// array under `results` with per-control rows. Shape is tolerant —
+// each row provides at least id/status; title + severity + evidence
+// are optional.
+func handleScanResults(ctx context.Context, s store.Store, agentID string, payload json.RawMessage) {
+	var wrapper struct {
+		ScanID  string            `json:"scan_id"`
+		Results []json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(payload, &wrapper); err != nil {
+		slog.Error("parsing scan_results payload", "agent_id", agentID, "error", err)
+		return
+	}
+	if wrapper.ScanID == "" {
+		return
+	}
+	scan, err := s.GetScanByID(ctx, wrapper.ScanID)
+	if err != nil || scan == nil {
+		slog.Error("loading compliance scan", "scan_id", wrapper.ScanID, "error", err)
+		return
+	}
+	// Findings write-through only if the scan was targeted at an
+	// asset_endpoint (scheduler / scan_definition path). The legacy
+	// ad-hoc /api/v1/scans route is target-driven and has no endpoint
+	// binding yet; skip findings in that shape — they'll light up once
+	// scan_definitions becomes the sole entry point.
+	if scan.AssetEndpointID != nil {
+		bundleID := ""
+		if scan.BundleID != nil {
+			bundleID = *scan.BundleID
+		}
+		sid := scan.ID
+		tctx := store.WithTenantID(ctx, scan.TenantID)
+		for _, raw := range wrapper.Results {
+			var row map[string]any
+			if err := json.Unmarshal(raw, &row); err != nil {
+				continue
+			}
+			controlID := stringFrom(row, "control_id")
+			if controlID == "" {
+				controlID = stringFrom(row, "id")
+			}
+			statusStr := stringFrom(row, "status")
+			findingStatus := model.FindingStatusOpen
+			if statusStr == "pass" || statusStr == "passed" {
+				findingStatus = model.FindingStatusResolved
+			}
+			title := stringFrom(row, "title")
+			if title == "" {
+				title = controlID
+			}
+			severity := strPtrOrNil(stringFrom(row, "severity"))
+			remediation := strPtrOrNil(stringFrom(row, "remediation"))
+			if _, err := s.UpsertFinding(tctx, store.UpsertFindingInput{
+				TenantID:        scan.TenantID,
+				AssetEndpointID: *scan.AssetEndpointID,
+				ScanID:          &sid,
+				SourceKind:      model.FindingSourceKindBundleCompliance,
+				Source:          bundleID,
+				SourceID:        controlID,
+				Severity:        severity,
+				Title:           title,
+				Status:          findingStatus,
+				Evidence:        raw,
+				Remediation:     remediation,
+			}); err != nil {
+				slog.Warn("ingest bundle finding",
+					"scan", scan.ID, "control", controlID, "error", err)
+			}
+		}
+	}
+	if err := s.UpdateScanStatus(ctx, wrapper.ScanID, model.ScanStatusCompleted); err != nil {
+		slog.Error("updating scan to completed", "scan_id", wrapper.ScanID, "error", err)
+	}
+	slog.Info("scan_results processed",
+		"agent_id", agentID, "scan_id", wrapper.ScanID, "results", len(wrapper.Results))
 }
 
 func strPtr(s string) *string { return &s }
