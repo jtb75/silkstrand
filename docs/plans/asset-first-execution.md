@@ -83,6 +83,33 @@ handler narrows to CIDR.
 Every non-stub endpoint returns 501 Not Implemented except tenant auth,
 agents, bundles, install tokens, and the narrowed targets CRUD.
 
+**UUID randomness audit (ADR 006 D10).** The migration runs a guard query
+against the existing database before applying schema changes:
+
+```sql
+-- Fail the migration if any non-reserved row has a dev-seed pattern id.
+DO $$
+DECLARE leaked INT;
+BEGIN
+  SELECT COUNT(*) INTO leaked FROM bundles
+    WHERE id::text LIKE '00000000-0000-0000-0000-0000000000%'
+      AND id <> '11111111-1111-1111-1111-111111111111';
+  IF leaked > 0 THEN
+    RAISE EXCEPTION 'UUID randomness invariant violated: % bundle rows with dev-seed ids. Clean before migration.', leaked;
+  END IF;
+END $$;
+```
+
+The same check extends to any other table discovered to have leaked
+dev-seed ids. The known prod-leaked rows (today's CIS bundles at
+`…000030/031/032`) are cleaned up by a one-liner `UPDATE bundles SET id =
+uuid_generate_v4() WHERE …` in the same migration BEFORE the guard runs.
+All bundle references that previously pointed at fixed ids land on fresh
+random UUIDs.
+
+Reserved ids (the discovery bundle `11111111-…`) are explicitly excluded
+from the guard and re-seeded at their fixed value as part of P1.
+
 **One engineer, one PR.**
 
 **Branches unblocked:** P2, then everything else.
