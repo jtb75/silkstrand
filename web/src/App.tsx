@@ -8,7 +8,6 @@ import Targets from './pages/Targets';
 import Assets from './pages/Assets';
 import CorrelationRules from './pages/CorrelationRules';
 import Collections from './pages/Collections';
-import OneShotScans from './pages/OneShotScans';
 import Agents from './pages/Agents';
 import Scans from './pages/Scans';
 import ScanResults from './pages/ScanResults';
@@ -52,7 +51,6 @@ export default function App() {
               <Route path="/settings" element={<Settings />} />
               <Route path="/rules" element={<CorrelationRules />} />
               <Route path="/collections" element={<Collections />} />
-              <Route path="/one-shot-scans" element={<OneShotScans />} />
             </Route>
           </Routes>
         </AuthProvider>
