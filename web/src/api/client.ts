@@ -608,3 +608,56 @@ export const suppressFinding = (id: string) =>
 
 export const reopenFinding = (id: string) =>
   request<Finding>(`/api/v1/findings/${id}/reopen`, { method: 'POST' });
+
+// ──────────────────────────────────────────────────────────────────────
+// P5-a: Dashboard (BOUNDED SECTION — shared-conflict file).
+// Keep additions inside this block; other workstreams add to their own
+// BOUNDED sections to minimise merge conflicts.
+// ──────────────────────────────────────────────────────────────────────
+
+export interface DashboardKpis {
+  total_assets: number;
+  coverage_percent: number;
+  critical_findings: number;
+  new_this_week: number;
+  deltas: {
+    assets_new_this_week: number;
+    findings_new_today: number;
+    coverage_delta_week: number;
+    unresolved_new_week: number;
+  };
+}
+
+export interface SuggestedAction {
+  kind:
+    | 'endpoints_missing_credentials'
+    | 'assets_without_scans'
+    | 'recent_scan_failures';
+  title: string;
+  count: number;
+  collection_id_or_inline_predicate: string;
+  primary_cta: string;
+  secondary_cta: string;
+}
+
+export interface RecentActivityItem {
+  id: string;
+  event_type: string;
+  severity?: string;
+  asset_endpoint_id: string;
+  hostname?: string;
+  primary_ip?: string;
+  port?: number;
+  service?: string;
+  occurred_at: string;
+}
+
+export const getDashboardKpis = () =>
+  request<DashboardKpis>('/api/v1/dashboard/kpis');
+
+export const getSuggestedActions = () =>
+  request<{ items: SuggestedAction[] }>('/api/v1/dashboard/suggested-actions');
+
+export const getRecentActivity = () =>
+  request<{ items: RecentActivityItem[] }>('/api/v1/dashboard/recent-activity');
+

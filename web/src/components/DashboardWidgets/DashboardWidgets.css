@@ -1,0 +1,92 @@
+/* P5-a Dashboard widgets — plain CSS per convention. */
+
+.dash-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: 8fr 4fr;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .dash-kpi-row { grid-template-columns: repeat(2, 1fr); }
+  .dash-grid { grid-template-columns: 1fr; }
+}
+
+.dash-card {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border, #e2e4ea);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.dash-card h3 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #6b7280);
+}
+
+.kpi-card .kpi-value {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.kpi-card .kpi-delta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted, #6b7280);
+}
+
+.kpi-card .kpi-delta.positive { color: #047857; }
+.kpi-card .kpi-delta.negative { color: #b91c1c; }
+
+.suggested-action {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border, #e2e4ea);
+}
+.suggested-action:last-child { border-bottom: none; }
+
+.suggested-action .sa-title {
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.suggested-action .sa-ctas {
+  display: flex;
+  gap: 8px;
+}
+
+.activity-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle, #f1f2f5);
+  font-size: 13px;
+}
+.activity-row:last-child { border-bottom: none; }
+
+.activity-row .a-icon { width: 16px; }
+.activity-row .a-when { margin-left: auto; color: var(--muted, #6b7280); font-size: 12px; }
+
+.collection-list-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle, #f1f2f5);
+  font-size: 13px;
+  align-items: center;
+}
+.collection-list-row:last-child { border-bottom: none; }
+
+.collection-list-row .cl-meta { color: var(--muted, #6b7280); font-size: 12px; }

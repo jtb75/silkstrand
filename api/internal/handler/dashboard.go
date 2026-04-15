@@ -1,14 +1,332 @@
 package handler
 
-import "net/http"
+import (
+	"database/sql"
+	"log/slog"
+	"net/http"
+	"time"
 
-// DashboardHandler serves KPI aggregates + Suggested Actions
-// computation for the new Dashboard. Full impl lands in P5. P1 returns
-// 501 so the frontend can feature-flag the page.
-type DashboardHandler struct{}
+	"github.com/jtb75/silkstrand/api/internal/store"
+)
 
-func NewDashboardHandler(_ any) *DashboardHandler { return &DashboardHandler{} }
+// DashboardHandler serves the asset-first Dashboard:
+//   - GET /api/v1/dashboard/kpis
+//   - GET /api/v1/dashboard/suggested-actions
+//   - GET /api/v1/dashboard/recent-activity
+//
+// All reads are tenant-scoped via the Tenant middleware; the handler
+// pulls the tenant id off the request context. KPI + suggestion queries
+// are intentionally conservative — they read tables that exist today
+// (assets, asset_endpoints, asset_events, scans, credential_sources,
+// credential_mappings). Findings counts land in P3; until then the
+// Critical Findings KPI falls back to 0 when the findings table is
+// empty, which matches the post-migration-017 state.
+type DashboardHandler struct {
+	db *sql.DB
+}
 
-func (h *DashboardHandler) Get(w http.ResponseWriter, _ *http.Request) {
-	writeError(w, http.StatusNotImplemented, "dashboard summary lands in P5")
+// NewDashboardHandler accepts either a *store.PostgresStore or nil. nil
+// keeps the P1 call-site (`handler.NewDashboardHandler(nil)`) compiling
+// until the main wiring is updated in the same PR.
+func NewDashboardHandler(s any) *DashboardHandler {
+	h := &DashboardHandler{}
+	if ps, ok := s.(*store.PostgresStore); ok && ps != nil {
+		h.db = ps.DB()
+	}
+	return h
+}
+
+// Get is retained for backwards compatibility with any router still
+// pointed at the old summary route — it just redirects callers at the
+// KPI endpoint.
+func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
+	h.GetKPIs(w, r)
+}
+
+// ---- KPIs ----------------------------------------------------------
+
+type kpiDeltas struct {
+	AssetsNewThisWeek  int `json:"assets_new_this_week"`
+	FindingsNewToday   int `json:"findings_new_today"`
+	CoverageDeltaWeek  int `json:"coverage_delta_week"` // percentage points, 0 until we track history
+	UnresolvedNewWeek  int `json:"unresolved_new_week"`
+}
+
+type kpiResponse struct {
+	TotalAssets      int       `json:"total_assets"`
+	CoveragePercent  int       `json:"coverage_percent"`
+	CriticalFindings int       `json:"critical_findings"`
+	NewThisWeek      int       `json:"new_this_week"`
+	Deltas           kpiDeltas `json:"deltas"`
+}
+
+// GET /api/v1/dashboard/kpis
+func (h *DashboardHandler) GetKPIs(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		writeError(w, http.StatusServiceUnavailable, "dashboard store not initialised")
+		return
+	}
+	ctx := r.Context()
+	tenantID := store.TenantID(ctx)
+	if tenantID == "" {
+		writeError(w, http.StatusUnauthorized, "tenant not resolved")
+		return
+	}
+
+	resp := kpiResponse{}
+
+	// Total assets (hosts) for the tenant.
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM assets WHERE tenant_id = $1`, tenantID,
+	).Scan(&resp.TotalAssets); err != nil {
+		slog.Error("dashboard: total assets", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to compute KPIs")
+		return
+	}
+
+	// Endpoints + covered endpoints (has a scan_definition pointing at the
+	// endpoint directly, or at a collection the endpoint belongs to —
+	// collection membership resolution lands in P4, so today we only count
+	// the direct scope_kind='asset_endpoint' case). Good enough to show
+	// motion; will tighten in P4.
+	var endpoints, covered int
+	_ = h.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM asset_endpoints ae
+		   JOIN assets a ON a.id = ae.asset_id
+		  WHERE a.tenant_id = $1`, tenantID,
+	).Scan(&endpoints)
+	_ = h.db.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT ae.id)
+		   FROM asset_endpoints ae
+		   JOIN assets a ON a.id = ae.asset_id
+		   JOIN scan_definitions sd
+		     ON sd.scope_kind = 'asset_endpoint' AND sd.asset_endpoint_id = ae.id
+		  WHERE a.tenant_id = $1 AND sd.enabled = TRUE`, tenantID,
+	).Scan(&covered)
+	if endpoints > 0 {
+		resp.CoveragePercent = (covered * 100) / endpoints
+	}
+
+	// Critical findings. Falls back to 0 if findings is empty (pre-P3).
+	_ = h.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM findings
+		  WHERE tenant_id = $1 AND status = 'open' AND severity = 'critical'`,
+		tenantID,
+	).Scan(&resp.CriticalFindings)
+
+	// New this week = assets first_seen within 7d.
+	weekAgo := time.Now().Add(-7 * 24 * time.Hour)
+	_ = h.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM assets WHERE tenant_id = $1 AND first_seen >= $2`,
+		tenantID, weekAgo,
+	).Scan(&resp.NewThisWeek)
+	resp.Deltas.AssetsNewThisWeek = resp.NewThisWeek
+
+	// Findings created today (for the Critical card's "+N today" delta).
+	todayStart := time.Now().Truncate(24 * time.Hour)
+	_ = h.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM findings
+		  WHERE tenant_id = $1 AND status = 'open' AND first_seen >= $2`,
+		tenantID, todayStart,
+	).Scan(&resp.Deltas.FindingsNewToday)
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ---- Suggested Actions --------------------------------------------
+
+type suggestedAction struct {
+	Kind                     string `json:"kind"`
+	Title                    string `json:"title"`
+	Count                    int    `json:"count"`
+	CollectionIDOrPredicate  string `json:"collection_id_or_inline_predicate"`
+	PrimaryCTA               string `json:"primary_cta"`
+	SecondaryCTA             string `json:"secondary_cta"`
+}
+
+// GET /api/v1/dashboard/suggested-actions
+//
+// Computed groupings of coverage gaps, ordered highest-count first. Each
+// action references a filter the UI can re-run on the Assets page. The
+// predicate is serialised as a short querystring the frontend can drop
+// straight onto `/assets?…` — once collections-backed predicates land in
+// P4 we'll switch to `collection_id` where one exists.
+func (h *DashboardHandler) GetSuggestedActions(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		writeError(w, http.StatusServiceUnavailable, "dashboard store not initialised")
+		return
+	}
+	ctx := r.Context()
+	tenantID := store.TenantID(ctx)
+	if tenantID == "" {
+		writeError(w, http.StatusUnauthorized, "tenant not resolved")
+		return
+	}
+
+	actions := []suggestedAction{}
+
+	// 1) DB-like endpoints with no credential mapping (via any collection).
+	var missingCreds int
+	_ = h.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM asset_endpoints ae
+		  JOIN assets a ON a.id = ae.asset_id
+		 WHERE a.tenant_id = $1
+		   AND ae.service IN ('postgres','postgresql','mysql','mssql','mongodb','redis','oracle')
+		   AND NOT EXISTS (
+		     SELECT 1 FROM credential_mappings cm
+		       JOIN collections c ON c.id = cm.collection_id
+		      WHERE cm.tenant_id = $1
+		   )`, tenantID,
+	).Scan(&missingCreds)
+	if missingCreds > 0 {
+		actions = append(actions, suggestedAction{
+			Kind:                    "endpoints_missing_credentials",
+			Title:                   pluralize(missingCreds, "DB endpoint") + " missing credentials",
+			Count:                   missingCreds,
+			CollectionIDOrPredicate: "service_in=postgres,postgresql,mysql,mssql,mongodb,redis,oracle",
+			PrimaryCTA:              "map-credentials",
+			SecondaryCTA:            "create-scan",
+		})
+	}
+
+	// 2) Assets with no scan history at all.
+	var noScans int
+	_ = h.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM assets a
+		 WHERE a.tenant_id = $1
+		   AND NOT EXISTS (
+		     SELECT 1 FROM scans s
+		      WHERE s.tenant_id = $1
+		        AND s.asset_endpoint_id IN (
+		          SELECT id FROM asset_endpoints WHERE asset_id = a.id
+		        )
+		   )`, tenantID,
+	).Scan(&noScans)
+	if noScans > 0 {
+		actions = append(actions, suggestedAction{
+			Kind:                    "assets_without_scans",
+			Title:                   pluralize(noScans, "asset") + " without scans",
+			Count:                   noScans,
+			CollectionIDOrPredicate: "has_scans=false",
+			PrimaryCTA:              "create-scan",
+			SecondaryCTA:            "view",
+		})
+	}
+
+	// 3) Recent scan failures (7d).
+	weekAgo := time.Now().Add(-7 * 24 * time.Hour)
+	var failed int
+	_ = h.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM scans
+		 WHERE tenant_id = $1 AND status = 'failed' AND created_at >= $2`,
+		tenantID, weekAgo,
+	).Scan(&failed)
+	if failed > 0 {
+		actions = append(actions, suggestedAction{
+			Kind:                    "recent_scan_failures",
+			Title:                   pluralize(failed, "scan") + " failed this week",
+			Count:                   failed,
+			CollectionIDOrPredicate: "status=failed&since=7d",
+			PrimaryCTA:              "review-failures",
+			SecondaryCTA:            "retry",
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"items": actions})
+}
+
+// ---- Recent Activity ----------------------------------------------
+
+type recentActivityItem struct {
+	ID          string    `json:"id"`
+	EventType   string    `json:"event_type"`
+	Severity    string    `json:"severity,omitempty"`
+	AssetID     string    `json:"asset_endpoint_id"`
+	Hostname    string    `json:"hostname,omitempty"`
+	PrimaryIP   string    `json:"primary_ip,omitempty"`
+	Port        *int      `json:"port,omitempty"`
+	Service     string    `json:"service,omitempty"`
+	OccurredAt  time.Time `json:"occurred_at"`
+}
+
+// GET /api/v1/dashboard/recent-activity — last 10 asset_events joined
+// to asset_endpoints + assets for display metadata. The join is
+// tolerant: rows whose referenced endpoint has been deleted still
+// surface with empty metadata fields.
+func (h *DashboardHandler) GetRecentActivity(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		writeError(w, http.StatusServiceUnavailable, "dashboard store not initialised")
+		return
+	}
+	ctx := r.Context()
+	tenantID := store.TenantID(ctx)
+	if tenantID == "" {
+		writeError(w, http.StatusUnauthorized, "tenant not resolved")
+		return
+	}
+
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT e.id, e.event_type, COALESCE(e.severity, ''), e.asset_id, e.occurred_at,
+		       COALESCE(a.hostname, ''), COALESCE(host(a.primary_ip), ''),
+		       ae.port, COALESCE(ae.service, '')
+		  FROM asset_events e
+		  LEFT JOIN asset_endpoints ae ON ae.id = e.asset_id
+		  LEFT JOIN assets a ON a.id = ae.asset_id
+		 WHERE e.tenant_id = $1
+		 ORDER BY e.occurred_at DESC
+		 LIMIT 10`, tenantID)
+	if err != nil {
+		slog.Error("dashboard: recent activity", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load activity")
+		return
+	}
+	defer rows.Close()
+
+	out := []recentActivityItem{}
+	for rows.Next() {
+		var it recentActivityItem
+		var port sql.NullInt32
+		if err := rows.Scan(&it.ID, &it.EventType, &it.Severity, &it.AssetID, &it.OccurredAt,
+			&it.Hostname, &it.PrimaryIP, &port, &it.Service); err != nil {
+			slog.Error("dashboard: scan activity row", "error", err)
+			continue
+		}
+		if port.Valid {
+			p := int(port.Int32)
+			it.Port = &p
+		}
+		out = append(out, it)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// ---- helpers -------------------------------------------------------
+
+func pluralize(n int, singular string) string {
+	if n == 1 {
+		return "1 " + singular
+	}
+	return itoa(n) + " " + singular + "s"
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }

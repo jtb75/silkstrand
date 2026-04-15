@@ -91,7 +91,7 @@ func run() error {
 	findingsH := handler.NewFindingsHandler(nil)
 	scanDefsH := handler.NewScanDefinitionsHandler(nil)
 	credMapH := handler.NewCredentialMappingsHandler(pgStore)
-	dashH := handler.NewDashboardHandler(nil)
+	dashH := handler.NewDashboardHandler(pgStore)
 	rulesH := handler.NewCorrelationRulesHandler(pgStore)
 
 	mux := http.NewServeMux()
@@ -211,8 +211,11 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/credential-mappings/{id}", credMapH.Get)
 	apiMux.HandleFunc("DELETE /api/v1/credential-mappings/{id}", credMapH.Delete)
 
-	// Dashboard — 501 (P5).
+	// Dashboard (P5-a). KPIs, Suggested Actions, Recent Activity.
 	apiMux.HandleFunc("GET /api/v1/dashboard", dashH.Get)
+	apiMux.HandleFunc("GET /api/v1/dashboard/kpis", dashH.GetKPIs)
+	apiMux.HandleFunc("GET /api/v1/dashboard/suggested-actions", dashH.GetSuggestedActions)
+	apiMux.HandleFunc("GET /api/v1/dashboard/recent-activity", dashH.GetRecentActivity)
 
 	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))
 	mux.Handle("/api/", authedAPI)
