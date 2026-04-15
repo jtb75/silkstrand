@@ -353,6 +353,97 @@ export const createOneShotScan = (req: CreateOneShotScanRequest) =>
     body: JSON.stringify(req),
   });
 
+// ─── Collections (ADR 006 D5) ────────────────────────────────────────────────
+// Collections replace Asset Sets. Until P4-backend lands and/or the
+// /api/v1/asset-sets alias is deprecated, these client methods target the
+// new /api/v1/collections surface. See docs/plans/asset-first-execution.md.
+import type {
+  Collection,
+  CollectionPreview,
+  CollectionScope,
+  AssetEndpoint,
+  WidgetKind,
+} from './types';
+
+export interface UpsertCollectionRequest {
+  name: string;
+  description?: string;
+  scope: CollectionScope;
+  predicate: Record<string, unknown>;
+  is_dashboard_widget?: boolean;
+  widget_kind?: WidgetKind;
+  widget_title?: string;
+}
+
+export const listCollections = (params?: { widget?: boolean; scope?: CollectionScope }) => {
+  const u = new URLSearchParams();
+  if (params?.widget) u.set('widget', 'true');
+  if (params?.scope) u.set('scope', params.scope);
+  const qs = u.toString();
+  return request<Collection[]>(`/api/v1/collections${qs ? `?${qs}` : ''}`);
+};
+
+export const getCollection = (id: string) =>
+  request<Collection>(`/api/v1/collections/${id}`);
+
+export const createCollection = (req: UpsertCollectionRequest) =>
+  request<Collection>('/api/v1/collections', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+
+export const updateCollection = (id: string, req: UpsertCollectionRequest) =>
+  request<Collection>(`/api/v1/collections/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+
+export const deleteCollection = (id: string) =>
+  request<void>(`/api/v1/collections/${id}`, { method: 'DELETE' });
+
+export const previewCollection = (id: string) =>
+  request<CollectionPreview>(`/api/v1/collections/${id}/preview`);
+
+export const previewAdhocCollection = (
+  scope: CollectionScope,
+  predicate: Record<string, unknown>,
+) =>
+  request<CollectionPreview>('/api/v1/collections/preview', {
+    method: 'POST',
+    body: JSON.stringify({ scope, predicate }),
+  });
+
+export const getCollectionMembers = (id: string, params?: { page?: number; page_size?: number }) => {
+  const u = new URLSearchParams();
+  if (params?.page) u.set('page', String(params.page));
+  if (params?.page_size) u.set('page_size', String(params.page_size));
+  const qs = u.toString();
+  return request<{ items: Array<Record<string, unknown>>; total: number }>(
+    `/api/v1/collections/${id}/members${qs ? `?${qs}` : ''}`,
+  );
+};
+
+// Asset endpoint fetch — drives the Asset drawer's expand-on-click row.
+export const getAssetEndpoint = (endpointId: string) =>
+  request<AssetEndpoint & {
+    findings?: Array<{ id: string; title: string; severity: string; source: string; status: string }>;
+    last_scan_at?: string;
+    next_scan_at?: string;
+    last_error?: string;
+  }>(`/api/v1/asset-endpoints/${endpointId}`);
+
+// Bulk credential mapping — applied to a selection of endpoints.
+export const bulkMapCredentials = (req: {
+  endpoint_ids: string[];
+  credential_source_id: string;
+}) =>
+  request<{ mapped: number }>('/api/v1/credential-mappings/bulk', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+
+// ─── end Collections ─────────────────────────────────────────────────────────
+
 // Agents
 export const listAgents = () => request<Agent[]>('/api/v1/agents');
 export const createAgent = (name: string, version?: string) =>
