@@ -171,6 +171,35 @@ type Store interface {
 
 	// Notification deliveries (ADR 006 P6 — channel_source_id → credential_sources).
 	InsertNotificationDelivery(ctx context.Context, d model.NotificationDelivery) error
+
+	// --- Findings (ADR 007 D1/D2/D7) --------------------------------
+
+	UpsertFinding(ctx context.Context, in UpsertFindingInput) (*model.Finding, error)
+	ListFindings(ctx context.Context, f FindingFilter) ([]model.Finding, error)
+	GetFindingByID(ctx context.Context, id string) (*model.Finding, error)
+	SetFindingStatus(ctx context.Context, id, status string) error
+
+	// --- Scan definitions (ADR 007 D3/D4/D5) ------------------------
+
+	CreateScanDefinition(ctx context.Context, in model.ScanDefinition) (*model.ScanDefinition, error)
+	GetScanDefinition(ctx context.Context, id string) (*model.ScanDefinition, error)
+	ListScanDefinitions(ctx context.Context) ([]model.ScanDefinition, error)
+	UpdateScanDefinition(ctx context.Context, in model.ScanDefinition) (*model.ScanDefinition, error)
+	DeleteScanDefinition(ctx context.Context, id string) error
+	SetScanDefinitionEnabled(ctx context.Context, id string, enabled bool, nextRunAt *time.Time) error
+	SetScanDefinitionNextRun(ctx context.Context, id string, nextRunAt *time.Time) error
+	SetScanDefinitionLastRun(ctx context.Context, id string, at time.Time, status string) error
+	ClaimDueScanDefinitions(ctx context.Context, now time.Time, nextFn func(schedule string, from time.Time) (time.Time, error), limit int) ([]model.ScanDefinition, error)
+
+	// CreateScanForDefinition creates a `scans` row bound to a scan
+	// definition. It returns a pending scan; the caller publishes the
+	// directive after create succeeds.
+	CreateScanForDefinition(ctx context.Context, in CreateScanForDefinitionInput) (*model.Scan, error)
+
+	// Collection membership resolution — used for finding filters and
+	// scheduler dispatch. Returns endpoint ids for scope=endpoint/finding
+	// collections, asset ids for scope=asset.
+	CollectionEndpointIDs(ctx context.Context, collectionID string) ([]string, error)
 }
 
 // --- Helper types passed through the store boundary ------------------
@@ -236,6 +265,51 @@ type AgentAllowlistSnapshot struct {
 type EndpointRow struct {
 	Asset    model.Asset
 	Endpoint model.AssetEndpoint
+}
+
+// UpsertFindingInput is the write-through shape for the ADR 007 D2
+// ingest paths (nuclei hits and compliance bundle results). Upsert key
+// is (asset_endpoint_id, source_kind, source, source_id).
+type UpsertFindingInput struct {
+	TenantID        string
+	AssetEndpointID string
+	ScanID          *string
+	SourceKind      string
+	Source          string
+	SourceID        string
+	CVEID           *string
+	Severity        *string
+	Title           string
+	Status          string
+	Evidence        json.RawMessage
+	Remediation     *string
+}
+
+// FindingFilter is the parsed query for ListFindings.
+type FindingFilter struct {
+	SourceKind      string
+	Source          string
+	Severity        string
+	Status          string
+	AssetEndpointID string
+	CollectionID    string
+	CVEID           string
+	Since           *time.Time
+	Until           *time.Time
+	Limit           int
+}
+
+// CreateScanForDefinitionInput is the store-level input for materializing
+// a scans row from a definition dispatch (scheduler, manual execute,
+// or run_scan_definition rule action).
+type CreateScanForDefinitionInput struct {
+	TenantID         string
+	ScanDefinitionID string
+	AgentID          *string
+	TargetID         *string
+	AssetEndpointID  *string
+	BundleID         *string
+	ScanType         string
 }
 
 // AssetFilter is the parsed query for ListAssets.

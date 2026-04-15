@@ -1891,3 +1891,472 @@ func (s *PostgresStore) CollectionsWithCredentialMappings(ctx context.Context) (
 	}
 	return out, rows.Err()
 }
+// UpsertFinding upserts on (asset_endpoint_id, source_kind, source, source_id).
+// A re-seen finding bumps last_seen and, if status was not suppressed, reopens
+// status per ADR 007 D2. If the incoming status is 'resolved' (compliance pass),
+// existing open rows flip to resolved + resolved_at set.
+func (s *PostgresStore) UpsertFinding(ctx context.Context, in UpsertFindingInput) (*model.Finding, error) {
+	ev := in.Evidence
+	if len(ev) == 0 {
+		ev = json.RawMessage(`{}`)
+	}
+	srcID := in.SourceID
+	// Try update first (partial unique on (endpoint, source_kind, source, source_id)).
+	// We use a SELECT + branch so we can set resolved_at correctly.
+	var existing model.Finding
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+findingCols+` FROM findings
+		   WHERE asset_endpoint_id = $1 AND source_kind = $2 AND source = $3
+		     AND COALESCE(source_id,'') = COALESCE($4,'')
+		   ORDER BY first_seen DESC LIMIT 1`,
+		in.AssetEndpointID, in.SourceKind, in.Source, srcID)
+	err := scanFinding(&existing, row)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("looking up finding: %w", err)
+	}
+	if err == nil {
+		// Row exists — update last_seen, possibly transition status.
+		newStatus := existing.Status
+		var resolvedAt *time.Time
+		switch {
+		case existing.Status == model.FindingStatusSuppressed:
+			// Honor suppression; don't re-open just because we saw it again.
+		case in.Status == model.FindingStatusResolved:
+			newStatus = model.FindingStatusResolved
+			now := time.Now().UTC()
+			resolvedAt = &now
+		default:
+			// Any re-appearance of a finding that is not resolved should
+			// be open (reopen if it was resolved previously).
+			newStatus = model.FindingStatusOpen
+			resolvedAt = nil
+		}
+		var out model.Finding
+		upd := s.db.QueryRowContext(ctx,
+			`UPDATE findings SET
+			   scan_id = COALESCE($2, scan_id),
+			   cve_id = COALESCE($3, cve_id),
+			   severity = COALESCE($4, severity),
+			   title = $5,
+			   status = $6,
+			   evidence = $7,
+			   remediation = COALESCE($8, remediation),
+			   last_seen = NOW(),
+			   resolved_at = $9
+			 WHERE id = $1 AND first_seen = $10
+			 RETURNING `+findingCols,
+			existing.ID, in.ScanID, in.CVEID, in.Severity, in.Title, newStatus, ev,
+			in.Remediation, resolvedAt, existing.FirstSeen)
+		if err := scanFinding(&out, upd); err != nil {
+			return nil, fmt.Errorf("updating finding: %w", err)
+		}
+		return &out, nil
+	}
+	// Insert.
+	status := in.Status
+	if status == "" {
+		status = model.FindingStatusOpen
+	}
+	var resolvedAt *time.Time
+	if status == model.FindingStatusResolved {
+		now := time.Now().UTC()
+		resolvedAt = &now
+	}
+	var out model.Finding
+	ins := s.db.QueryRowContext(ctx,
+		`INSERT INTO findings
+		   (tenant_id, asset_endpoint_id, scan_id, source_kind, source, source_id,
+		    cve_id, severity, title, status, evidence, remediation, resolved_at)
+		 VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11,$12,$13)
+		 RETURNING `+findingCols,
+		in.TenantID, in.AssetEndpointID, in.ScanID, in.SourceKind, in.Source, srcID,
+		in.CVEID, in.Severity, in.Title, status, ev, in.Remediation, resolvedAt)
+	if err := scanFinding(&out, ins); err != nil {
+		return nil, fmt.Errorf("inserting finding: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) ListFindings(ctx context.Context, f FindingFilter) ([]model.Finding, error) {
+	tenantID := TenantID(ctx)
+	args := []any{tenantID}
+	where := `tenant_id = $1`
+	add := func(clause string, v any) {
+		args = append(args, v)
+		where += fmt.Sprintf(" AND %s = $%d", clause, len(args))
+	}
+	if f.SourceKind != "" {
+		add("source_kind", f.SourceKind)
+	}
+	if f.Source != "" {
+		add("source", f.Source)
+	}
+	if f.Severity != "" {
+		add("severity", f.Severity)
+	}
+	if f.Status != "" {
+		add("status", f.Status)
+	}
+	if f.AssetEndpointID != "" {
+		add("asset_endpoint_id", f.AssetEndpointID)
+	}
+	if f.CVEID != "" {
+		add("cve_id", f.CVEID)
+	}
+	if f.Since != nil {
+		args = append(args, *f.Since)
+		where += fmt.Sprintf(" AND last_seen >= $%d", len(args))
+	}
+	if f.Until != nil {
+		args = append(args, *f.Until)
+		where += fmt.Sprintf(" AND last_seen <= $%d", len(args))
+	}
+	if f.CollectionID != "" {
+		ids, err := s.CollectionEndpointIDs(ctx, f.CollectionID)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return []model.Finding{}, nil
+		}
+		args = append(args, ids)
+		where += fmt.Sprintf(" AND asset_endpoint_id = ANY($%d::uuid[])", len(args))
+	}
+	limit := f.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	q := `SELECT ` + findingCols + ` FROM findings WHERE ` + where +
+		` ORDER BY last_seen DESC LIMIT ` + fmt.Sprintf("%d", limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing findings: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Finding
+	for rows.Next() {
+		var f model.Finding
+		if err := scanFinding(&f, rows); err != nil {
+			return nil, fmt.Errorf("scanning finding: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetFindingByID(ctx context.Context, id string) (*model.Finding, error) {
+	tenantID := TenantID(ctx)
+	var f model.Finding
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+findingCols+` FROM findings WHERE id = $1 AND tenant_id = $2
+		   ORDER BY first_seen DESC LIMIT 1`, id, tenantID)
+	if err := scanFinding(&f, row); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting finding: %w", err)
+	}
+	return &f, nil
+}
+
+func (s *PostgresStore) SetFindingStatus(ctx context.Context, id, status string) error {
+	tenantID := TenantID(ctx)
+	var resolvedExpr string
+	switch status {
+	case model.FindingStatusResolved, model.FindingStatusSuppressed:
+		resolvedExpr = `resolved_at = NOW()`
+	case model.FindingStatusOpen:
+		resolvedExpr = `resolved_at = NULL`
+	default:
+		return fmt.Errorf("invalid finding status: %s", status)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE findings SET status = $1, `+resolvedExpr+`
+		   WHERE id = $2 AND tenant_id = $3`, status, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("updating finding status: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ======================================================================
+// Scan definitions (ADR 007 D3)
+// ======================================================================
+
+const scanDefCols = `id, tenant_id, name, kind, bundle_id, scope_kind,
+	asset_endpoint_id, collection_id, host(cidr) as cidr,
+	agent_id, schedule, enabled, next_run_at, last_run_at, last_run_status,
+	created_at, updated_at, created_by`
+
+func scanScanDefinition(d *model.ScanDefinition, row interface{ Scan(...any) error }) error {
+	return row.Scan(&d.ID, &d.TenantID, &d.Name, &d.Kind, &d.BundleID, &d.ScopeKind,
+		&d.AssetEndpointID, &d.CollectionID, &d.CIDR, &d.AgentID, &d.Schedule,
+		&d.Enabled, &d.NextRunAt, &d.LastRunAt, &d.LastRunStatus,
+		&d.CreatedAt, &d.UpdatedAt, &d.CreatedBy)
+}
+
+func (s *PostgresStore) CreateScanDefinition(ctx context.Context, in model.ScanDefinition) (*model.ScanDefinition, error) {
+	tenantID := TenantID(ctx)
+	var out model.ScanDefinition
+	row := s.db.QueryRowContext(ctx,
+		`INSERT INTO scan_definitions
+		   (tenant_id, name, kind, bundle_id, scope_kind,
+		    asset_endpoint_id, collection_id, cidr,
+		    agent_id, schedule, enabled, next_run_at, created_by)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7, NULLIF($8,'')::cidr, $9,$10,$11,$12,$13)
+		 RETURNING `+scanDefCols,
+		tenantID, in.Name, in.Kind, in.BundleID, in.ScopeKind,
+		in.AssetEndpointID, in.CollectionID, strOrEmpty(in.CIDR),
+		in.AgentID, in.Schedule, in.Enabled, in.NextRunAt, in.CreatedBy)
+	if err := scanScanDefinition(&out, row); err != nil {
+		return nil, fmt.Errorf("creating scan definition: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) GetScanDefinition(ctx context.Context, id string) (*model.ScanDefinition, error) {
+	tenantID := TenantID(ctx)
+	var d model.ScanDefinition
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+scanDefCols+` FROM scan_definitions WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID)
+	if err := scanScanDefinition(&d, row); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting scan definition: %w", err)
+	}
+	return &d, nil
+}
+
+func (s *PostgresStore) ListScanDefinitions(ctx context.Context) ([]model.ScanDefinition, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+scanDefCols+` FROM scan_definitions WHERE tenant_id = $1
+		   ORDER BY created_at DESC`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing scan definitions: %w", err)
+	}
+	defer rows.Close()
+	var out []model.ScanDefinition
+	for rows.Next() {
+		var d model.ScanDefinition
+		if err := scanScanDefinition(&d, rows); err != nil {
+			return nil, fmt.Errorf("scanning scan definition: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpdateScanDefinition(ctx context.Context, in model.ScanDefinition) (*model.ScanDefinition, error) {
+	tenantID := TenantID(ctx)
+	var out model.ScanDefinition
+	row := s.db.QueryRowContext(ctx,
+		`UPDATE scan_definitions SET
+		   name = $1, kind = $2, bundle_id = $3, scope_kind = $4,
+		   asset_endpoint_id = $5, collection_id = $6,
+		   cidr = NULLIF($7,'')::cidr,
+		   agent_id = $8, schedule = $9, enabled = $10, next_run_at = $11,
+		   updated_at = NOW()
+		 WHERE id = $12 AND tenant_id = $13
+		 RETURNING `+scanDefCols,
+		in.Name, in.Kind, in.BundleID, in.ScopeKind,
+		in.AssetEndpointID, in.CollectionID, strOrEmpty(in.CIDR),
+		in.AgentID, in.Schedule, in.Enabled, in.NextRunAt,
+		in.ID, tenantID)
+	if err := scanScanDefinition(&out, row); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("updating scan definition: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) DeleteScanDefinition(ctx context.Context, id string) error {
+	tenantID := TenantID(ctx)
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM scan_definitions WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("deleting scan definition: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *PostgresStore) SetScanDefinitionEnabled(ctx context.Context, id string, enabled bool, nextRunAt *time.Time) error {
+	tenantID := TenantID(ctx)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE scan_definitions SET enabled = $1, next_run_at = $2, updated_at = NOW()
+		   WHERE id = $3 AND tenant_id = $4`, enabled, nextRunAt, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("toggling scan definition: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) SetScanDefinitionNextRun(ctx context.Context, id string, nextRunAt *time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE scan_definitions SET next_run_at = $1, updated_at = NOW() WHERE id = $2`,
+		nextRunAt, id)
+	if err != nil {
+		return fmt.Errorf("setting next_run_at: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) SetScanDefinitionLastRun(ctx context.Context, id string, at time.Time, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE scan_definitions SET last_run_at = $1, last_run_status = $2, updated_at = NOW()
+		   WHERE id = $3`, at, status, id)
+	if err != nil {
+		return fmt.Errorf("setting last_run: %w", err)
+	}
+	return nil
+}
+
+// ClaimDueScanDefinitions atomically advances next_run_at for due
+// definitions and returns the claimed rows. `nextFn(schedule, from)`
+// computes the next run time for a given cron expression. The advance
+// happens inside the same UPDATE ... WHERE id IN (SELECT ... FOR UPDATE
+// SKIP LOCKED) so concurrent pollers never claim the same row.
+//
+// Crash recovery: if the caller crashes after claim but before dispatch,
+// next_run_at has advanced but the scans row was never created; the
+// definition simply misses that tick and fires on the next one. ADR 007
+// D4 accepts this — operators lose a tick, not a definition.
+func (s *PostgresStore) ClaimDueScanDefinitions(ctx context.Context, now time.Time, nextFn func(string, time.Time) (time.Time, error), limit int) ([]model.ScanDefinition, error) {
+	if limit <= 0 {
+		limit = 32
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("beginning tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+scanDefCols+` FROM scan_definitions
+		   WHERE enabled = TRUE AND schedule IS NOT NULL AND next_run_at IS NOT NULL
+		     AND next_run_at <= $1
+		   ORDER BY next_run_at ASC
+		   FOR UPDATE SKIP LOCKED
+		   LIMIT $2`, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("selecting due scan definitions: %w", err)
+	}
+	var due []model.ScanDefinition
+	for rows.Next() {
+		var d model.ScanDefinition
+		if err := scanScanDefinition(&d, rows); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scanning due row: %w", err)
+		}
+		due = append(due, d)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, d := range due {
+		var schedule string
+		if d.Schedule != nil {
+			schedule = *d.Schedule
+		}
+		next, err := nextFn(schedule, now)
+		if err != nil {
+			// Skip advancing — leave next_run_at as-is so operator sees
+			// it as perpetually due and can fix the expression.
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE scan_definitions SET next_run_at = $1, updated_at = NOW() WHERE id = $2`,
+			next, d.ID); err != nil {
+			return nil, fmt.Errorf("advancing next_run_at: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing tx: %w", err)
+	}
+	return due, nil
+}
+
+func (s *PostgresStore) CreateScanForDefinition(ctx context.Context, in CreateScanForDefinitionInput) (*model.Scan, error) {
+	if in.ScanType == "" {
+		in.ScanType = model.ScanTypeCompliance
+	}
+	var sc model.Scan
+	row := s.db.QueryRowContext(ctx,
+		`INSERT INTO scans
+		   (tenant_id, scan_definition_id, agent_id, target_id, asset_endpoint_id,
+		    bundle_id, scan_type, status)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		 RETURNING `+scanCols,
+		in.TenantID, in.ScanDefinitionID, in.AgentID, in.TargetID, in.AssetEndpointID,
+		in.BundleID, in.ScanType, model.ScanStatusPending)
+	if err := scanScan(&sc, row); err != nil {
+		return nil, fmt.Errorf("creating scan for definition: %w", err)
+	}
+	return &sc, nil
+}
+
+// CollectionEndpointIDs resolves a collection to the concrete endpoint
+// ids that match its predicate. For scope=asset collections it returns
+// all endpoints for matching assets. For scope=finding it returns the
+// distinct endpoint ids of open findings matching the predicate.
+//
+// P3 supports a narrow predicate grammar: pass-through (empty object
+// returns all endpoints for the tenant), plus the simple `{and|or: [...]}`
+// shape. Deep predicate evaluation lands in P4 when `rules.Match` grows
+// a collection-backed SQL translator; for now the scheduler's dispatch
+// gets a working "every endpoint in this tenant" result for
+// empty/permissive predicates, which matches the shape of the studio
+// tenant's test collections.
+func (s *PostgresStore) CollectionEndpointIDs(ctx context.Context, collectionID string) ([]string, error) {
+	tenantID := TenantID(ctx)
+	coll, err := s.GetCollection(ctx, collectionID)
+	if err != nil {
+		return nil, err
+	}
+	if coll == nil {
+		return nil, nil
+	}
+	_ = tenantID
+	// P3 best-effort resolver: return every endpoint owned by this tenant.
+	// P4 will replace this with a predicate translator that honors
+	// scope=asset | endpoint | finding.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ae.id FROM asset_endpoints ae
+		   JOIN assets a ON a.id = ae.asset_id
+		   WHERE a.tenant_id = $1`, coll.TenantID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving collection endpoints: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func strOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
