@@ -84,14 +84,19 @@ for customer environments. A future `target_type: docker_host` that
 wants container-level enrichment (labels, image tags, compose project)
 will need its own ADR covering the security model — out of scope here.
 
-### D7. Allowlist lives in a host file, bind-mounted RO
+### D7. Allowlist lives in a per-agent host file, bind-mounted RO
 
-Installer writes `/etc/silkstrand/docker-agent-<agent-id>/scan-allowlist.yaml`
-(or Docker-for-Mac equivalent under `~/.silkstrand/…`) and bind-mounts
-it into the container at `/etc/silkstrand/scan-allowlist.yaml:ro`.
-Rationale: lets the user edit the file in place and restart the
-container to refresh, just like the binary-mode workflow. Avoids
-baking the allowlist into the image or a named volume.
+In-container path stays `/etc/silkstrand/scan-allowlist.yaml` — the
+agent code is unaware it's containerized. Host-side path is
+namespaced by agent id: `/etc/silkstrand/agents/<agent-id>/scan-allowlist.yaml`.
+Bind-mount `…/<agent-id>/scan-allowlist.yaml:/etc/silkstrand/scan-allowlist.yaml:ro`.
+
+Rationale: lets multiple docker agents coexist on the same host
+without colliding, leaves binary-mode's canonical path free, and
+supports future horizontal scale-out of agents per host. Container
+name (`silkstrand-agent-<short-agent-id>`) and runtimes volume
+(`silkstrand-agent-<short-agent-id>-runtimes`) follow the same
+namespacing convention.
 
 ### D8. Service-manager parity
 
@@ -137,28 +142,26 @@ the idiomatic equivalent. No new systemd/launchd unit is written when
    renders the corresponding `install.sh --mode=docker ...` one-liner
    with a pre-checked `--docker-scan-all-bridges` box.
 
-## Open questions
+## Resolved questions
 
-- **Q1. Do we need a `--docker-host-network` escape hatch?** Linux-only.
-  Would put the agent on the host's network stack so it can reach both
-  Docker bridges *and* the host LAN from a single agent, no
-  multi-homing. Likely yes as a flag, default off.
-- **Q2. Allowlist UX for two agents on one host.** If the user runs
-  both binary-mode (scanning LAN) and docker-mode (scanning bridges)
-  on the same host, do we collide on the `/etc/silkstrand` path? The
-  per-agent-id directory in D7 handles this on the docker side, but we
-  should document the pattern rather than rely on luck.
-- **Q3. How should upgrades work?** Binary mode's `Upgrade` button
-  tells the agent to self-replace its binary and exit. Docker mode
-  can't do that (image is immutable). Options: (a) Upgrade button
-  sends a signal that causes `docker restart` via a host-side helper
-  (needs socket access — violates D6), (b) Upgrade becomes a no-op for
-  docker agents and the installer re-run path is the upgrade path,
-  (c) a separate `upgrade` sidecar container that uses
-  `SILKSTRAND_INSTALL_TOKEN`-style re-bootstrap. Leaning (b) —
-  simplest, matches how most containerized services upgrade — but
-  needs a UI message so the button doesn't mislead.
-- **Q4. Should we also publish a `docker-compose.yaml` snippet?** Some
-  users will want to manage the agent alongside their other services.
-  Cheap to generate, worth including as an installer subcommand
-  (`install.sh --mode=docker --print-compose`).
+- **Q1. `--docker-host-network` escape hatch — IN.** Linux-only flag,
+  default off. Puts the agent on the host's network stack so one
+  agent can reach both Docker bridges and host LAN without multi-homing.
+  Installer errors helpfully on macOS (Docker Desktop doesn't support
+  host networking).
+- **Q2. Dual-agent path collision — handled by D7.** Per-agent-id
+  host-side directory eliminates the collision; same naming
+  convention extends to container name and runtimes volume so
+  multiple docker agents can coexist per host (supports future
+  horizontal scale-out).
+- **Q3. Upgrade semantics — (a) + (c).** The server marks docker-mode
+  agents as non-self-upgradeable. The Upgrade button renders a
+  message pointing the user at `install.sh --mode=docker --upgrade`,
+  which is the canonical path: installer pulls the newer image,
+  stops the old container, and recreates it with the same flags
+  (agent id + key persist via the named volume). No Docker socket
+  access needed from the agent itself (preserves D6).
+- **Q4. `--print-compose` subcommand — IN.** Emits a ready-to-save
+  `docker-compose.yaml` snippet instead of running `docker run`.
+  Mutually exclusive with the real run path; both share the flag
+  surface and template.
