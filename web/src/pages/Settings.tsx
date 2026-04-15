@@ -2,8 +2,62 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { authApi } from '../api/authClient';
 import { getToken } from '../api/client';
 import { useAuth } from '../auth/useAuth';
+import Team from './Team';
+import Credentials from './Credentials';
+
+// P5-b: Settings is now the single Setup surface (per ui-shape.md §Nav
+// Band 4). Team is folded in as a tab; the old top-level Team entry is
+// gone. Credentials consolidates DB/host auth + Integrations + Vaults.
+// Audit log is a placeholder until ADR 005 / O7.
+
+type Tab = 'profile' | 'team' | 'credentials' | 'audit';
 
 export default function Settings() {
+  const { user, active } = useAuth();
+  const isAdmin = active?.role === 'admin';
+  const [tab, setTab] = useState<Tab>('profile');
+
+  return (
+    <div>
+      <h1>Settings</h1>
+      <p className="muted">Signed in as <strong>{user?.email}</strong>.</p>
+
+      <div className="tab-bar" style={{ display: 'flex', gap: 4, borderBottom: '1px solid #e5e7eb', marginTop: 16 }}>
+        <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>Profile</TabButton>
+        {isAdmin && <TabButton active={tab === 'team'} onClick={() => setTab('team')}>Team</TabButton>}
+        <TabButton active={tab === 'credentials'} onClick={() => setTab('credentials')}>Credentials</TabButton>
+        {isAdmin && <TabButton active={tab === 'audit'} onClick={() => setTab('audit')}>Audit</TabButton>}
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        {tab === 'profile' && <ProfileTab />}
+        {tab === 'team' && isAdmin && <Team />}
+        {tab === 'credentials' && <Credentials />}
+        {tab === 'audit' && isAdmin && <AuditPlaceholder />}
+      </div>
+    </div>
+  );
+}
+
+function TabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '8px 16px',
+        border: 'none',
+        borderBottom: active ? '2px solid #0f766e' : '2px solid transparent',
+        background: 'none',
+        fontWeight: active ? 600 : 400,
+        cursor: 'pointer',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ProfileTab() {
   const { user, refresh } = useAuth();
 
   const [name, setName] = useState(user?.display_name ?? '');
@@ -57,11 +111,8 @@ export default function Settings() {
   }
 
   return (
-    <div>
-      <h1>Settings</h1>
-      <p className="muted">Signed in as <strong>{user?.email}</strong>.</p>
-
-      <section style={{ marginTop: 24, maxWidth: 420 }}>
+    <>
+      <section style={{ maxWidth: 420 }}>
         <h2>Profile</h2>
         <form onSubmit={submitName}>
           <label>Display name
@@ -97,6 +148,18 @@ export default function Settings() {
           </button>
         </form>
       </section>
-    </div>
+    </>
+  );
+}
+
+function AuditPlaceholder() {
+  return (
+    <section>
+      <h2>Audit log</h2>
+      <p className="muted">
+        Audit events will be surfaced here once ADR 005 / O7 ships. Read-only view of
+        credential reads, tenant-admin actions, and scan lifecycle events.
+      </p>
+    </section>
   );
 }

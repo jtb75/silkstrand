@@ -7,7 +7,6 @@ import Dashboard from './pages/Dashboard';
 import Targets from './pages/Targets';
 import Assets from './pages/Assets';
 import CorrelationRules from './pages/CorrelationRules';
-import NotificationChannels from './pages/NotificationChannels';
 import AssetSets from './pages/AssetSets';
 import OneShotScans from './pages/OneShotScans';
 import Agents from './pages/Agents';
@@ -50,7 +49,6 @@ export default function App() {
               <Route path="/team" element={<Team />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/rules" element={<CorrelationRules />} />
-              <Route path="/channels" element={<NotificationChannels />} />
               <Route path="/asset-sets" element={<AssetSets />} />
               <Route path="/one-shot-scans" element={<OneShotScans />} />
             </Route>

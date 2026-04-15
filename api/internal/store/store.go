@@ -75,8 +75,16 @@ type Store interface {
 	CreateCredentialSource(ctx context.Context, tenantID, srcType string, config json.RawMessage) (string, error)
 	GetCredentialSource(ctx context.Context, id string) (*model.CredentialSource, error)
 	GetCredentialSourceByTarget(ctx context.Context, targetID string) (*model.CredentialSource, error)
+	ListCredentialSources(ctx context.Context, tenantID string) ([]model.CredentialSource, error)
 	UpdateCredentialSourceConfig(ctx context.Context, id string, config json.RawMessage) error
 	DeleteCredentialSource(ctx context.Context, id string) error
+
+	// Credential mappings (ADR 006 P6 — collection ↔ credential_source).
+	ListCredentialMappings(ctx context.Context, tenantID string) ([]model.CredentialMapping, error)
+	GetCredentialMapping(ctx context.Context, id string) (*model.CredentialMapping, error)
+	CreateCredentialMapping(ctx context.Context, tenantID, collectionID, credentialSourceID string) (*model.CredentialMapping, error)
+	DeleteCredentialMapping(ctx context.Context, id string) error
+	CountMappingsForSource(ctx context.Context, sourceID string) (int, error)
 	SetTargetCredentialSource(ctx context.Context, targetID, sourceID string) error
 	ClearTargetCredentialSource(ctx context.Context, targetID string) error
 	UpsertStaticCredentialSource(ctx context.Context, tenantID, targetID, credType string, encryptedData []byte) error

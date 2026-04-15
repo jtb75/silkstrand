@@ -90,7 +90,7 @@ func run() error {
 	collectionsH := handler.NewCollectionsHandler(pgStore)
 	findingsH := handler.NewFindingsHandler(nil)
 	scanDefsH := handler.NewScanDefinitionsHandler(nil)
-	credMapH := handler.NewCredentialMappingsHandler(nil)
+	credMapH := handler.NewCredentialMappingsHandler(pgStore)
 	dashH := handler.NewDashboardHandler(nil)
 	rulesH := handler.NewCorrelationRulesHandler(pgStore)
 
@@ -197,9 +197,17 @@ func run() error {
 	apiMux.HandleFunc("POST /api/v1/scan-definitions/{id}/enable", scanDefsH.Enable)
 	apiMux.HandleFunc("POST /api/v1/scan-definitions/{id}/disable", scanDefsH.Disable)
 
-	// Credential mappings — 501 (P5).
+	// Credential sources (ADR 004 C0 + ADR 006 P6 consolidated surface)
+	apiMux.HandleFunc("GET /api/v1/credential-sources", credsH.ListSources)
+	apiMux.HandleFunc("POST /api/v1/credential-sources", credsH.CreateSource)
+	apiMux.HandleFunc("GET /api/v1/credential-sources/{id}", credsH.GetSource)
+	apiMux.HandleFunc("PUT /api/v1/credential-sources/{id}", credsH.UpdateSource)
+	apiMux.HandleFunc("DELETE /api/v1/credential-sources/{id}", credsH.DeleteSource)
+
+	// Credential mappings (ADR 006 P6).
 	apiMux.HandleFunc("GET /api/v1/credential-mappings", credMapH.List)
 	apiMux.HandleFunc("POST /api/v1/credential-mappings", credMapH.Create)
+	apiMux.HandleFunc("POST /api/v1/credential-mappings/bulk", credMapH.BulkCreate)
 	apiMux.HandleFunc("GET /api/v1/credential-mappings/{id}", credMapH.Get)
 	apiMux.HandleFunc("DELETE /api/v1/credential-mappings/{id}", credMapH.Delete)
 
