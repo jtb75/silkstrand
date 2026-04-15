@@ -49,13 +49,9 @@ func ParseCron(expr string) (*Cron, error) {
 	if err := parseField(fields[4], 0, 7, c.Dow[:]); err != nil {
 		return nil, fmt.Errorf("cron dow: %w", err)
 	}
-	// Fold 7 -> 0 (Sunday).
-	if len(c.Dow) > 0 {
-		// c.Dow is fixed-size [7]bool; the parser wrote into a slice of
-		// len=7 so index 7 never occurred. If user wrote "7" we need to
-		// catch that in parseField via max=7 with post-fold — handle here
-		// by re-running with fold.
-	}
+	// Fold 7 -> 0 (Sunday). c.Dow is fixed-size [7]bool; the parser was
+	// passed a slice of len=7 so index 7 never occurs — handled there via
+	// max=7 with post-fold in parseField.
 	return c, nil
 }
 
