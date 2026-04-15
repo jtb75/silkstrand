@@ -1,27 +1,58 @@
-# UI shape — asset-first
+# UI shape — asset-first (v1.1)
 
-Companion to ADR 006 (asset-first data model) and the refactor roadmap.
-This doc is the UI engineer's reference for two things:
+Companion to ADR 006 (asset-first data model) and ADR 007 (findings +
+scheduler). This doc is the UI engineer's reference for:
 
-1. The left-nav structure after the asset-first refactor.
-2. The Asset detail view's section hierarchy and what each section shows.
+1. The global layout and spacing system.
+2. The left-nav structure after the asset-first refactor.
+3. The page-by-page layout for Dashboard, Assets, Collections, Scans.
+4. The Asset detail view's section hierarchy.
+5. The primary operator workflow that ties them together.
 
-The data model that backs this view is defined in ADR 006 and (pending) ADR
-007. This doc does not introduce new tables — everything here either reads
+The data model that backs this view is defined in ADR 006 and ADR 007. This
+doc does not introduce new tables — everything here either reads
 existing/proposed columns or is a computed roll-up at the API layer.
 
 ## Motivation
 
-Today the left nav carries eleven top-level items (Dashboard, Assets,
-Targets, Agents, Scans, Asset Sets, Rules, Channels, One-shot, Team,
-Settings). The flat shape is a direct reflection of the old mental model —
-every feature got its own nav slot. Asset-first is a tighter story: the user
-lands on assets, filters them into collections, and derives everything else
-(scans, findings, coverage) from that. The nav should mirror that.
+Today the left nav carries eleven top-level items and the Assets detail
+drawer renders a long flat list of facts. Asset-first is a tighter story:
+the user lands on assets, filters them into collections, and derives
+everything else (scans, findings, coverage) from there. The nav and page
+shapes should mirror that.
 
-At the same time, the Assets detail drawer grew organically through R0 → R1c
-and now renders a long flat list of facts. It needs a deliberate hierarchy:
-what's stable, what changed, what's bad, what's configured.
+## Guiding principles
+
+- **Endpoints are the operational surface.** Most work (assigning credentials,
+  configuring scans, reading findings) happens at the endpoint level.
+- **Collections are the control plane.** Filter once, save as a collection,
+  reuse in dashboards, rules, and scans.
+- **Coverage is visible everywhere.** Scan coverage and credential coverage
+  are first-class signals on every asset/endpoint row.
+- **Bulk actions are first-class.** Multi-select + apply is the common case,
+  not the exception.
+- **The Dashboard drives action, not just visibility.** Suggested Actions is
+  the single source of truth for coverage gaps — no duplicated "assets
+  without scans" widget.
+
+## Global layout
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ Topbar (56px)                                                              │
+├───────────────┬────────────────────────────────────────────────────────────┤
+│ Sidebar 220px │ Content Area (max-width: 1200px, left-aligned)             │
+│               │ padding: 24px                                              │
+└───────────────┴────────────────────────────────────────────────────────────┘
+```
+
+**Spacing system**
+
+- Page padding: 24px
+- Section spacing: 32px
+- Card padding: 16–24px
+- Grid gap: 16px
+- Table row height: 42px
 
 ## Nav structure
 
@@ -30,110 +61,281 @@ Four bands, ordered by access frequency. Members see the full nav minus the
 
 ### Band 1 — Operator (daily)
 
-**Dashboard.** Landing page. Widget board with per-collection counts, a risk
-trend chart, new-this-week list, and recently-failed scans. Each widget is
-backed by a Collection (`collections.is_dashboard_widget = true`). Empty
-state when no widgets configured.
-
-**Assets.** Primary inventory. Filter chips + predicate-builder above the
-table; "Save as Collection" action on the chip bar turns the current filter
-into a saved Collection. Row click opens the Asset detail view (spec in
-§ "Asset detail view" below).
-
-**Findings.** Cross-asset derived view. Two tabs:
-
-- **Vulnerabilities** — network-sourced (nuclei today, httpx-based checks
-  later). Filter by severity, source, collection, asset_endpoint.
-- **Compliance** — both network-compliance (passive / unauthenticated) and
-  bundle-compliance (authenticated deep scans), unified by a `source_kind`
-  column on the findings table. Same filter set.
-
-Findings is top-level, not nested under Assets, because the workflow is
-different: SOC staff read findings daily; IT / asset-management staff live
-on Assets. Cross-links keep them connected (row click on a finding → asset
-detail view, filtered to the relevant endpoint and finding tab).
-
-**Collections.** Saved predicates. Two tabs:
-
-- **My collections** — every saved predicate the user has access to.
-- **Dashboard widgets** — the subset where `is_dashboard_widget = true`,
-  with per-widget config (title, widget_kind: count / table).
-
-Inline create / edit / delete. Edit opens the PredicateBuilder (existing
-component, reused).
-
-**Scans.** Configured scan activity. Three tabs on one page:
-
-- **Definitions** — list of scan_definitions. Shows `kind`, bundle or
-  discovery, scope (asset_endpoint / collection / cidr), schedule, next run,
-  last status. Actions: create new, edit, toggle enabled, run now. Includes
-  manual-only (schedule=null) definitions — this is where one-shot scans
-  live after the refactor.
-- **Activity** — execution history from `scans`. Filter by definition,
-  status, date range. Click a row → Scan Results (today's page, with the
-  Findings tab added in Phase 4).
-- **Targets** — CIDR / network-range scan scopes only. After Phase 7,
-  nothing else. Sits under Scans because post-refactor a Target is "a scan
-  scope that isn't a discovered asset."
+- **Dashboard** — landing page. KPI row + widget grid + Suggested Actions
+  (see § Dashboard).
+- **Assets** — primary inventory. Three tabs: Assets / Endpoints / Findings
+  (same filtered population, three views). Bulk Actions bar (see § Assets).
+- **Findings** — top-level SOC view across all assets. Two tabs:
+  Vulnerabilities, Compliance. Top-level because the workflow audience (SOC)
+  differs from Assets' audience (IT / asset-management). Cross-links:
+  click-through on a finding pops the Asset detail drawer scoped to the
+  relevant endpoint and finding tab.
+- **Collections** — saved predicates. Scope covers assets, endpoints, and
+  findings (see § Collections). Two tabs: My Collections, Dashboard Widgets.
+- **Scans** — configured scan activity. Three tabs: Definitions, Activity,
+  Targets. Targets narrows to CIDR / network-range after the refactor.
+  Coverage Impact strip on the Definitions list shows how many endpoints
+  each definition hits.
 
 ### Band 2 — Automation (weekly)
 
-**Rules** `[admin]`. Correlation rules list. Each rule shows name, trigger,
-match-collection name, actions, enabled toggle, version. Edit opens a form;
-save auto-versions. Delete soft-disables the latest version. No sub-nav.
+- **Rules** `[admin]`. Correlation-rule list. Rule match references a
+  collection_id (ADR 006 D6). Inline enable/disable; edit auto-versions.
 
 ### Band 3 — Infrastructure (monthly)
 
-**Agents** `[admin]`. Fleet list with install flow (binary / docker
-one-liner). Per-agent actions: allowlist viewer, upgrade, rotate key,
-delete. Install-command generator includes the mode toggle
-(binary / docker) from the recently-shipped installer changes.
+- **Agents** `[admin]`. Fleet list + install flow (binary / docker). Per-agent:
+  allowlist viewer, upgrade, rotate key, delete.
 
 ### Band 4 — Setup
 
-**Settings.** Sectioned page (tabs in the current UI pattern):
-
-- **Profile** — display name, password change.
-- **Team** `[admin]` — users, invitations, memberships. (Moved in from
-  today's top-level Team nav.)
-- **Credentials** — three sub-sections inside the tab:
-  - *DB / host auth* — static-type credential sources used by compliance
-    scans.
-  - *Integrations* — Slack, webhook, email (planned), PagerDuty (planned).
-    Absorbs today's Channels. These are credential_sources with the
-    appropriate `type`.
-  - *Vaults* — HashiCorp Vault, AWS Secrets Manager, CyberArk. Plumbing
-    only until ADR 004 C1+ resolvers land.
-- **Audit log** `[admin]` — ADR 005 surface when shipped. Read-only log.
+- **Settings**. Sectioned page:
+  - **Profile** — display name, password change.
+  - **Team** `[admin]` — users, invitations, memberships.
+  - **Credentials**
+    - *DB / host auth* — static-type credential sources.
+    - *Integrations* — Slack, webhook, email, PagerDuty. Absorbs today's
+      Channels. Stored as `credential_sources` with the appropriate `type`.
+    - *Vaults* — HashiCorp, AWS SM, CyberArk. Plumbing only until ADR 004
+      C1+ resolvers land.
+  - **Audit log** `[admin]` — ADR 005 surface. Read-only.
 
 ### What goes away
 
-- **Asset Sets** → folded into Collections.
-- **Channels** → folded into Settings → Credentials → Integrations.
-- **One-shot** → folded into Scans → Definitions (as manual-only
-  definitions with a visual tag).
-- **Team** → folded into Settings.
+- **Asset Sets** → Collections.
+- **Channels** → Settings → Credentials → Integrations.
+- **One-shot** → Scans → Definitions (manual-only, visual tag).
+- **Team** → Settings.
 
 ### What stays top-level (and why)
 
-- **Rules.** Weekly workflow; full-list authoring surface; belongs in its
-  own place, not buried in Settings.
-- **Agents.** Install-token regeneration, allowlist troubleshooting, and
-  upgrades are recurring fleet-ops tasks distinct from tenant settings.
-- **Findings.** Primary SOC surface; needs its own entry point, not nested
-  under Assets.
+- **Rules** — full-list authoring surface; weekly workflow.
+- **Agents** — fleet ops are distinct from tenant settings.
+- **Findings** — primary SOC surface; needs its own entry point.
 
-### Topbar (unchanged)
+### Topbar
 
-Tenant switcher (multi-tenant users), user email, log-out. No nav items
-here; the topbar is identity-scope only.
+Tenant switcher, user email, log-out. Identity-scope only.
+
+## Dashboard
+
+**Design decision.** Coverage gaps are surfaced ONLY in Suggested Actions.
+No duplicated "assets without scans" widget. Suggested Actions is the single
+source of truth for "here's what needs attention."
+
+### Layout
+
+- Header with page title + `[ + New Scan ]`.
+- **KPI row (4 cards)** — Total Assets, Coverage %, Critical Findings, New
+  This Week. Each card shows the metric + a delta ("+12 this wk").
+- **Main grid** — 8-col left, 4-col right.
+  - Left: Unclassified Endpoints list (collection-backed), Activity stream
+    (collections or events).
+  - Right: Suggested Actions, Recent Activity.
+
+### ASCII reference
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ SilkStrand                                  [Tenant ▼] [User] [⚙]         │
+├───────────────┬────────────────────────────────────────────────────────────┤
+│ Dashboard     │  DASHBOARD                                                 │
+│ Assets        │                                                            │
+│ Findings      │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐        │
+│ Collections   │  │ Total Assets │ │ Coverage     │ │ Critical     │        │
+│ Scans         │  │ 128          │ │ 62%          │ │ 7            │        │
+│────────────── │  │ +12 this wk  │ │ ███████░░░░  │ │ +2 today     │        │
+│ Rules         │  └──────────────┘ └──────────────┘ └──────────────┘        │
+│ Agents        │  ┌──────────────┐                                          │
+│────────────── │  │ New This Week│                                          │
+│ Settings      │  │ 12           │                                          │
+│               │  │ +3 unresolved│                                          │
+│               │  └──────────────┘                                          │
+│               │  ┌──────────────────────────────────────────────────────┐  │
+│               │  │ Unclassified Endpoints (12)                          │  │
+│               │  │──────────────────────────────────────────────────────│  │
+│               │  │ 10.0.0.5:5432   postgres   ❌ no scan                │  │
+│               │  │ 10.0.0.8:443    nginx      ⚠ 2 findings             │  │
+│               │  │ 10.0.0.12:22    ssh        ❌ no creds               │  │
+│               │  │                                              [View]  │  │
+│               │  └──────────────────────────────────────────────────────┘  │
+│               │                              ┌───────────────────────────┐ │
+│               │                              │ Suggested Actions         │ │
+│               │                              │───────────────────────────│ │
+│               │                              │ 12 DB endpoints missing   │ │
+│               │                              │ credentials               │ │
+│               │                              │ [ Map Credentials ]       │ │
+│               │                              │ [ Create Scan ]           │ │
+│               │                              └───────────────────────────┘ │
+│               │                              ┌───────────────────────────┐ │
+│               │                              │ Recent Activity           │ │
+│               │                              │───────────────────────────│ │
+│               │                              │ + Asset discovered        │ │
+│               │                              │ ✔ Scan completed          │ │
+│               │                              │ ⚠ Scan failed             │ │
+│               │                              └───────────────────────────┘ │
+└───────────────┴────────────────────────────────────────────────────────────┘
+```
+
+### Widget data sources
+
+| Widget | Source |
+|---|---|
+| KPI cards | Aggregate queries on assets / findings / scan_definitions |
+| Unclassified Endpoints | Collection with `scope = endpoint` filtering to `service = NULL OR service = 'unknown'` |
+| Suggested Actions | Computed server-side: groups of coverage gaps (no scan / no creds / failing), with a primary CTA per group |
+| Recent Activity | `asset_events` feed (last 10) or audit-events feed once ADR 005 ships |
+
+## Assets
+
+**Three tabs, one filtered population.** Assets / Endpoints / Findings tabs
+on the Assets page show the same filter state rendered differently:
+
+- **Assets tab** — one row per asset (host-level). Columns: Host, IP,
+  resource_type, env, #endpoints, max-severity-finding, coverage pair
+  (scan / creds).
+- **Endpoints tab** — one row per asset_endpoint. Columns: Host, IP:Port,
+  Service, Tech, Findings count, Coverage pair.
+- **Findings tab** — one row per finding, scoped to the filtered population.
+  Columns: severity, title, source, asset:port, status, last seen.
+
+The same filter bar (search + collection picker + "Save as Collection")
+drives all three tabs. Multi-select persists across tabs.
+
+### Bulk Actions bar
+
+Row multi-select enables a persistent bottom bar with the primary actions.
+v1 actions:
+
+- **Map Credentials** — pick a credential_source, applied to every selected
+  endpoint's collection (creates `credential_mappings` rows).
+- **Create Scan** — open the New Scan Definition flow pre-filled with the
+  selected endpoints as the scope.
+
+Future: Add to Collection, Suppress findings, Assign owner.
+
+### Coverage column
+
+Two icons per row:
+
+- **Scan** — ✔ if any scan_definition covers this endpoint; ❌ otherwise.
+- **Creds** — ✔ if a credential_mapping resolves for this endpoint; ❌
+  otherwise.
+
+Also appears on the Dashboard's Unclassified Endpoints list and on the
+endpoint rows inside the Asset detail drawer.
+
+### ASCII reference
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ Assets                                                     [ + Filter ]    │
+├────────────────────────────────────────────────────────────────────────────┤
+│ [ Search............. ] [ Collection ▼ ] [ Save as Collection ]            │
+│                                                                            │
+│ Tabs:   Assets | ENDPOINTS | Findings                                      │
+│                                                                            │
+│ ┌────────────────────────────────────────────────────────────────────────┐ │
+│ │ Host        IP         Port  Service     Tech        Findings  Coverage│ │
+│ │────────────────────────────────────────────────────────────────────────│ │
+│ │ db-01       10.0.0.5   5432  postgres    PG 14       ⚠ 3       ❌ ❌   │ │
+│ │ web-01      10.0.0.8   443   https       nginx       ⚠ 2       ✔ ❌   │ │
+│ │ admin-01    10.0.0.12  22    ssh         openssh     ✔ 0       ❌ ❌   │ │
+│ └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                            │
+│ Bulk Actions: [ Map Credentials ] [ Create Scan ]                          │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Collections
+
+**Scope extends beyond assets/endpoints.** In addition to ADR 006 D5's
+`scope = 'asset' | 'endpoint'`, Collections also accept `scope = 'finding'`
+so operators can save reusable queries like "all open critical findings
+this week" or "all compliance findings on prod databases" and reference
+them from dashboards and rules. This is a one-line change to the enum
+(tracked as an amendment to ADR 006 D5).
+
+### Query Preview
+
+Collections list inline-expands a plain-language rendering of the stored
+predicate:
+
+```
+type = database AND scan_configured = false
+```
+
+Keeps the author honest about what the collection really selects without
+forcing them into the JSONB view.
+
+### ASCII reference
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ Collections                                                [ + New ]       │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Tabs: My Collections | Dashboard Widgets                                   │
+│                                                                            │
+│ Name                         Type      Count   Last Updated   Actions      │
+│────────────────────────────────────────────────────────────────────────────│
+│ Unclassified Endpoints       Endpoint   12     2m ago        [Open]        │
+│ DB without scans             Endpoint   18     10m ago       [Edit]        │
+│ Critical findings            Finding    7      5m ago        [Open]        │
+│────────────────────────────────────────────────────────────────────────────│
+│ Query Preview:                                                             │
+│ type = database AND scan_configured = false                                │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Scans
+
+**Three tabs:** Definitions, Activity, Targets.
+
+### Definitions tab
+
+Columns: Name, Type, Scope, Schedule, Last, Next, Status. Scope renders as
+`Collection:<name>`, `Endpoint:<ip:port>`, or `CIDR:<range>` depending on
+`scan_definitions.scope_kind`.
+
+### Coverage Impact strip
+
+Below the definitions table, a rolling "who hits what" summary:
+
+```
+Coverage Impact:
+- PG CIS covers 12 endpoints
+- Network covers 128 IPs
+```
+
+Makes it immediately obvious whether a definition is doing any real work.
+Answered at author time from the collection membership evaluation (ADR 007
+D4 — re-resolved per tick, cached for the preview).
+
+### ASCII reference
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ Scans                                                      [ + New Scan ]  │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Tabs: DEFINITIONS | Activity | Targets                                     │
+│                                                                            │
+│ Name        Type       Scope           Schedule   Last   Next   Status     │
+│────────────────────────────────────────────────────────────────────────────│
+│ PG CIS      compliance DB Collection   daily      OK     2h     ✔          │
+│ Network     discovery  CIDR 10.0.0.0   24h        OK     4h     ✔          │
+│ Ad-hoc DB   compliance manual         —           —      —      —          │
+│                                                                            │
+│ Coverage Impact:                                                           │
+│ - PG CIS covers 12 endpoints                                               │
+└────────────────────────────────────────────────────────────────────────────┘
+```
 
 ## Asset detail view
 
-The detail view opens as a drawer from the Assets table (today's
-interaction) but is organized into explicit sections in the order a human
-would read the page: *what is this → how long has it been here → should I
-care → what's the detail → is it handled → what else does it touch*.
+The detail view opens as a drawer from the Assets table, organized into
+explicit sections in the order a human would read the page: *what is this
+→ how long has it been here → should I care → what's the detail → is it
+handled → what else does it touch*.
 
 ```
 ┌─ Asset ────────────────────────────────────────┐
@@ -176,6 +378,7 @@ care → what's the detail → is it handled → what else does it touch*.
 │       next scan (earliest across defs)         │
 │       configuration-gap list (endpoints with   │
 │         no scan / no creds / recent failures)  │
+│       [ Map Credential ] [ Create Scan ]       │
 │                                                │
 │  ❻  Relationships                              │
 │       depends-on / parent-of / peers           │
@@ -189,42 +392,64 @@ care → what's the detail → is it handled → what else does it touch*.
 | Section | Source |
 |---|---|
 | ❶ Identity | `assets` row (ADR 006 D2) |
-| ❷ Lifecycle | `assets.first_seen` / `last_seen`; provenance from `asset_discovery_sources` (ADR 006 D9 — being added) |
-| ❸ Risk posture | Computed roll-up at the API handler from `findings` (ADR 007) scoped to this asset's endpoints, with trend vs. previous scan |
+| ❷ Lifecycle | `assets.first_seen` / `last_seen`; provenance from `asset_discovery_sources` (ADR 006 D9) |
+| ❸ Risk posture | Computed at the API handler from `findings` (ADR 007 D1) scoped to this asset's endpoints, with trend vs. previous scan |
 | ❹ Endpoints | `asset_endpoints` (ADR 006 D2). Expand-on-click joins findings + credential_mappings + scan coverage |
 | ❺ Coverage roll-up | Computed: `scan_definitions` LEFT JOIN `asset_endpoints`; `credential_mappings` LEFT JOIN endpoints (via collection membership); latest `scans` by endpoint |
-| ❻ Relationships | Future `asset_relationships` table; section shows an "empty" state until populated |
+| ❻ Relationships | Future `asset_relationships` table; empty state until populated |
 
-Computed sections (❸, ❺) don't require new tables. The handler returns a
-`coverage` and `risk` object alongside the flat asset view in the API
-response. UI renders them without any additional round-trip.
+Computed sections (❸, ❺) don't require new tables. The handler returns
+`risk` and `coverage` objects alongside the flat asset view in one API
+response. UI renders them without an extra round-trip.
 
 ### Interaction details
 
-- **Endpoints table defaults to collapsed**, expand-on-click. If an asset
-  has many endpoints (SMB server exposing 100+ ports) the drawer stays
-  readable.
-- **"Promote" action** (today's one-click Promote-from-Suggestion) hangs
-  off the per-endpoint expanded row, not the top of the drawer. It applies
-  to a specific port, which is what "promote" has always meant.
-- **Risk posture badge** (❸) also appears in the Assets list row as a
-  severity dot + count, so the table is scannable without opening the
-  drawer.
-- **Coverage gap list** (❺) is actionable: each row has a "Configure scan"
-  or "Map credential" shortcut that opens the appropriate Settings flow
-  pre-filled for that endpoint.
+- **Endpoints table defaults to collapsed**, expand-on-click. Assets with
+  many ports stay readable.
+- **"Promote" action** hangs off the per-endpoint expanded row (it applies
+  to a specific port, which is what promote has always meant).
+- **Risk posture badge** (❸) also appears in the Assets list row so the
+  table is scannable without opening the drawer.
+- **Coverage gap list** (❺) rows each have "Configure scan" / "Map
+  credential" shortcuts pre-filled for that endpoint.
 
-### Mobile / narrow-viewport
+### Mobile / narrow viewport
 
-The drawer collapses the sections into a vertical accordion. Default open:
-❸ Risk posture and ❹ Endpoints. Others collapsed by default. No feature
-changes.
+Sections collapse into a vertical accordion. Default open: ❸ Risk posture
+and ❹ Endpoints. Others collapsed by default.
+
+## Operator workflow (E2E)
+
+The primary workflow the UI is shaped around:
+
+```
+Dashboard
+   │  click: "12 DB endpoints missing credentials"  (Suggested Actions)
+   ▼
+Assets (Endpoints tab, filtered to the suggested collection)
+   │  multi-select rows
+   ▼
+[ Map Credentials ]  ──►  pick credential_source, apply to selection
+   │
+   ▼
+[ Create Scan ]  ──►  new scan_definition pre-filled with the selected
+   │                   endpoints as scope; schedule daily
+   ▼
+Scans → Definitions  (new row visible, Coverage Impact updates)
+   │
+   ▼
+Scans → Activity  (run materializes per the schedule or immediately via
+                   "Run now")
+```
+
+Every arrow in this flow is a single click and stays inside the same
+filtered selection. No re-filtering, no re-selecting, no page context loss.
 
 ## Out of scope
 
-- Visual design / typography — this doc defines structure, not style.
-- Per-widget dashboard configuration UX — Phase 2 UI work; spec later.
-- Rules editor layout changes — the existing form is fine; only the
-  `match` selector changes to a collection dropdown.
+- Visual design / typography — structure only.
+- Per-widget dashboard configuration UX — Phase 2 follow-on.
+- Rules editor layout changes — the existing form stays; only the `match`
+  selector changes to a collection dropdown.
 - Reports / export — deferred. Collections + "export to CSV" on any list
   covers the near-term need.
