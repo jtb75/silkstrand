@@ -39,7 +39,7 @@ func runNuclei(ctx context.Context, urls []string, onHit func(NucleiHit)) error 
 		"-silent",
 		"-no-color",
 		"-disable-update-check",
-		"-templates-directory", templatesDir,
+		"-t", templatesDir,
 		"-severity", "medium,high,critical",
 		"-etags", "intrusive,fuzz,dast",
 	}
@@ -56,7 +56,7 @@ func runNuclei(ctx context.Context, urls []string, onHit func(NucleiHit)) error 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("nuclei start: %w", err)
 	}
-	go drainStderr("nuclei", stderr)
+	tail := drainStderr("nuclei", stderr)
 
 	go func() {
 		defer stdin.Close()
@@ -120,7 +120,7 @@ func runNuclei(ctx context.Context, urls []string, onHit func(NucleiHit)) error 
 		if msg := err.Error(); strings.Contains(msg, "exit status 1") {
 			return nil
 		}
-		return fmt.Errorf("nuclei exit: %w", err)
+		return fmt.Errorf("nuclei exit: %w%s", err, tail.suffix())
 	}
 	return nil
 }

@@ -8,6 +8,8 @@ import (
 	"io"
 	"os/exec"
 	"strconv"
+	"strings"
+	"sync"
 )
 
 // NaabuFinding is one host:port hit from a naabu JSON line.
@@ -39,7 +41,7 @@ func runNaabu(ctx context.Context, target string, ratePPS int, onFinding func(Na
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("naabu start: %w", err)
 	}
-	go drainStderr("naabu", stderr)
+	tail := drainStderr("naabu", stderr)
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -62,19 +64,46 @@ func runNaabu(ctx context.Context, target string, ratePPS int, onFinding func(Na
 		return fmt.Errorf("naabu stdout scan: %w", err)
 	}
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("naabu exit: %w", err)
+		return fmt.Errorf("naabu exit: %w%s", err, tail.suffix())
 	}
 	return nil
 }
 
-func drainStderr(tool string, r io.ReadCloser) {
-	defer r.Close()
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		// stderr lines are noisy; keep them as Debug to avoid log spam.
-		// Bubbled up as part of cmd.Wait error if the tool exits non-zero.
-		_ = tool
-		_ = scanner.Text()
+// stderrTail keeps the last N stderr lines from a subprocess so they can
+// be appended to the error returned when the process exits non-zero.
+type stderrTail struct {
+	mu    sync.Mutex
+	lines []string
+	max   int
+}
+
+func (t *stderrTail) add(line string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.lines = append(t.lines, line)
+	if len(t.lines) > t.max {
+		t.lines = t.lines[len(t.lines)-t.max:]
 	}
+}
+
+func (t *stderrTail) suffix() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.lines) == 0 {
+		return ""
+	}
+	return ": " + strings.Join(t.lines, " | ")
+}
+
+func drainStderr(_ string, r io.ReadCloser) *stderrTail {
+	tail := &stderrTail{max: 10}
+	go func() {
+		defer r.Close()
+		scanner := bufio.NewScanner(r)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			tail.add(scanner.Text())
+		}
+	}()
+	return tail
 }

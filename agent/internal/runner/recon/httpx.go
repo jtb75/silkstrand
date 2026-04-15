@@ -53,7 +53,7 @@ func runHTTPX(ctx context.Context, inputs []string, onFinding func(HTTPXFinding)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("httpx start: %w", err)
 	}
-	go drainStderr("httpx", stderr)
+	tail := drainStderr("httpx", stderr)
 
 	go func() {
 		defer stdin.Close()
@@ -93,7 +93,7 @@ func runHTTPX(ctx context.Context, inputs []string, onFinding func(HTTPXFinding)
 		return fmt.Errorf("httpx stdout scan: %w", err)
 	}
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("httpx exit: %w", err)
+		return fmt.Errorf("httpx exit: %w%s", err, tail.suffix())
 	}
 	return nil
 }
