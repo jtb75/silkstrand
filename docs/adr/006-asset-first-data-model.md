@@ -246,6 +246,37 @@ endpoint bypass targets entirely. Existing rows are retained; Phase 7 cleanup
 tightens the `target_type` check to CIDR / network-range only and flags any
 non-conforming rows.
 
+### D9. Discovery provenance as a join table
+
+`asset_discovery_sources` records how each asset first showed up in the
+inventory:
+
+```sql
+CREATE TABLE asset_discovery_sources (
+    asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    target_id UUID REFERENCES targets(id) ON DELETE SET NULL,
+    agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+    scan_id UUID,
+    discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (asset_id, discovered_at)
+);
+```
+
+Populated in the same ingest path as `UpsertAsset`. One row per discovery
+event (so an asset rediscovered by a different CIDR target later produces a
+second row, and we can see the full provenance).
+
+Rationale: the UI shape plan (`docs/plans/ui-shape.md` § Asset detail view)
+wants a "how did this asset get on my list?" Lifecycle section. A column on
+`assets` would only capture the *first* provenance and would conflate the
+identity-stable bits of an asset with its discovery metadata. A dedicated
+join table keeps `assets` narrow and lets us answer richer questions later
+("show me everything the `192.168.0.0/24` target has ever found").
+
+`target_id` is nullable because manual-source assets have no target, and
+nullable-with-ON-DELETE-SET-NULL because dropping a target shouldn't cascade
+into asset history.
+
 ## Consequences
 
 **Positive:**
