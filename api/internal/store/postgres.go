@@ -1147,3 +1147,197 @@ func (s *PostgresStore) DeleteCollection(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// ======================================================================
+// P2 ingest surface (ADR 006 D4, D7, D9)
+// ======================================================================
+
+func (s *PostgresStore) AppendAssetEvents(ctx context.Context, events []model.AssetEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO asset_events (tenant_id, asset_id, scan_id, event_type, severity, payload, occurred_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()))`)
+	if err != nil {
+		return fmt.Errorf("prepare: %w", err)
+	}
+	defer stmt.Close()
+	for _, e := range events {
+		payload := e.Payload
+		if len(payload) == 0 {
+			payload = json.RawMessage(`{}`)
+		}
+		var occurred interface{}
+		if !e.OccurredAt.IsZero() {
+			occurred = e.OccurredAt
+		}
+		if _, err := stmt.ExecContext(ctx,
+			e.TenantID, e.AssetID, e.ScanID, e.EventType, e.Severity, payload, occurred); err != nil {
+			return fmt.Errorf("insert event: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) RecordDiscoverySource(ctx context.Context, in DiscoverySourceInput) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO asset_discovery_sources (asset_id, target_id, agent_id, scan_id)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (asset_id, discovered_at) DO NOTHING`,
+		in.AssetID, in.TargetID, in.AgentID, in.ScanID)
+	if err != nil {
+		return fmt.Errorf("recording discovery source: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListEndpointsForAsset(ctx context.Context, assetID string) ([]model.AssetEndpoint, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, asset_id, port, protocol, service, version, technologies,
+		        compliance_status, allowlist_status, allowlist_checked_at,
+		        last_scan_id, missed_scan_count, metadata,
+		        first_seen, last_seen, created_at, updated_at
+		   FROM asset_endpoints WHERE asset_id = $1`, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("listing endpoints: %w", err)
+	}
+	defer rows.Close()
+	var out []model.AssetEndpoint
+	for rows.Next() {
+		var e model.AssetEndpoint
+		if err := rows.Scan(&e.ID, &e.AssetID, &e.Port, &e.Protocol, &e.Service, &e.Version,
+			&e.Technologies, &e.ComplianceStatus, &e.AllowlistStatus, &e.AllowlistCheckedAt,
+			&e.LastScanID, &e.MissedScanCount, &e.Metadata,
+			&e.FirstSeen, &e.LastSeen, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning endpoint: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpdateEndpointAllowlistStatus(ctx context.Context, endpointID, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE asset_endpoints
+		    SET allowlist_status = $1,
+		        allowlist_checked_at = NOW(),
+		        updated_at = NOW()
+		  WHERE id = $2`, status, endpointID)
+	if err != nil {
+		return fmt.Errorf("updating endpoint allowlist status: %w", err)
+	}
+	return nil
+}
+
+// ======================================================================
+// Correlation rules (ADR 006 D6) — load side only in P2; CRUD in P2+.
+// ======================================================================
+
+func (s *PostgresStore) ListActiveRulesForTrigger(ctx context.Context, tenantID, trigger string) ([]model.CorrelationRule, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, name, version, enabled, trigger, event_type_filter, body, created_at, created_by
+		   FROM correlation_rules
+		  WHERE tenant_id = $1 AND enabled = TRUE AND trigger = $2`,
+		tenantID, trigger)
+	if err != nil {
+		return nil, fmt.Errorf("listing rules: %w", err)
+	}
+	defer rows.Close()
+	var out []model.CorrelationRule
+	for rows.Next() {
+		var r model.CorrelationRule
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.Name, &r.Version, &r.Enabled,
+			&r.Trigger, &r.EventTypeFilter, &r.Body, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, fmt.Errorf("scanning rule: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ======================================================================
+// Agent allowlists (migration 018)
+// ======================================================================
+
+func (s *PostgresStore) UpsertAgentAllowlist(ctx context.Context, in AgentAllowlistInput) (bool, error) {
+	allow, _ := json.Marshal(in.Allow)
+	deny, _ := json.Marshal(in.Deny)
+	if len(in.Allow) == 0 {
+		allow = json.RawMessage(`[]`)
+	}
+	if len(in.Deny) == 0 {
+		deny = json.RawMessage(`[]`)
+	}
+	var existingHash sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT snapshot_hash FROM agent_allowlists WHERE agent_id = $1`, in.AgentID).
+		Scan(&existingHash)
+	if err != nil && err != sql.ErrNoRows {
+		return false, fmt.Errorf("loading existing allowlist: %w", err)
+	}
+	changed := !existingHash.Valid || existingHash.String != in.Hash
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO agent_allowlists (agent_id, snapshot_hash, allow, deny, rate_limit_pps, reported_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		 ON CONFLICT (agent_id) DO UPDATE SET
+		   snapshot_hash = EXCLUDED.snapshot_hash,
+		   allow = EXCLUDED.allow,
+		   deny = EXCLUDED.deny,
+		   rate_limit_pps = EXCLUDED.rate_limit_pps,
+		   reported_at = NOW(),
+		   updated_at = NOW()`,
+		in.AgentID, in.Hash, allow, deny, in.RateLimitPPS)
+	if err != nil {
+		return false, fmt.Errorf("upserting allowlist: %w", err)
+	}
+	return changed, nil
+}
+
+func (s *PostgresStore) GetAgentAllowlist(ctx context.Context, agentID string) (*AgentAllowlistSnapshot, error) {
+	var snap AgentAllowlistSnapshot
+	var allowJSON, denyJSON []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT agent_id, snapshot_hash, allow, deny, rate_limit_pps, reported_at, updated_at
+		   FROM agent_allowlists WHERE agent_id = $1`, agentID).
+		Scan(&snap.AgentID, &snap.Hash, &allowJSON, &denyJSON, &snap.RateLimitPPS, &snap.ReportedAt, &snap.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting allowlist: %w", err)
+	}
+	_ = json.Unmarshal(allowJSON, &snap.Allow)
+	_ = json.Unmarshal(denyJSON, &snap.Deny)
+	return &snap, nil
+}
+
+// ======================================================================
+// Notification deliveries (ADR 006 P6)
+// ======================================================================
+
+func (s *PostgresStore) InsertNotificationDelivery(ctx context.Context, d model.NotificationDelivery) error {
+	payload := d.Payload
+	if len(payload) == 0 {
+		payload = json.RawMessage(`{}`)
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO notification_deliveries
+		   (tenant_id, channel_source_id, rule_id, event_id, severity, status,
+		    attempt, response_code, error, payload, dispatched_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+		d.TenantID, d.ChannelSourceID, d.RuleID, d.EventID, d.Severity, d.Status,
+		d.Attempt, d.ResponseCode, d.Error, payload)
+	if err != nil {
+		return fmt.Errorf("inserting notification delivery: %w", err)
+	}
+	return nil
+}

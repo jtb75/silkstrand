@@ -81,11 +81,17 @@ func (h *AgentsHandler) GetAllowlist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
-	// agent_allowlists was dropped in migration 017. P2 reintroduces
-	// the allowlist surface against the new asset / asset_endpoints
-	// shape — until then report "no snapshot" to the UI so the badge
-	// falls back to 'unknown' without breaking rendering.
-	writeError(w, http.StatusNotFound, "agent has not reported an allowlist yet")
+	snap, err := h.store.GetAgentAllowlist(r.Context(), id)
+	if err != nil {
+		slog.Error("loading agent allowlist", "agent_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load allowlist")
+		return
+	}
+	if snap == nil {
+		writeError(w, http.StatusNotFound, "agent has not reported an allowlist yet")
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
 }
 
 // POST /api/v1/agents

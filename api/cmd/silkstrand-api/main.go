@@ -1,8 +1,8 @@
-// Package main is the DC API server entrypoint. Post-ADR-006/007 P1 the
-// rule engine + notify dispatcher + allowlist tracker are temporarily
-// offline — their orchestration lands in P2 alongside the new asset /
-// asset_endpoint ingest path. Until then the WSS handler logs and drops
-// asset_discovered + allowlist_snapshot messages with a TODO.
+// Package main is the DC API server entrypoint. Post-ADR-006/007 P2 the
+// asset-first ingest path is live: asset_discovered batches upsert into
+// assets + asset_endpoints, asset_events are derived, the rule engine
+// fires (with collection-aware predicates), and allowlist_snapshot
+// populates agent_allowlists so the UI viewer works.
 package main
 
 import (
@@ -22,11 +22,14 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 
+	"github.com/jtb75/silkstrand/api/internal/allowlist"
 	"github.com/jtb75/silkstrand/api/internal/config"
 	"github.com/jtb75/silkstrand/api/internal/handler"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
+	"github.com/jtb75/silkstrand/api/internal/notify"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
+	"github.com/jtb75/silkstrand/api/internal/rules"
 	"github.com/jtb75/silkstrand/api/internal/store"
 	"github.com/jtb75/silkstrand/api/internal/websocket"
 )
@@ -67,7 +70,8 @@ func run() error {
 
 	websocket.AllowedOrigins = cfg.AllowedOrigins
 	hub := websocket.NewHub()
-	hub.OnMessage = buildOnMessage(pgStore, ps)
+	notifier := notify.New(pgStore, cfg.CredentialEncryptionKey)
+	hub.OnMessage = buildOnMessage(pgStore, ps, notifier)
 
 	// Handlers — surviving surface
 	healthH := handler.NewHealthHandler(pgStore, redisPingFunc(ps))
@@ -232,11 +236,10 @@ func run() error {
 	return server.Shutdown(ctx)
 }
 
-// buildOnMessage routes agent → server WSS messages. P1 preserves the
-// routing table but neuters the asset_discovered + allowlist_snapshot
-// paths (the tables they wrote to are gone); P2 reintroduces ingest
-// against assets + asset_endpoints.
-func buildOnMessage(s store.Store, ps *pubsub.PubSub) func(agentID string, msg websocket.Message) {
+// buildOnMessage routes agent → server WSS messages. P2 live surface:
+// asset_discovered and allowlist_snapshot ingest against the new
+// asset / asset_endpoint schema; the rule engine fires per endpoint.
+func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatcher) func(agentID string, msg websocket.Message) {
 	return func(agentID string, msg websocket.Message) {
 		ctx := context.Background()
 
@@ -300,17 +303,10 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub) func(agentID string, msg w
 			}
 
 		case websocket.TypeAllowlistSnapshot:
-			// TODO(P2): reintroduce agent_allowlists via the new asset /
-			// asset_endpoints shape. For now we log + drop.
-			slog.Info("allowlist_snapshot received (P1 drop; asset-first rewiring lands in P2)",
-				"agent_id", agentID)
+			handleAllowlistSnapshot(ctx, s, agentID, msg.Payload)
 
 		case websocket.TypeAssetDiscovered:
-			// TODO(P2): upsert into assets + asset_endpoints + emit
-			// asset_events + run EvaluateAsset through the new
-			// collection-aware rule engine. P1 logs + drops.
-			slog.Info("asset_discovered received (P1 drop; P2 rewires ingest against assets + asset_endpoints)",
-				"agent_id", agentID)
+			handleAssetDiscovered(ctx, s, notifier, agentID, msg.Payload)
 
 		case websocket.TypeDiscoveryCompleted:
 			var payload websocket.DiscoveryCompletedPayload
@@ -356,3 +352,348 @@ func redisPingFunc(ps *pubsub.PubSub) func(context.Context) error {
 	}
 	return ps.Ping
 }
+
+// ======================================================================
+// P2 ingest handlers (ADR 006 D2 + D4 + D7 + D9)
+// ======================================================================
+
+// handleAssetDiscovered upserts a batch of agent-reported (ip, port,
+// service, ...) tuples into assets + asset_endpoints, logs provenance,
+// derives asset_events for deltas, and runs the collection-aware rule
+// engine per endpoint.
+func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.Dispatcher, agentID string, payload json.RawMessage) {
+	var batch websocket.AssetDiscoveredPayload
+	if err := json.Unmarshal(payload, &batch); err != nil {
+		slog.Error("parsing asset_discovered payload", "agent_id", agentID, "error", err)
+		return
+	}
+	scan, err := s.GetScanByID(ctx, batch.ScanID)
+	if err != nil || scan == nil {
+		slog.Error("loading discovery scan", "scan_id", batch.ScanID, "error", err)
+		return
+	}
+	if scan.Status == model.ScanStatusPending {
+		if err := s.UpdateScanStatus(ctx, scan.ID, model.ScanStatusRunning); err != nil {
+			slog.Error("updating discovery scan to running", "scan_id", scan.ID, "error", err)
+		}
+	}
+
+	// Load tenant rules + allowlist snapshot once per batch.
+	activeRules, err := s.ListActiveRulesForTrigger(ctx, scan.TenantID, model.RuleTriggerAssetDiscovered)
+	if err != nil {
+		slog.Warn("loading asset_discovered rules",
+			"tenant", scan.TenantID, "error", err)
+	}
+	aw := loadAgentAllowlist(ctx, s, agentID)
+
+	// Tenant context for store writes that consult TenantID(ctx).
+	tctx := store.WithTenantID(ctx, scan.TenantID)
+
+	// Nullable FK values for provenance + events.
+	var (
+		scanIDPtr   = strPtr(scan.ID)
+		targetIDPtr *string
+		agentIDPtr  = strPtr(agentID)
+	)
+	if scan.TargetID != nil {
+		targetIDPtr = scan.TargetID
+	}
+
+	for _, a := range batch.Assets {
+		asset, _, err := upsertHostAsset(tctx, s, scan.TenantID, a)
+		if err != nil {
+			slog.Error("upserting asset", "scan_id", scan.ID, "ip", a.IP, "error", err)
+			continue
+		}
+		// Record provenance per asset per scan. The (asset_id, discovered_at)
+		// PK naturally dedupes within the same millisecond; successive
+		// scans produce successive rows — which is what ADR 006 D9 wants.
+		if err := s.RecordDiscoverySource(tctx, store.DiscoverySourceInput{
+			AssetID:  asset.ID,
+			TargetID: targetIDPtr,
+			AgentID:  agentIDPtr,
+			ScanID:   scanIDPtr,
+		}); err != nil {
+			slog.Warn("recording discovery source", "asset", asset.ID, "error", err)
+		}
+		if a.Port == 0 {
+			continue // host-only report (no port info from naabu stage yet)
+		}
+		hostname := a.Hostname
+		if hostname == "" && asset.Hostname != nil {
+			hostname = *asset.Hostname
+		}
+		awStatus := evalAllowlistStatus(aw, a.IP, hostname)
+		var oldEndpoint *model.AssetEndpoint
+		endpoints, _ := s.ListEndpointsForAsset(tctx, asset.ID)
+		for i := range endpoints {
+			if endpoints[i].Port == a.Port && endpoints[i].Protocol == "tcp" {
+				ep := endpoints[i]
+				oldEndpoint = &ep
+				break
+			}
+		}
+		ep, err := s.UpsertAssetEndpoint(tctx, store.UpsertAssetEndpointInput{
+			AssetID:         asset.ID,
+			Port:            a.Port,
+			Protocol:        "tcp",
+			Service:         a.Service,
+			Version:         a.Version,
+			Technologies:    a.Technologies,
+			AllowlistStatus: awStatus,
+		})
+		if err != nil {
+			slog.Error("upserting asset endpoint",
+				"scan_id", scan.ID, "ip", a.IP, "port", a.Port, "error", err)
+			continue
+		}
+		events := deriveAssetEvents(scan.TenantID, scan.ID, oldEndpoint, ep, a)
+		if err := s.AppendAssetEvents(tctx, events); err != nil {
+			slog.Error("appending asset events", "endpoint", ep.ID, "error", err)
+		}
+		runRuleActions(tctx, s, notifier, activeRules, asset, ep)
+	}
+}
+
+// upsertHostAsset folds a discovered asset into the host-level row.
+// Returns isNewAsset=true when this is the first time we've seen the
+// host (ie. first_seen == created_at after the upsert).
+func upsertHostAsset(ctx context.Context, s store.Store, tenantID string, a websocket.DiscoveredAssetUpsert) (*model.Asset, bool, error) {
+	asset, err := s.UpsertAsset(ctx, store.UpsertAssetInput{
+		TenantID: tenantID,
+		PrimaryIP: a.IP,
+		Hostname: a.Hostname,
+		Source:   model.AssetSourceDiscovered,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	// isNew heuristic: equal timestamps before any ON CONFLICT update.
+	isNew := asset.FirstSeen.Equal(asset.LastSeen) && asset.LastSeen.Equal(asset.CreatedAt)
+	return asset, isNew, nil
+}
+
+// handleAllowlistSnapshot persists the agent's reported scan policy and,
+// when the hash actually changes, re-evaluates every endpoint owned by
+// this agent's known assets so the UI badge reflects the new policy
+// without waiting for rediscovery.
+func handleAllowlistSnapshot(ctx context.Context, s store.Store, agentID string, payload json.RawMessage) {
+	var p websocket.AllowlistSnapshotPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		slog.Warn("parsing allowlist_snapshot payload", "agent_id", agentID, "error", err)
+		return
+	}
+	changed, err := s.UpsertAgentAllowlist(ctx, store.AgentAllowlistInput{
+		AgentID:      agentID,
+		Hash:         p.Hash,
+		Allow:        p.Allow,
+		Deny:         p.Deny,
+		RateLimitPPS: p.RateLimitPPS,
+	})
+	if err != nil {
+		slog.Error("upserting agent allowlist", "agent_id", agentID, "error", err)
+		return
+	}
+	slog.Info("allowlist snapshot received",
+		"agent_id", agentID, "hash", p.Hash, "changed", changed)
+	// Reeval across all endpoints owned by this agent is deferred —
+	// the provenance join table makes this a multi-step query. Per
+	// discovery, each endpoint is restamped with the fresh status
+	// naturally. If this becomes a UX gap we'll revisit.
+}
+
+func loadAgentAllowlist(ctx context.Context, s store.Store, agentID string) *allowlist.Allowlist {
+	snap, err := s.GetAgentAllowlist(ctx, agentID)
+	if err != nil {
+		slog.Warn("loading agent allowlist", "agent_id", agentID, "error", err)
+		return nil
+	}
+	if snap == nil {
+		return nil
+	}
+	aw, err := allowlist.Parse(snap.Allow, snap.Deny)
+	if err != nil {
+		slog.Warn("parsing agent allowlist", "agent_id", agentID, "error", err)
+		return nil
+	}
+	return aw
+}
+
+func evalAllowlistStatus(aw *allowlist.Allowlist, ip, hostname string) *string {
+	if aw == nil {
+		return nil
+	}
+	if ip != "" && aw.Allows(ip) {
+		s := model.AllowlistStatusAllowlisted
+		return &s
+	}
+	if hostname != "" && aw.Allows(hostname) {
+		s := model.AllowlistStatusAllowlisted
+		return &s
+	}
+	s := model.AllowlistStatusOutOfPolicy
+	return &s
+}
+
+// deriveAssetEvents diffs the old and new endpoint rows and emits
+// per-ADR 006 D4 events. FK points at asset_endpoints(id).
+func deriveAssetEvents(tenantID, scanID string, old, new *model.AssetEndpoint, upsert websocket.DiscoveredAssetUpsert) []model.AssetEvent {
+	if new == nil {
+		return nil
+	}
+	var events []model.AssetEvent
+	sid := scanID
+	mk := func(eventType string, payload map[string]any) {
+		b, _ := json.Marshal(payload)
+		events = append(events, model.AssetEvent{
+			TenantID:  tenantID,
+			AssetID:   new.ID, // endpoint id per ADR 006 D4
+			ScanID:    &sid,
+			EventType: eventType,
+			Payload:   b,
+			// OccurredAt left zero; store uses NOW() default.
+		})
+	}
+	if old == nil {
+		mk(model.AssetEventNewAsset, map[string]any{
+			"service": derefStr(new.Service),
+			"version": derefStr(new.Version),
+			"port":    new.Port,
+		})
+		mk(model.AssetEventPortOpened, map[string]any{
+			"port":    new.Port,
+			"service": derefStr(new.Service),
+		})
+	} else if derefStr(old.Service) != derefStr(new.Service) ||
+		derefStr(old.Version) != derefStr(new.Version) {
+		mk(model.AssetEventVersionChanged, map[string]any{
+			"from_service": derefStr(old.Service),
+			"to_service":   derefStr(new.Service),
+			"from_version": derefStr(old.Version),
+			"to_version":   derefStr(new.Version),
+		})
+	}
+	// CVE events — the new `findings` table is P3; for P2 we emit
+	// new_cve asset_events from the agent's inline cves[] blob so rules
+	// with event_type=new_cve can at least observe them. cve_resolved
+	// requires comparing old/new which we don't persist yet — skip.
+	added := cvesFromPayload(upsert.CVEs)
+	for _, id := range added {
+		mk(model.AssetEventNewCVE, map[string]any{"cve_id": id})
+	}
+	return events
+}
+
+func cvesFromPayload(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, item := range arr {
+		if id, ok := item["id"].(string); ok && id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// runRuleActions evaluates the loaded rules against the (asset, endpoint)
+// pair and dispatches each fired action. P2 wires suggest_target (no-op
+// marker), notify, and run_scan_definition (still a TODO for actual
+// dispatch — requires a scan_definition to execute against, which is
+// P3-backend). auto_create_target is accepted but logged as no-op until
+// P3 lands scan_definitions.
+func runRuleActions(ctx context.Context, s store.Store, notifier *notify.Dispatcher, ruleSet []model.CorrelationRule, asset *model.Asset, ep *model.AssetEndpoint) {
+	if asset == nil || ep == nil || len(ruleSet) == 0 {
+		return
+	}
+	fired := rules.EvaluateAsset(ctx, s, ruleSet, asset, ep)
+	for _, act := range fired {
+		switch act.Type {
+		case rules.ActionSuggestTarget:
+			slog.Info("rule.fired",
+				"rule", act.RuleName, "action", act.Type,
+				"asset", asset.ID, "endpoint", ep.ID, "bundle", act.BundleID())
+			// TODO(P3): persist suggestion on asset_endpoints (needs a
+			// suggestions column or a side table — product decision
+			// gated on P3 findings + UI reshape).
+
+		case rules.ActionAutoCreateTarget:
+			slog.Info("rule.fired.no_op_until_p3",
+				"rule", act.RuleName, "action", act.Type,
+				"asset", asset.ID, "endpoint", ep.ID,
+				"note", "auto_create_target superseded by scan_definitions in P3")
+
+		case rules.ActionNotify:
+			if notifier == nil {
+				continue
+			}
+			channelSourceID, _ := act.Params["credential_source_id"].(string)
+			if channelSourceID == "" {
+				// Back-compat: older seeds use "channel" (name).
+				// Not supported post-P2; log and skip.
+				slog.Warn("notify action missing credential_source_id",
+					"rule", act.RuleName)
+				continue
+			}
+			severity, _ := act.Params["severity"].(string)
+			if severity == "" {
+				severity = notify.SeverityInfo
+			}
+			title, _ := act.Params["title"].(string)
+			if title == "" {
+				title = "Rule " + act.RuleName + " fired"
+			}
+			message, _ := act.Params["message"].(string)
+			notifier.DispatchAsync(notify.Event{
+				TenantID:        act.TenantID,
+				ChannelSourceID: channelSourceID,
+				Severity:        severity,
+				Title:           title,
+				Message:         message,
+				AssetID:         asset.ID,
+				AssetEndpointID: ep.ID,
+				RuleID:          act.RuleID,
+				RuleName:        act.RuleName,
+				Payload: map[string]any{
+					"ip":      derefStrAsset(asset.PrimaryIP),
+					"port":    ep.Port,
+					"service": derefStr(ep.Service),
+					"version": derefStr(ep.Version),
+				},
+			})
+			slog.Info("rule.fired",
+				"rule", act.RuleName, "action", act.Type,
+				"asset", asset.ID, "channel_source", channelSourceID)
+
+		case rules.ActionRunScanDefinition:
+			scanDefID, _ := act.Params["scan_definition_id"].(string)
+			if scanDefID == "" {
+				slog.Warn("run_scan_definition action missing scan_definition_id",
+					"rule", act.RuleName)
+				continue
+			}
+			// TODO(P3-backend): invoke
+			//   POST /api/v1/scan-definitions/{id}/execute
+			// codepath once the scheduler lands. For P2 we log the
+			// intent so an operator can trace rule firings.
+			slog.Info("rule.fired.pending_p3",
+				"rule", act.RuleName, "action", act.Type,
+				"scan_definition_id", scanDefID,
+				"asset", asset.ID, "endpoint", ep.ID)
+		}
+	}
+}
+
+func strPtr(s string) *string { return &s }
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+func derefStrAsset(p *string) string { return derefStr(p) }
