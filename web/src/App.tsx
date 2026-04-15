@@ -12,6 +12,7 @@ import OneShotScans from './pages/OneShotScans';
 import Agents from './pages/Agents';
 import Scans from './pages/Scans';
 import ScanResults from './pages/ScanResults';
+import Findings from './pages/Findings';
 import Team from './pages/Team';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
@@ -46,6 +47,7 @@ export default function App() {
               <Route path="/agents" element={<Agents />} />
               <Route path="/scans" element={<Scans />} />
               <Route path="/scans/:id" element={<ScanResults />} />
+              <Route path="/findings" element={<Findings />} />
               <Route path="/team" element={<Team />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/rules" element={<CorrelationRules />} />

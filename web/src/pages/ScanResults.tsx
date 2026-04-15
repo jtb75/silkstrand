@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getScan } from '../api/client';
-import type { Scan, ScanResult } from '../api/types';
+import { getScan, listFindings } from '../api/client';
+import type { Scan, ScanResult, Finding } from '../api/types';
+
+type ResultsTab = 'overview' | 'findings';
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{status}</span>;
@@ -88,8 +90,50 @@ function ResultRow({ result }: { result: ScanResult }) {
   );
 }
 
+function FindingsTab({ scanId }: { scanId: string }) {
+  const { data, isLoading, error } = useQuery<Finding[]>({
+    queryKey: ['findings', { scan_id: scanId }],
+    queryFn: () => listFindings({ scan_id: scanId }),
+  });
+
+  if (isLoading) return <p>Loading findings…</p>;
+  if (error) return <p className="error">Failed to load findings: {(error as Error).message}</p>;
+  if (!data || data.length === 0) return <p>No findings for this scan.</p>;
+
+  return (
+    <table className="table">
+      <thead>
+        <tr>
+          <th>Severity</th>
+          <th>Title</th>
+          <th>Source</th>
+          <th>Endpoint</th>
+          <th>Status</th>
+          <th>Last Seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.map((f) => (
+          <tr key={f.id}>
+            <td><span className={`badge badge-sev-${(f.severity ?? '').toLowerCase()}`}>{f.severity ?? '—'}</span></td>
+            <td>{f.title}</td>
+            <td title={f.source_kind}>{f.source}{f.source_id ? ` / ${f.source_id}` : ''}</td>
+            <td>
+              {(f.asset_hostname || f.asset_ip || f.asset_endpoint_id.slice(0, 8) + '…')}
+              {f.endpoint_port != null ? `:${f.endpoint_port}` : ''}
+            </td>
+            <td><span className={`badge badge-${f.status}`}>{f.status}</span></td>
+            <td>{new Date(f.last_seen).toLocaleString()}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 export default function ScanResults() {
   const { id } = useParams<{ id: string }>();
+  const [tab, setTab] = useState<ResultsTab>('overview');
 
   const { data: scan, isLoading, error } = useQuery<Scan>({
     queryKey: ['scan', id],
@@ -115,6 +159,37 @@ export default function ScanResults() {
       </Link>
 
       <h1>Scan Results</h1>
+
+      <div className="tabbar" style={{ display: 'flex', gap: 16, borderBottom: '1px solid #e5e7eb', marginBottom: 16 }}>
+        {(['overview', 'findings'] as ResultsTab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: '8px 4px',
+              cursor: 'pointer',
+              fontWeight: tab === t ? 600 : 400,
+              borderBottom: tab === t ? '2px solid #2563eb' : '2px solid transparent',
+              marginBottom: -1,
+              textTransform: 'capitalize',
+            }}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'findings' && id && <FindingsTab scanId={id} />}
+      {tab === 'overview' && <ScanOverview scan={scan} /> }
+    </div>
+  );
+}
+
+function ScanOverview({ scan }: { scan: Scan }) {
+  return (
+    <div>
 
       <div className="scan-meta">
         <div>
