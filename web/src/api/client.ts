@@ -293,8 +293,11 @@ export const bulkCreateCredentialMappings = (
 export const deleteCredentialMapping = (id: string) =>
   request<void>(`/api/v1/credential-mappings/${id}`, { method: 'DELETE' });
 
-// Asset sets (ADR 003 R1c-b)
-import type { AssetSet, AssetSetPreview, OneShotScan } from './types';
+// Asset sets (ADR 003 R1c-b) — retained only as stand-in callers for
+// Findings.tsx + ScanDefinitions.tsx until they migrate to listCollections.
+// The /api/v1/asset-sets backend route was removed in migration 017; these
+// calls will 404 until the pages switch to collections.
+import type { AssetSet, AssetSetPreview } from './types';
 export const listAssetSets = () => request<AssetSet[]>('/api/v1/asset-sets');
 
 export interface UpsertAssetSetRequest {
@@ -319,25 +322,6 @@ export const previewAssetSetAdhoc = (predicate: Record<string, unknown>) =>
   request<AssetSetPreview>('/api/v1/asset-sets/preview', {
     method: 'POST',
     body: JSON.stringify({ predicate }),
-  });
-
-// One-shot scans (ADR 003 R1c-c)
-export const listOneShotScans = () => request<OneShotScan[]>('/api/v1/one-shot-scans');
-
-export interface CreateOneShotScanRequest {
-  bundle_id: string;
-  agent_id: string;
-  asset_set_id?: string;
-  inline_predicate?: Record<string, unknown>;
-  max_concurrency?: number;
-  rate_limit_pps?: number;
-  triggered_by?: string;
-}
-
-export const createOneShotScan = (req: CreateOneShotScanRequest) =>
-  request<OneShotScan>('/api/v1/one-shot-scans', {
-    method: 'POST',
-    body: JSON.stringify(req),
   });
 
 // ─── Collections (ADR 006 D5) ────────────────────────────────────────────────

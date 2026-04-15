@@ -219,22 +219,6 @@ export interface AssetEndpoint {
   coverage?: CoverageFlags;
 }
 
-export interface OneShotScan {
-  id: string;
-  tenant_id: string;
-  bundle_id: string;
-  asset_set_id?: string;
-  inline_predicate?: Record<string, unknown>;
-  max_concurrency: number;
-  rate_limit_pps?: number;
-  total_targets?: number;
-  completed_targets: number;
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  triggered_by?: string;
-  created_at: string;
-  dispatched_at?: string;
-  completed_at?: string;
-}
 
 export type AssetEventType =
   | 'new_asset'
