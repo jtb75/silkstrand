@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -31,6 +32,12 @@ func runNaabu(ctx context.Context, target string, ratePPS int, onFinding func(Na
 		"-json",
 		"-silent",
 		"-rate", strconv.Itoa(ratePPS),
+	}
+	// SYN scan is the default and needs CAP_NET_RAW. When the agent runs
+	// in an unprivileged container, set SILKSTRAND_NAABU_SCAN_TYPE=c to
+	// use CONNECT mode instead (works without raw sockets, slightly slower).
+	if st := os.Getenv("SILKSTRAND_NAABU_SCAN_TYPE"); st != "" {
+		args = append(args, "-scan-type", st)
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	stdout, err := cmd.StdoutPipe()
