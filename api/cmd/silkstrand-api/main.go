@@ -350,28 +350,6 @@ func runMigrations(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("creating migrator: %w", err)
 	}
-	// Auto-heal a dirty migration state. golang-migrate marks the table
-	// dirty when a migration fails partway; subsequent Up() calls refuse
-	// to run. For our greenfield refactor this is cheap to recover: force
-	// the dirty version back to its predecessor, run the down migration
-	// to wipe any partial state, then retry Up() normally.
-	version, dirty, verr := m.Version()
-	if verr != nil && verr != migrate.ErrNilVersion {
-		return fmt.Errorf("reading migration version: %w", verr)
-	}
-	if dirty {
-		slog.Warn("schema_migrations dirty — attempting auto-heal",
-			"version", version)
-		if err := m.Force(int(version)); err != nil {
-			return fmt.Errorf("forcing dirty version clean: %w", err)
-		}
-		if version > 0 {
-			if err := m.Migrate(uint(version) - 1); err != nil && err != migrate.ErrNoChange {
-				return fmt.Errorf("rolling back dirty migration: %w", err)
-			}
-		}
-		slog.Info("auto-heal complete; retrying Up()")
-	}
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("running migrations: %w", err)
 	}

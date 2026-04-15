@@ -10,37 +10,11 @@
 -- drops and rebuilds. Data loss here is by design.
 
 -- ============================================================
--- Step 1 — UUID randomness cleanup (ADR 006 D10).
--- Rewrite legitimately-leaked dev-seed bundle ids to random v4
--- BEFORE the guard runs. The discovery bundle (11111111-…) is
--- reserved and explicitly excluded.
--- ============================================================
-UPDATE bundles
-   SET id = uuid_generate_v4()
- WHERE id::text LIKE '00000000-0000-0000-0000-0000000000%'
-   AND id <> '11111111-1111-1111-1111-111111111111';
-
--- ============================================================
--- Step 2 — UUID randomness guard (ADR 006 D10).
--- Refuse to migrate if any non-reserved row still carries a
--- dev-seed-pattern id. This must stay green on every future
--- migration; treat a failure here as a signal to audit the
--- seed path that produced the leak.
--- ============================================================
-DO $$
-DECLARE leaked INT;
-BEGIN
-  SELECT COUNT(*) INTO leaked FROM bundles
-    WHERE id::text LIKE '00000000-0000-0000-0000-0000000000%'
-      AND id <> '11111111-1111-1111-1111-111111111111';
-  IF leaked > 0 THEN
-    RAISE EXCEPTION 'UUID randomness invariant violated: % bundle rows with dev-seed ids after cleanup.', leaked;
-  END IF;
-END $$;
-
--- ============================================================
--- Step 3 — Drop the old recon pipeline + scan_results + scans.
--- Order matters: FKs cascade from child to parent.
+-- Step 1 — Drop the old recon pipeline + scan_results + scans.
+-- Must run BEFORE the UUID cleanup because scans.bundle_id is an
+-- FK to bundles without ON UPDATE CASCADE; we can't rewrite bundle
+-- ids while those references are still live.
+-- Order matters here too: FKs cascade from child to parent.
 -- ============================================================
 DROP TABLE IF EXISTS scan_results CASCADE;
 DROP TABLE IF EXISTS scans CASCADE;
@@ -56,6 +30,36 @@ DROP TABLE IF EXISTS agent_allowlists CASCADE;
 -- Drop any leftover columns on surviving tables that referenced the
 -- dropped ones. targets.asset_id referenced discovered_assets.
 ALTER TABLE targets DROP COLUMN IF EXISTS asset_id;
+
+-- ============================================================
+-- Step 2 — UUID randomness cleanup (ADR 006 D10).
+-- Rewrite legitimately-leaked dev-seed bundle ids to random v4.
+-- Runs AFTER the scans/one_shot_scans/etc. drops in step 1 so no
+-- live FK references block the UPDATE. The discovery bundle
+-- (11111111-…) is reserved and explicitly excluded.
+-- ============================================================
+UPDATE bundles
+   SET id = uuid_generate_v4()
+ WHERE id::text LIKE '00000000-0000-0000-0000-0000000000%'
+   AND id <> '11111111-1111-1111-1111-111111111111';
+
+-- ============================================================
+-- Step 3 — UUID randomness guard (ADR 006 D10).
+-- Refuse to migrate if any non-reserved row still carries a
+-- dev-seed-pattern id. This must stay green on every future
+-- migration; treat a failure here as a signal to audit the
+-- seed path that produced the leak.
+-- ============================================================
+DO $$
+DECLARE leaked INT;
+BEGIN
+  SELECT COUNT(*) INTO leaked FROM bundles
+    WHERE id::text LIKE '00000000-0000-0000-0000-0000000000%'
+      AND id <> '11111111-1111-1111-1111-111111111111';
+  IF leaked > 0 THEN
+    RAISE EXCEPTION 'UUID randomness invariant violated: % bundle rows with dev-seed ids after cleanup.', leaked;
+  END IF;
+END $$;
 
 -- ============================================================
 -- Step 4 — Narrow targets to CIDR / network_range only (ADR 006 D8).
