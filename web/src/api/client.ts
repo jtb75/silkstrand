@@ -293,37 +293,6 @@ export const bulkCreateCredentialMappings = (
 export const deleteCredentialMapping = (id: string) =>
   request<void>(`/api/v1/credential-mappings/${id}`, { method: 'DELETE' });
 
-// Asset sets (ADR 003 R1c-b) — retained only as stand-in callers for
-// Findings.tsx + ScanDefinitions.tsx until they migrate to listCollections.
-// The /api/v1/asset-sets backend route was removed in migration 017; these
-// calls will 404 until the pages switch to collections.
-import type { AssetSet, AssetSetPreview } from './types';
-export const listAssetSets = () => request<AssetSet[]>('/api/v1/asset-sets');
-
-export interface UpsertAssetSetRequest {
-  name: string;
-  description?: string;
-  predicate: Record<string, unknown>;
-}
-
-export const createAssetSet = (req: UpsertAssetSetRequest) =>
-  request<AssetSet>('/api/v1/asset-sets', { method: 'POST', body: JSON.stringify(req) });
-
-export const updateAssetSet = (id: string, req: UpsertAssetSetRequest) =>
-  request<AssetSet>(`/api/v1/asset-sets/${id}`, { method: 'PUT', body: JSON.stringify(req) });
-
-export const deleteAssetSet = (id: string) =>
-  request<void>(`/api/v1/asset-sets/${id}`, { method: 'DELETE' });
-
-export const previewAssetSet = (id: string) =>
-  request<AssetSetPreview>(`/api/v1/asset-sets/${id}/preview`);
-
-export const previewAssetSetAdhoc = (predicate: Record<string, unknown>) =>
-  request<AssetSetPreview>('/api/v1/asset-sets/preview', {
-    method: 'POST',
-    body: JSON.stringify({ predicate }),
-  });
-
 // ─── Collections (ADR 006 D5) ────────────────────────────────────────────────
 // Collections replace Asset Sets. Until P4-backend lands and/or the
 // /api/v1/asset-sets alias is deprecated, these client methods target the
