@@ -30,7 +30,7 @@ jobs:
       backoffice: ${{ steps.set.outputs.backoffice }}
       backoffice-web: ${{ steps.set.outputs.backoffice-web }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 2
       - uses: dorny/paths-filter@v4
@@ -76,7 +76,7 @@ jobs:
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -103,7 +103,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.web == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -140,7 +140,7 @@ jobs:
     env:
       TF_WORKING_DIR: terraform/environments/stage
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: hashicorp/setup-terraform@v4
         with:
