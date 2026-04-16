@@ -21,6 +21,7 @@ import (
 	"github.com/jtb75/silkstrand/agent/internal/bootstrap"
 	"github.com/jtb75/silkstrand/agent/internal/cache"
 	"github.com/jtb75/silkstrand/agent/internal/config"
+	"github.com/jtb75/silkstrand/agent/internal/logstream"
 	"github.com/jtb75/silkstrand/agent/internal/prober"
 	"github.com/jtb75/silkstrand/agent/internal/runner"
 	"github.com/jtb75/silkstrand/agent/internal/tunnel"
@@ -97,6 +98,15 @@ func main() {
 	pythonRunner := runner.NewPythonRunner()
 	tun := tunnel.New(cfg.APIURL, cfg.AgentID, cfg.AgentKey)
 
+	// Install the dual-handler slog stack per ADR 008 D1: stdout keeps
+	// every level (debug stays local per D2), tunnel ships info+ only
+	// so the control-plane UI has a live console without drowning in
+	// debug output. A rate-limit drop triggers a summary log line
+	// (D6); see logstream/tunnel_handler.go.
+	stdoutHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})
+	tunnelHandler := logstream.NewTunnelHandler(tun)
+	slog.SetDefault(slog.New(logstream.NewMulti(stdoutHandler, tunnelHandler)))
+
 	// Concurrency limiter: 1 scan at a time
 	scanSem := make(chan struct{}, 1)
 
@@ -164,7 +174,11 @@ func main() {
 }
 
 func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunnel.DirectivePayload) {
-	slog.Info("received scan directive",
+	// Stamp scan_id onto every log record emitted in this goroutine so
+	// the Scan Results console (ADR 008 D4) can filter cleanly.
+	ctx := logstream.WithScanID(context.Background(), d.ScanID)
+
+	slog.InfoContext(ctx, "received scan directive",
 		"scan_id", d.ScanID,
 		"bundle", d.BundleName,
 		"version", d.BundleVersion,
@@ -178,10 +192,10 @@ func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunn
 	bundlePath, err := c.GetOrFetch(d.BundleName, d.BundleVersion, d.BundleURL)
 	if err != nil {
 		if errors.Is(err, cache.ErrNotCached) {
-			slog.Error("bundle not found in cache", "bundle", d.BundleName, "version", d.BundleVersion)
+			slog.ErrorContext(ctx, "bundle not found in cache", "bundle", d.BundleName, "version", d.BundleVersion)
 			sendError(tun, d.ScanID, "bundle not cached: "+d.BundleName+"@"+d.BundleVersion)
 		} else {
-			slog.Error("bundle fetch failed", "error", err)
+			slog.ErrorContext(ctx, "bundle fetch failed", "error", err)
 			sendError(tun, d.ScanID, "bundle error: "+err.Error())
 		}
 		return
@@ -190,13 +204,12 @@ func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunn
 	// Load manifest
 	manifest, err := runner.LoadManifest(bundlePath)
 	if err != nil {
-		slog.Error("loading manifest", "error", err)
+		slog.ErrorContext(ctx, "loading manifest", "error", err)
 		sendError(tun, d.ScanID, "manifest error: "+err.Error())
 		return
 	}
 
 	// Execute the bundle
-	ctx := context.Background()
 	results, err := r.Run(ctx, runner.RunRequest{
 		BundlePath:   bundlePath,
 		Manifest:     manifest,
@@ -204,14 +217,14 @@ func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunn
 		Credentials:  d.Credentials,
 	})
 	if err != nil {
-		slog.Error("bundle execution failed", "scan_id", d.ScanID, "error", err)
+		slog.ErrorContext(ctx, "bundle execution failed", "scan_id", d.ScanID, "error", err)
 		sendError(tun, d.ScanID, "execution error: "+err.Error())
 		return
 	}
 
 	// Send results back
 	sendResults(tun, d.ScanID, results)
-	slog.Info("scan completed", "scan_id", d.ScanID)
+	slog.InfoContext(ctx, "scan completed", "scan_id", d.ScanID)
 }
 
 func sendStarted(tun *tunnel.Tunnel, scanID string) {
@@ -294,7 +307,10 @@ func allowlistPath() string {
 // bundle_name on the directive are nominal so existing audit / scan
 // rows have something to point at.
 func handleDiscoveryDirective(tun *tunnel.Tunnel, d tunnel.DirectivePayload) {
-	slog.Info("received discovery directive",
+	// Per-scan log scope — see ADR 008 D4.
+	ctx := logstream.WithScanID(context.Background(), d.ScanID)
+
+	slog.InfoContext(ctx, "received discovery directive",
 		"scan_id", d.ScanID,
 		"target", d.TargetIdentifier,
 		"target_type", d.TargetType,
@@ -309,10 +325,9 @@ func handleDiscoveryDirective(tun *tunnel.Tunnel, d tunnel.DirectivePayload) {
 		return nil
 	}
 
-	ctx := context.Background()
 	res, err := runner.ReconRun(ctx, d, emit)
 	if err != nil {
-		slog.Error("discovery failed", "scan_id", d.ScanID, "error", err)
+		slog.ErrorContext(ctx, "discovery failed", "scan_id", d.ScanID, "error", err)
 		sendError(tun, d.ScanID, "discovery: "+err.Error())
 		return
 	}
@@ -323,6 +338,6 @@ func handleDiscoveryDirective(tun *tunnel.Tunnel, d tunnel.DirectivePayload) {
 		HostsScanned: res.HostsScanned,
 	})
 	tun.Send(tunnel.Message{Type: tunnel.TypeDiscoveryCompleted, Payload: completed})
-	slog.Info("discovery completed", "scan_id", d.ScanID,
+	slog.InfoContext(ctx, "discovery completed", "scan_id", d.ScanID,
 		"assets_found", res.AssetsFound, "hosts_scanned", res.HostsScanned)
 }

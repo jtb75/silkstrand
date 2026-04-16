@@ -77,9 +77,9 @@ func run() error {
 	// Events bus — in-process pub/sub for SSE fan-out. Passed to handlers
 	// that need to publish (agent WSS → scan_progress, agent_log) and to
 	// the events handler that exposes the SSE subscriber endpoint.
-	// PR A has no publishers wired yet; this is the transport only.
+	// PR D wires the agent_log publisher; scan_progress lands in PR B.
 	eventBus := events.NewMemoryBus()
-	hub.OnMessage = buildOnMessage(pgStore, ps, notifier, sched.D)
+	hub.OnMessage = buildOnMessage(pgStore, ps, notifier, sched.D, eventBus)
 
 	// Scheduler goroutine (ADR 007 D4). Started before routes are served
 	// so locally-due definitions dispatch promptly on boot.
@@ -281,7 +281,9 @@ func run() error {
 // buildOnMessage routes agent → server WSS messages. P2 live surface:
 // asset_discovered and allowlist_snapshot ingest against the new
 // asset / asset_endpoint schema; the rule engine fires per endpoint.
-func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatcher, sched scheduler.Dispatcher) func(agentID string, msg websocket.Message) {
+// ADR 008 adds agent_log: republish through the event bus (no DB write)
+// for SSE fan-out to the Agents and Scan-Results consoles.
+func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatcher, sched scheduler.Dispatcher, bus events.Bus) func(agentID string, msg websocket.Message) {
 	return func(agentID string, msg websocket.Message) {
 		ctx := context.Background()
 
@@ -337,6 +339,9 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 
 		case websocket.TypeAssetDiscovered:
 			handleAssetDiscovered(ctx, s, notifier, sched, agentID, msg.Payload)
+
+		case websocket.TypeAgentLog:
+			handleAgentLog(ctx, s, bus, agentID, msg.Payload)
 
 		case websocket.TypeDiscoveryCompleted:
 			var payload websocket.DiscoveryCompletedPayload
@@ -531,6 +536,35 @@ func handleAllowlistSnapshot(ctx context.Context, s store.Store, agentID string,
 	// the provenance join table makes this a multi-step query. Per
 	// discovery, each endpoint is restamped with the fresh status
 	// naturally. If this becomes a UX gap we'll revisit.
+}
+
+// handleAgentLog receives the agent's {type:"agent_log"} WSS message and
+// republishes it on the event bus for SSE consumers. Per ADR 008 D5 we
+// DO NOT persist — subscribers that arrive late miss the line (it's
+// still on the agent's local file). Tenant is resolved from the agent
+// row so cross-tenant leakage is impossible.
+func handleAgentLog(ctx context.Context, s store.Store, bus events.Bus, agentID string, payload json.RawMessage) {
+	if bus == nil || len(payload) == 0 {
+		return
+	}
+	agent, err := s.GetAgentByID(ctx, agentID)
+	if err != nil || agent == nil {
+		// Agent row should exist — the WSS connection wouldn't have
+		// authed otherwise. Drop the event rather than letting an
+		// unknown agent's payload onto the bus.
+		slog.Warn("agent_log: agent lookup failed", "agent_id", agentID, "error", err)
+		return
+	}
+	if err := bus.Publish(ctx, events.Event{
+		TenantID:     agent.TenantID,
+		Kind:         "agent_log",
+		ResourceType: "agent",
+		ResourceID:   agentID,
+		OccurredAt:   time.Now().UTC(),
+		Payload:      payload,
+	}); err != nil {
+		slog.Warn("agent_log publish failed", "agent_id", agentID, "error", err)
+	}
 }
 
 func loadAgentAllowlist(ctx context.Context, s store.Store, agentID string) *allowlist.Allowlist {
