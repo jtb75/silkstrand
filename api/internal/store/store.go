@@ -251,7 +251,7 @@ type AgentAllowlistInput struct {
 // and for rediscovery-free re-evaluation when the snapshot changes.
 type AgentAllowlistSnapshot struct {
 	AgentID      string    `json:"agent_id"`
-	Hash         string    `json:"hash"`
+	Hash         string    `json:"snapshot_hash"`
 	Allow        []string  `json:"allow"`
 	Deny         []string  `json:"deny"`
 	RateLimitPPS int       `json:"rate_limit_pps"`
