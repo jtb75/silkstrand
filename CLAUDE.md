@@ -130,8 +130,7 @@ silkstrand/
 │       └── pages/          # Dashboard, Assets (3-tab), Findings, Collections,
 │                           #   ScanDefinitions, ScanActivity, Credentials,
 │                           #   CorrelationRules, Agents, Targets, Settings, Team,
-│                           #   (+ auth pages). Legacy: Scans, ScanResults, OneShotScans
-│                           #   remain as thin compat shims pending removal.
+│                           #   Scans, ScanResults (+ auth pages)
 ├── bundles/                # Compliance bundles
 │   ├── cis-postgresql-16/
 │   ├── cis-mssql-2022/
@@ -166,7 +165,10 @@ silkstrand/
 | **P5-a** | Dashboard KPIs + Suggested Actions + Recent Activity widgets | ✅ shipped v0.1.49 |
 | **P5-b** | Consolidated Credentials page (sources + mappings; former Channels folded in) | ✅ shipped v0.1.49 |
 | **P6-prep** | Asset-first audit gaps closed; migration ordering hardened | ✅ shipped v0.1.49 |
-| **P6** | Integration smoke (end-to-end asset-first scan lifecycle on stage) before prod tag | ⏳ in progress |
+| **P6** | Integration smoke (end-to-end asset-first scan lifecycle on stage) before prod tag | ✅ shipped v0.1.49 (tagged to prod) |
+| **v0.1.50** | Fix `snapshot_hash` field on agent allowlist ingestion | ✅ shipped |
+| **v0.1.51** | Nginx SPA fallback fix (403 on deep-link refresh) | ✅ shipped |
+| **v0.1.52** | Flatten asset API response + Assets/Endpoints rendering fix + `time.ts` date formatting | ✅ shipped |
 | **Deferred** | Notification retry worker · email + pagerduty senders · vault resolvers (ADR 004 C1+) · `suggest_target` DB writeback · AWS cloud discovery (R2) | ⏸ |
 
 ADR 004 (credential resolver) is at **C0** (plumbing — `credential_sources.type` now covers `static` plus the integration/vault slots reserved for C1+ resolvers; legacy `credentials` table dropped in migration 014). C1+ resolvers (AWS Secrets Manager / Vault / etc.) are planned but not started.
@@ -189,7 +191,16 @@ Implementation plans live in `docs/plans/ui-shape.md` (asset-first nav + page sh
 - **Collections** — saved JSONB predicates over assets/endpoints/findings (`scope` in `asset | endpoint | finding`). Replaces the legacy asset_sets; used as scope by scan_definitions and rules, and as the scoping surface for findings views.
 - **Edge Agent** — Go binary with WSS tunnel (exponential backoff reconnect), Python compliance runner, recon runner (naabu/httpx/nuclei via runtime download from `gs://silkstrand-runtimes`), bundle cache, heartbeat. Customer-controlled scan allowlist (`/etc/silkstrand/scan-allowlist.yaml`) gates every recon directive. Docker-mode installer shipped in v0.1.48. Cross-compiled for 6 platforms on release.
 - **Compliance Bundles** — three live: `cis-postgresql-16`, `cis-mssql-2022`, `cis-mongodb-8`. Per-engine probers (postgres, mssql, mongodb, mysql) wire credentials through to the Python runtime via FD pipe (no on-disk credential file on Unix).
-- **Tenant Frontend** — React + TypeScript SPA. Pages: **Dashboard** (KPI tiles, Suggested Actions, Recent Activity), **Assets** (3-tab view: Assets / Endpoints / Services, bulk actions, coverage column, detail drawer), **Findings** (unified list across compliance + network, suppress/reopen), **Collections** (visual predicate builder across asset/endpoint/finding scopes, preview), **Scan Definitions** (CRUD + schedule + coverage + manual execute), **Scan Activity** (run history), **Credentials** (consolidated: sources + mappings; former Notification Channels UX folded in), **Rules** (correlation rule CRUD with edit + auto-versioning; match by collection_id), **Agents** (install-token one-liner, per-agent Allowlist viewer, Upgrade, Rotate key, Delete), **Targets** (still present as the "how-to-scan" surface per endpoint), Settings, Team. In-house auth (login / accept-invite / forgot-password / reset-password), `<TenantSwitcher />` in the topbar. Dockerfile with nginx that splits `/api/v1/tenant-auth/*` → backoffice and `/api/*` → DC API.
+- **Tenant Frontend** — React + TypeScript SPA with asset-first navigation (v0.1.49+):
+  - **Dashboard** — KPI row (total assets, endpoints with findings, coverage %, open findings) + Suggested Actions widget + Recent Activity feed
+  - **Assets** — three tabs (Assets / Endpoints / Findings), bulk actions bar, coverage column, save-as-collection; asset detail drawer with 6-section layout (Identity / Lifecycle / Risk / Endpoints / Coverage / Relationships)
+  - **Findings** — two tabs (Vulnerabilities / Compliance), suppress/reopen lifecycle, collection-scoped filtering
+  - **Collections** — replaces Asset Sets; two tabs, visual predicate builder (scope: asset / endpoint / finding), query preview, scope picker
+  - **Scans** — three tabs (Definitions / Activity / Targets), coverage impact strip; scan definitions CRUD + cron schedule + manual execute
+  - **Credentials** — consolidated: credential sources + mappings (former Notification Channels UX folded in)
+  - **Settings** — tabbed layout (Profile / Team / Credentials / Audit placeholder)
+  - **Rules** (correlation rule CRUD with edit + auto-versioning; match by collection_id), **Agents** (install-token one-liner, per-agent Allowlist viewer, Upgrade, Rotate key, Delete), **Targets** (retained as the "how-to-scan" surface per endpoint)
+  - In-house auth (login / accept-invite / forgot-password / reset-password), `<TenantSwitcher />` in the topbar. Dockerfile with nginx that splits `/api/v1/tenant-auth/*` → backoffice and `/api/*` → DC API.
 - **Backoffice Manager** — Separate Go module + React frontend:
   - Data center registration with AES-256-GCM encrypted API key storage
   - Two-phase tenant provisioning (backoffice DB → DC API call, retry on failure)
@@ -216,19 +227,19 @@ All sensitive Cloud Run env vars (DATABASE_URL, REDIS_URL, JWT_SECRET, INTERNAL_
 
 ### What's Not Built Yet
 
-- **P6 integration smoke** — end-to-end asset-first lifecycle verification on stage before we tag v0.1.49 to prod
-- **Notification retry worker** — failed delivery rows stay failed; rule must re-fire to retry
+- **CIDR-scope scheduler dispatch** — `scope_kind=cidr` logs and skips; only `collection` scope fires today
+- **Endpoints tab per-port API** — currently shows host-level rows; per-port detail not yet wired
+- **Full design-system token migration** — `.ss-*` CSS classes partially adopted; not yet project-wide
+- **Compliance scan against real DB target** — pipeline proven end-to-end but no compliance findings generated yet
 - **Email + PagerDuty notification senders** — stubbed; webhook + Slack are live
-- **`suggest_target` DB writeback** — rule action currently logs only
-- **Vault / CyberArk / AWS Secrets Manager credential resolvers** (ADR 004 C1+)
+- **Notification retry worker** — failed delivery rows stay failed; rule must re-fire to retry
+- **Per-agent scan queue** — concurrent scans fail rather than queuing
+- **Docker-agent installer UI** — plan + shell script done; install-command generator not built
 - **AWS cloud discovery** (`target_type: aws_account`, cloud-native credential auto-binding via `MasterUserSecret`)
-- **Per-tenant bundle template selection** — backoffice catalog + tenant settings + directive extension
+- **Vault / CyberArk / AWS Secrets Manager credential resolvers** (ADR 004 C1+)
 - **Bundle upload API** — bundles registered in DB but no upload endpoint; currently seeded manually
-- **Frontend pagination** for list endpoints
 - **Agent WebSocket origin restriction** for production
-- **Audit log surfacing** (ADR 005 drafted; O7 work — plumbing, UI, retention worker)
-- **Live scan progress in UI / agent logs** (`docs/plans/scan-progress-and-sse.md` drafted — SSE framework, agent emission, UI progress view)
-- **Raw agent-log streaming into UI** (separate future ADR)
+- **Audit log UI** (ADR 005 drafted; placeholder tab exists in Settings)
 
 ## DC API Routes
 
@@ -573,6 +584,9 @@ curl -s localhost:8080/api/v1/scans/<scan_id> -H "Authorization: Bearer $TOKEN" 
 | `SILKSTRAND_AGENT_KEY` | (required) | Agent API key |
 | `SILKSTRAND_BUNDLE_DIR` | `./bundles` | Local bundle directory |
 | `SILKSTRAND_LOG_LEVEL` | `info` | Log level |
+| `SILKSTRAND_NAABU_SCAN_TYPE` | (none) | Override naabu scan type (e.g. `c` for connect-scan in unprivileged containers) |
+| `SILKSTRAND_SCAN_ALLOWLIST_PATH` | `/etc/silkstrand/scan-allowlist.yaml` | Path to customer scan allowlist file |
+| `SILKSTRAND_RUNTIMES_DIR` | (none) | Local directory for recon tool binaries (airgapped/test; skips GCS download) |
 
 ## GitHub Secrets & Variables
 
