@@ -2117,7 +2117,7 @@ func (s *PostgresStore) SetFindingStatus(ctx context.Context, id, status string)
 // ======================================================================
 
 const scanDefCols = `id, tenant_id, name, kind, bundle_id, scope_kind,
-	asset_endpoint_id, collection_id, host(cidr) as cidr,
+	asset_endpoint_id, collection_id, cidr::text,
 	agent_id, schedule, enabled, next_run_at, last_run_at, last_run_status,
 	created_at, updated_at, created_by`
 
