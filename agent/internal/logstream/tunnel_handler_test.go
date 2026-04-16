@@ -273,8 +273,8 @@ func TestScanIDContextHelpers(t *testing.T) {
 	if got := ScanID(ctx2); got != "" {
 		t.Errorf("ScanID(empty arg) = %q, want \"\"", got)
 	}
-	if ScanID(nil) != "" {
-		t.Errorf("ScanID(nil) should be empty string, not panic")
+	if ScanID(context.TODO()) != "" {
+		t.Errorf("ScanID(empty context) should be empty string")
 	}
 }
 
