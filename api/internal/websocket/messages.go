@@ -15,6 +15,7 @@ const (
 	TypeAssetDiscovered    = "asset_discovered"    // ADR 003 R1a
 	TypeDiscoveryCompleted = "discovery_completed" // ADR 003 R1a
 	TypeAllowlistSnapshot  = "allowlist_snapshot"  // ADR 003 D11
+	TypeAgentLog           = "agent_log"           // ADR 008 — slog records streamed from agent
 )
 
 // AllowlistSnapshotPayload is the agent's most recently loaded scan
