@@ -24,6 +24,7 @@ import (
 
 	"github.com/jtb75/silkstrand/api/internal/allowlist"
 	"github.com/jtb75/silkstrand/api/internal/config"
+	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/handler"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
@@ -73,6 +74,11 @@ func run() error {
 	hub := websocket.NewHub()
 	notifier := notify.New(pgStore, cfg.CredentialEncryptionKey)
 	sched := scheduler.New(pgStore, ps)
+	// Events bus — in-process pub/sub for SSE fan-out. Passed to handlers
+	// that need to publish (agent WSS → scan_progress, agent_log) and to
+	// the events handler that exposes the SSE subscriber endpoint.
+	// PR A has no publishers wired yet; this is the transport only.
+	eventBus := events.NewMemoryBus()
 	hub.OnMessage = buildOnMessage(pgStore, ps, notifier, sched.D)
 
 	// Scheduler goroutine (ADR 007 D4). Started before routes are served
@@ -101,6 +107,7 @@ func run() error {
 	credMapH := handler.NewCredentialMappingsHandler(pgStore)
 	dashH := handler.NewDashboardHandler(pgStore)
 	rulesH := handler.NewCorrelationRulesHandler(pgStore)
+	eventsH := handler.NewEventsHandler(eventBus, cfg.JWTSecret)
 
 	mux := http.NewServeMux()
 
@@ -114,6 +121,13 @@ func run() error {
 	// Agent bootstrap + self-delete (authed by agent key, not tenant JWT)
 	mux.HandleFunc("POST /api/v1/agents/bootstrap", agentsH.Bootstrap)
 	mux.HandleFunc("DELETE /api/v1/agents/self", agentH.SelfDelete)
+
+	// Events SSE stream — auth is handled in-handler because EventSource
+	// can't set Authorization headers; accepts either the tenant JWT in
+	// the header (curl/CLI) or a short-lived stream token in ?token=.
+	// Attaching this to the plain mux avoids double-auth through the
+	// middleware chain and preserves the query-string-token path.
+	mux.HandleFunc("GET /api/v1/events/stream", eventsH.Stream)
 
 	// Internal (backoffice)
 	internalMux := http.NewServeMux()
@@ -219,6 +233,11 @@ func run() error {
 	apiMux.HandleFunc("POST /api/v1/credential-mappings/bulk", credMapH.BulkCreate)
 	apiMux.HandleFunc("GET /api/v1/credential-mappings/{id}", credMapH.Get)
 	apiMux.HandleFunc("DELETE /api/v1/credential-mappings/{id}", credMapH.Delete)
+
+	// Events — stream-token mint endpoint (tenant JWT required). The SSE
+	// stream itself is on the public mux because EventSource can't send
+	// headers, so it authenticates via ?token=<stream-token>.
+	apiMux.HandleFunc("POST /api/v1/events/stream-tokens", eventsH.MintStreamToken)
 
 	// Dashboard (P5-a). KPIs, Suggested Actions, Recent Activity.
 	apiMux.HandleFunc("GET /api/v1/dashboard", dashH.Get)
@@ -472,10 +491,10 @@ func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.
 // host (ie. first_seen == created_at after the upsert).
 func upsertHostAsset(ctx context.Context, s store.Store, tenantID string, a websocket.DiscoveredAssetUpsert) (*model.Asset, bool, error) {
 	asset, err := s.UpsertAsset(ctx, store.UpsertAssetInput{
-		TenantID: tenantID,
+		TenantID:  tenantID,
 		PrimaryIP: a.IP,
-		Hostname: a.Hostname,
-		Source:   model.AssetSourceDiscovered,
+		Hostname:  a.Hostname,
+		Source:    model.AssetSourceDiscovered,
 	})
 	if err != nil {
 		return nil, false, err
