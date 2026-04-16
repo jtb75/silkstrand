@@ -34,6 +34,12 @@ type Store interface {
 	CreateTarget(ctx context.Context, req model.CreateTargetRequest) (*model.Target, error)
 	UpdateTarget(ctx context.Context, id string, req model.UpdateTargetRequest) (*model.Target, error)
 	DeleteTarget(ctx context.Context, id string) error
+	// UpsertTargetByCIDR looks up (or creates) a targets row matching the
+	// tenant + CIDR tuple, returning its id. Used by the scheduler's
+	// CIDR-scope dispatch to materialize a target row so the agent
+	// receives a directive with target_type='cidr' + identifier=<cidr>.
+	// Relies on the partial unique index from migration 019.
+	UpsertTargetByCIDR(ctx context.Context, tenantID, cidr string, agentID *string, environment string) (string, error)
 
 	// Agents
 	GetAgent(ctx context.Context, id string) (*model.Agent, error)

@@ -183,6 +183,34 @@ func (s *PostgresStore) DeleteTarget(ctx context.Context, id string) error {
 	return nil
 }
 
+// UpsertTargetByCIDR upserts on the partial unique index
+// `targets_cidr_key` (tenant_id, type, identifier) WHERE type IN
+// ('cidr','network_range'). On conflict we refresh agent_id so a
+// scan_definition that is later bound to a different agent steers
+// subsequent ticks to the new agent without churning rows. environment
+// is only set on insert; on conflict we leave the existing value in
+// place (operators edit targets independently of scheduler dispatch).
+func (s *PostgresStore) UpsertTargetByCIDR(ctx context.Context, tenantID, cidr string, agentID *string, environment string) (string, error) {
+	var envPtr *string
+	if environment != "" {
+		e := environment
+		envPtr = &e
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO targets (tenant_id, type, identifier, agent_id, environment)
+		 VALUES ($1, 'cidr', $2, $3, $4)
+		 ON CONFLICT (tenant_id, type, identifier)
+		   WHERE type IN ('cidr','network_range')
+		 DO UPDATE SET agent_id = EXCLUDED.agent_id, updated_at = NOW()
+		 RETURNING id`,
+		tenantID, cidr, agentID, envPtr).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("upserting cidr target: %w", err)
+	}
+	return id, nil
+}
+
 // ======================================================================
 // Scans (execution history; ADR 007 D3). CreateScan is retained for the
 // ad-hoc debug path (POST /api/v1/scans) — scope expansion for scan
@@ -1891,6 +1919,7 @@ func (s *PostgresStore) CollectionsWithCredentialMappings(ctx context.Context) (
 	}
 	return out, rows.Err()
 }
+
 // UpsertFinding upserts on (asset_endpoint_id, source_kind, source, source_id).
 // A re-seen finding bumps last_seen and, if status was not suppressed, reopens
 // status per ADR 007 D2. If the incoming status is 'resolved' (compliance pass),
@@ -2359,4 +2388,3 @@ func strOrEmpty(p *string) string {
 	}
 	return *p
 }
-
