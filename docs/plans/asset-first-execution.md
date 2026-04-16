@@ -314,3 +314,23 @@ or P4 (~2 weeks each).
   parallelism; accept it.
 - No production customer traffic; only the studio tenant sees the stage
   deploy.
+
+## Post-execution notes (v0.1.52)
+
+All six phases (P1 through P6) shipped in v0.1.49 and the refactor was
+promoted to prod. Three stabilisation patches followed:
+
+- **v0.1.50** — `snapshot_hash` field fix on agent allowlist ingestion.
+- **v0.1.51** — nginx SPA fallback returned 403 on deep-link refresh.
+- **v0.1.52** — flattened asset API response + Assets/Endpoints rendering
+  fix + `time.ts` date formatting edge cases.
+
+### Deviations from plan
+
+| Planned | Actual |
+|---|---|
+| `scope_kind=cidr` dispatch in scheduler | Deferred — logs and skips; only `collection` scope fires |
+| Compliance findings from real DB target | Pipeline proven end-to-end but no bundle_compliance findings generated in prod yet |
+| Six-agent parallel phase for P3–P5 | Shipped by a single session in serial; wall-clock was ~2 weeks vs the planned 3 |
+| `suggest_target` DB writeback | Still log-only; deferred to a future release |
+| Email + PagerDuty notification senders | Still stubbed; webhook + Slack are live |
