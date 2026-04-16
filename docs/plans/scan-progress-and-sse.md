@@ -165,6 +165,37 @@ Each PR verifiable end-to-end against stage without requiring the next.
   republish them so the same hook works; schema differences stay
   behind the `kind` discriminator.
 
+## Second event kind: `agent_log` (ADR 008)
+
+The same SSE framework is the transport for agent log streaming per ADR
+008. Both event kinds share the bus; consumers filter by `kind`. Concrete
+deltas when `agent_log` lands:
+
+- **Agent handler** — `slog.NewMultiHandler(stdout, tunnel)` installs a
+  tunnel handler that emits `agent_log` events at info+ only. Debug stays
+  local.
+- **Server** — WSS parses `{type: "agent_log"}`, stamps tenant/agent ids,
+  republishes. No DB write by default; `agent_log_retention_days=0|7|30`
+  is a future opt-in per-tenant knob.
+- **UI** — two consumers:
+  - **Agents page → Console tab** subscribes to
+    `/events/stream?resource_type=agent&resource_id=<id>`.
+  - **Scan Results → Console tab** subscribes to
+    `/events/stream?kind=agent_log&scan_id=<id>` (agent stamps `scan_id`
+    on the payload when emitting inside a scan-scoped goroutine).
+- **Rate limit** — 50 lines/sec/agent token bucket on the agent side;
+  drops surface as a summary `agent_log.throttled` event every 5s.
+
+PR split for agent-log work layers on top of this plan's PRs:
+
+- After PR A (framework): the bus accepts `agent_log` events natively
+  via the same envelope — no framework changes.
+- **PR D** — agent-side tunnel handler + info+ filter + rate limit.
+- **PR E** — UI Console tabs on Agents page + Scan Results.
+
+Total: 5 PRs across both features, with PR A doing the heavy lifting
+once.
+
 ## Open questions (revisit during PR review)
 
 1. Do we compact progress events — e.g. drop `stage=naabu,state=started`
