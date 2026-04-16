@@ -70,34 +70,41 @@ export interface AssetSuggestion {
   suggested_at: string;
 }
 
+/**
+ * Flat asset shape returned by the list and detail handlers after the
+ * flatten-asset-response fix. Fields from model.Asset are spread at the
+ * top level; `coverage` and `risk` are sibling objects.
+ */
 export interface DiscoveredAsset {
   id: string;
   tenant_id: string;
-  ip: string;
-  port: number;
+  primary_ip?: string;
   hostname?: string;
-  service?: string;
-  version?: string;
-  technologies: unknown;
-  cves: CVE[] | unknown;
-  compliance_status?: string;
+  fingerprint?: Record<string, unknown>;
+  resource_type?: string;
   source: AssetSource;
-  environment?: string;
+  environment?: string | null;
   first_seen: string;
   last_seen: string;
-  last_scan_id?: string;
-  missed_scan_count: number;
-  metadata?: { suggested?: AssetSuggestion[]; [k: string]: unknown };
-  allowlist_status: AllowlistStatus;
-  allowlist_checked_at?: string;
   created_at: string;
-  updated_at: string;
-  // P4-backend: optional inline roll-ups so the Assets table can render
-  // Coverage and max-severity without a second round-trip per row.
   endpoints_count?: number;
   risk?: RiskRollup;
-  coverage?: CoverageFlags;
-  resource_type?: string;
+  coverage?: CoverageRollup;
+
+  // Legacy fields kept for backwards-compat with older backends / tests.
+  ip?: string;
+  port?: number;
+  service?: string;
+  version?: string;
+  technologies?: unknown;
+  cves?: CVE[] | unknown;
+  compliance_status?: string;
+  last_scan_id?: string;
+  missed_scan_count?: number;
+  metadata?: { suggested?: AssetSuggestion[]; [k: string]: unknown };
+  allowlist_status?: AllowlistStatus;
+  allowlist_checked_at?: string;
+  updated_at?: string;
 }
 
 export type AllowlistStatus = 'allowlisted' | 'out_of_policy' | 'unknown';
@@ -159,11 +166,18 @@ export interface CollectionPreview {
 }
 
 // Coverage + risk roll-ups returned inline on the asset detail response.
-// P4-backend extends /api/v1/assets/{id} to include these alongside the
-// existing DiscoveredAsset row. They are optional for backwards-compat.
+// Post-flatten, the Coverage object on the list response matches the Go
+// `Coverage` struct with endpoints_total, endpoints_with_scan_definition, etc.
 export interface CoverageFlags {
-  scan_configured: boolean;
-  creds_mapped: boolean;
+  scan_configured?: boolean;
+  creds_mapped?: boolean;
+  // New fields from the flattened Coverage struct:
+  endpoints_total?: number;
+  endpoints_with_scan_definition?: number;
+  endpoints_with_credential_mapping?: number;
+  last_scan_at?: string;
+  next_scan_at?: string;
+  gaps?: string[];
 }
 
 export interface RiskRollup {
@@ -181,6 +195,9 @@ export interface CoverageRollup {
   endpoints_total: number;
   endpoints_with_scan: number;
   endpoints_with_creds: number;
+  // Backend Coverage struct uses these names (flattened API response):
+  endpoints_with_scan_definition?: number;
+  endpoints_with_credential_mapping?: number;
   last_scan_at?: string;
   next_scan_at?: string;
   gaps: Array<{
@@ -235,12 +252,14 @@ export interface AssetListResponse {
   total: number;
 }
 
-export interface AssetDetailResponse {
-  asset: DiscoveredAsset;
-  events: AssetEvent[];
-  // P4-backend extensions (ADR 006). Optional: older backends omit them.
-  risk?: RiskRollup;
-  coverage?: CoverageRollup;
+/**
+ * Detail response is now flat: asset fields at the top level, plus
+ * coverage, risk, endpoints, and events as sibling keys.
+ * We extend DiscoveredAsset to keep the list-item shape and add the
+ * detail-only fields.
+ */
+export interface AssetDetailResponse extends DiscoveredAsset {
+  events?: AssetEvent[];
   endpoints?: AssetEndpoint[];
   provenance?: {
     first_target_id?: string;

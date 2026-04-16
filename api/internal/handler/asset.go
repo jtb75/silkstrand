@@ -66,11 +66,8 @@ func (h *AssetHandler) List(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(items))
 	for i := range items {
 		cov, risk := rolls.forAsset(&items[i])
-		out = append(out, map[string]any{
-			"asset":    items[i],
-			"coverage": cov,
-			"risk":     risk,
-		})
+		flat := flattenAsset(&items[i], cov, risk)
+		out = append(out, flat)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":     out,
@@ -105,13 +102,10 @@ func (h *AssetHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cov, risk := rolls.forAsset(a)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"asset":     a,
-		"endpoints": endpoints,
-		"coverage":  cov,
-		"risk":      risk,
-		"events":    []any{},
-	})
+	flat := flattenAsset(a, cov, risk)
+	flat["endpoints"] = endpoints
+	flat["events"] = []any{}
+	writeJSON(w, http.StatusOK, flat)
 }
 
 // GET /api/v1/assets/{id}/endpoints/{endpoint_id}
@@ -172,6 +166,28 @@ func (h *AssetHandler) GetEndpoint(w http.ResponseWriter, r *http.Request) {
 func (h *AssetHandler) Promote(w http.ResponseWriter, _ *http.Request) {
 	writeError(w, http.StatusNotImplemented,
 		"asset promote is superseded by scan_definitions (scope=asset_endpoint); P3")
+}
+
+// flattenAsset spreads the model.Asset fields at the top level and adds
+// coverage + risk as sibling objects alongside an endpoints_count
+// convenience field so the UI can render columns without nested access.
+func flattenAsset(a *model.Asset, cov Coverage, risk Risk) map[string]any {
+	return map[string]any{
+		"id":              a.ID,
+		"tenant_id":       a.TenantID,
+		"primary_ip":      a.PrimaryIP,
+		"hostname":        a.Hostname,
+		"fingerprint":     a.Fingerprint,
+		"resource_type":   a.ResourceType,
+		"source":          a.Source,
+		"environment":     a.Environment,
+		"first_seen":      a.FirstSeen,
+		"last_seen":       a.LastSeen,
+		"created_at":      a.CreatedAt,
+		"endpoints_count": cov.EndpointsTotal,
+		"coverage":        cov,
+		"risk":            risk,
+	}
 }
 
 // ---------------------------------------------------------------- rollups
