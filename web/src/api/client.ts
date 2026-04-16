@@ -601,3 +601,41 @@ export const getSuggestedActions = () =>
 export const getRecentActivity = () =>
   request<{ items: RecentActivityItem[] }>('/api/v1/dashboard/recent-activity');
 
+// ──────────────────────────────────────────────────────────────────────
+// ADR 008 PR E — events stream token mint.
+// `POST /api/v1/events/stream-tokens` accepts an optional filter that
+// is baked into the resulting 60s stream token. The browser EventSource
+// can't set headers, so this token (typ=stream) is the authentication
+// mechanism for the SSE endpoint `/api/v1/events/stream?token=…`.
+//
+// Note: the backend (`api/internal/handler/events.go`) uses a `kinds`
+// array (plural) on the filter — we mirror that exact shape here, not
+// the `kind` singular that appears in the SSE query string.
+// ──────────────────────────────────────────────────────────────────────
+
+export interface StreamTokenRequest {
+  kinds?: string[];
+  resource_type?: string;
+  resource_id?: string;
+  scan_id?: string;
+}
+
+export interface StreamTokenResponse {
+  token: string;
+  expires_at: string;
+}
+
+export const mintStreamToken = (filter?: StreamTokenRequest) =>
+  request<StreamTokenResponse>('/api/v1/events/stream-tokens', {
+    method: 'POST',
+    body: JSON.stringify({ filter: filter ?? {} }),
+  });
+
+// Absolute SSE URL builder — combines the active DC base URL with the
+// /api/v1/events/stream path and the minted token. Exposed so
+// `useEventStream` can construct a URL without duplicating the
+// DC-URL resolution logic that lives here.
+export function eventStreamURL(token: string): string {
+  return `${dcBaseURL()}/api/v1/events/stream?token=${encodeURIComponent(token)}`;
+}
+
