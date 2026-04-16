@@ -107,14 +107,17 @@ func nextRun(schedule string, from time.Time) (time.Time, error) {
 // publishes a directive. Shared by the scheduler tick path and the
 // POST /api/v1/scan-definitions/{id}/execute handler.
 //
-// Scope handling (P3 minimal):
+// Scope handling:
 //   - asset_endpoint scope: scan the single endpoint. target_id comes
 //     from a derived compliance-target row if one exists; for now we
 //     dispatch with asset_endpoint_id set and target_id empty (agent
 //     ignores target enrichment for discovery; compliance scans
 //     against endpoints without a target are a post-P3 concern).
-//   - cidr scope: no scans row can dispatch yet (needs a target_id
-//     referencing the CIDR target; scheduler logs and skips).
+//   - cidr scope: upsert a targets row for (tenant, cidr) and dispatch
+//     with that target_id. forwardDirective joins the target row to
+//     populate target_type='cidr' + identifier=<cidr>, which naabu/httpx
+//     consume as their input. Requires an agent_id on the definition —
+//     a CIDR definition without an agent is a misconfiguration.
 //   - collection scope: resolves endpoint ids and emits one scan per
 //     endpoint (bounded by P3's naive resolver — every endpoint owned
 //     by the tenant).
@@ -148,11 +151,20 @@ func (d Dispatcher) Execute(ctx context.Context, def model.ScanDefinition) error
 		}
 		return nil
 	case model.ScanDefinitionScopeCIDR:
-		// Needs a target_id join; P3 leaves this as a future hook.
-		// Log + skip so the scheduler doesn't churn.
-		slog.Info("scheduler.cidr_scope_not_yet_dispatched",
-			"definition", def.ID, "cidr", strOrDash(def.CIDR))
-		return nil
+		if def.CIDR == nil || *def.CIDR == "" {
+			return fmt.Errorf("scope=cidr requires cidr")
+		}
+		if def.AgentID == nil {
+			// No agent means the directive has nowhere to go.
+			// forwardDirective still needs a target row, so fail loudly
+			// here rather than produce an orphan scans row.
+			return fmt.Errorf("scope=cidr requires agent_id")
+		}
+		targetID, err := d.Store.UpsertTargetByCIDR(ctx, def.TenantID, *def.CIDR, def.AgentID, "scheduled")
+		if err != nil {
+			return fmt.Errorf("upserting cidr target: %w", err)
+		}
+		return d.dispatchOne(ctx, def, nil, &targetID)
 	}
 	return fmt.Errorf("unknown scope_kind: %q", def.ScopeKind)
 }
@@ -194,11 +206,4 @@ func (d Dispatcher) dispatchOne(ctx context.Context, def model.ScanDefinition, e
 	}
 	slog.Info("scheduler.dispatched", "definition", def.ID, "scan", sc.ID, "agent", *def.AgentID)
 	return nil
-}
-
-func strOrDash(p *string) string {
-	if p == nil {
-		return "-"
-	}
-	return *p
 }
