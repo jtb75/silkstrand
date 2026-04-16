@@ -3,8 +3,9 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getScan, listFindings } from '../api/client';
 import type { Scan, ScanResult, Finding } from '../api/types';
+import AgentLogConsole from '../components/AgentLogConsole';
 
-type ResultsTab = 'overview' | 'findings';
+type ResultsTab = 'overview' | 'findings' | 'console';
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{status}</span>;
@@ -161,7 +162,7 @@ export default function ScanResults() {
       <h1>Scan Results</h1>
 
       <div className="tabbar" style={{ display: 'flex', gap: 16, borderBottom: '1px solid #e5e7eb', marginBottom: 16 }}>
-        {(['overview', 'findings'] as ResultsTab[]).map((t) => (
+        {(['overview', 'findings', 'console'] as ResultsTab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -183,6 +184,11 @@ export default function ScanResults() {
 
       {tab === 'findings' && id && <FindingsTab scanId={id} />}
       {tab === 'overview' && <ScanOverview scan={scan} /> }
+      {tab === 'console' && id && (
+        <div className="scan-console-wrap">
+          <AgentLogConsole filter={{ scanId: id }} />
+        </div>
+      )}
     </div>
   );
 }

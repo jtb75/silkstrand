@@ -532,6 +532,147 @@ a:hover {
 .event-type { font-family: monospace; color: #444; }
 .event-summary { color: #222; }
 
+/* --- ADR 008 PR E: AgentLogConsole (Agents drawer + Scan Results tab) --- */
+
+.log-console {
+  display: flex;
+  flex-direction: column;
+  background: #0f172a;          /* dark panel — monospace feel without hacker-green */
+  color: #e5e7eb;
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  height: 100%;
+  min-height: 240px;
+  overflow: hidden;
+}
+
+.log-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #111827;
+  border-bottom: 1px solid #1f2937;
+  font-size: 12px;
+}
+
+.log-toolbar-left,
+.log-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-toolbar .btn {
+  background: #1f2937;
+  color: #e5e7eb;
+  border-color: #374151;
+}
+.log-toolbar .btn:hover {
+  background: #374151;
+}
+
+.log-toolbar .muted {
+  color: #9ca3af;
+}
+
+.log-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.log-pill-connected    { background: rgba(16,185,129,.18); color: #34d399; }
+.log-pill-reconnecting { background: rgba(245,158,11,.18); color: #fbbf24; }
+.log-pill-error        { background: rgba(239,68,68,.18);  color: #f87171; }
+.log-pill-idle         { background: #1f2937;              color: #9ca3af; }
+
+.log-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: #0f172a;
+}
+
+.log-empty {
+  padding: 24px 8px;
+  text-align: center;
+  color: #9ca3af;
+}
+
+.log-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 1px 0;
+}
+
+.log-time {
+  color: #9ca3af;
+  font-size: 11.5px;
+}
+
+.log-msg {
+  color: #f3f4f6;
+}
+
+.log-scan-tag {
+  color: #9ca3af;
+  font-size: 11.5px;
+}
+
+.log-line-throttled {
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.log-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  min-width: 44px;
+  text-align: center;
+}
+
+.log-level-info   { background: #1f2937;               color: #d1d5db; }
+.log-level-warn   { background: rgba(245,158,11,.18); color: #fbbf24; }
+.log-level-error  { background: rgba(239,68,68,.18);  color: #f87171; }
+.log-level-debug  { background: #111827;               color: #9ca3af; }
+
+/* Drawer width override when embedding the console (wider than the
+   allowlist drawer so long log lines don't wrap after 5 words). */
+.drawer.drawer-wide {
+  width: min(720px, 100%);
+}
+.drawer.drawer-wide .drawer-body {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 12px;
+  height: calc(100% - 50px);
+}
+.drawer.drawer-wide .drawer-body > .log-console {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Scan Results: console tab wrapper — fixed height so the body scrolls
+   independently of the page. */
+.scan-console-wrap {
+  height: 560px;
+  display: flex;
+}
+
 /* --- ADR 003 R1b Assets page suggestions --- */
 .suggestion-section { background: #fff8e1; padding: 12px; border-radius: 4px; }
 .suggestion-list { list-style: none; padding: 0; margin: 0; }

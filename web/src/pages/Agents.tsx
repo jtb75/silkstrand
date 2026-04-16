@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listAgents, rotateAgentKey, deleteAgent, getAgentDownloads,
@@ -7,6 +7,7 @@ import {
 } from '../api/client';
 import type { Agent, AgentDownloads } from '../api/types';
 import { useAuth } from '../auth/useAuth';
+import AgentLogConsole from '../components/AgentLogConsole';
 
 export default function Agents() {
   const qc = useQueryClient();
@@ -27,6 +28,7 @@ export default function Agents() {
   const [installToken, setInstallToken] = useState<{ token: string; expiresAt: string } | null>(null);
   const [newKey, setNewKey] = useState<{ agent: Agent; apiKey: string } | null>(null);
   const [allowlistFor, setAllowlistFor] = useState<Agent | null>(null);
+  const [consoleFor, setConsoleFor] = useState<Agent | null>(null);
 
   const tokenMutation = useMutation({
     mutationFn: createInstallToken,
@@ -167,6 +169,14 @@ export default function Agents() {
                   <button
                     className="btn btn-sm"
                     style={{ marginRight: 6 }}
+                    onClick={() => setConsoleFor(a)}
+                    title="Open a live tail of this agent's log stream"
+                  >
+                    Console
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    style={{ marginRight: 6 }}
                     onClick={() => setAllowlistFor(a)}
                     title="View the scan allowlist this agent most recently reported"
                   >
@@ -219,7 +229,43 @@ export default function Agents() {
       {allowlistFor && (
         <AllowlistModal agent={allowlistFor} onClose={() => setAllowlistFor(null)} />
       )}
+
+      {consoleFor && (
+        <ConsoleDrawer agent={consoleFor} onClose={() => setConsoleFor(null)} />
+      )}
     </div>
+  );
+}
+
+// ConsoleDrawer — embeds <AgentLogConsole> in the same right-side drawer
+// pattern used by the Allowlist modal. Closes on Esc / backdrop / button.
+function ConsoleDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  // Esc to close — matches the design-system.md § 5.9 "Escape key +
+  // backdrop click dismiss non-destructive modals" rule.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      <div className="drawer-backdrop" onClick={onClose} />
+      <aside className="drawer drawer-wide" role="dialog" aria-label={`Agent console — ${agent.name}`}>
+        <header className="drawer-header">
+          <h2>Console — {agent.name}</h2>
+          <button type="button" className="btn btn-sm" onClick={onClose}>×</button>
+        </header>
+        <div className="drawer-body">
+          <p className="muted" style={{ margin: 0 }}>
+            Live tail of info-and-above log lines from this agent. Debug
+            lines stay in the host log file. Past lines that happened
+            before you opened this console are not replayed.
+          </p>
+          <AgentLogConsole filter={{ agentId: agent.id }} />
+        </div>
+      </aside>
+    </>
   );
 }
 
