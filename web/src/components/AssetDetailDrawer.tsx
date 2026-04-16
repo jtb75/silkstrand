@@ -8,11 +8,11 @@ import type {
   AssetSuggestion,
   CVE,
   CoverageRollup,
-  DiscoveredAsset,
   RiskRollup,
 } from '../api/types';
 import AllowlistBadge from './AllowlistBadge';
 import AssetEventTimeline from './AssetEventTimeline';
+import { formatAbsolute } from '../lib/time';
 
 // ui-shape.md §Asset detail view — six sections, in reading order:
 //   ❶ Identity  ❷ Lifecycle  ❸ Risk posture  ❹ Endpoints
@@ -50,7 +50,7 @@ export default function AssetDetailDrawer({ assetId, onClose }: Props) {
             {isLoading
               ? 'Loading…'
               : data
-                ? data.asset.hostname || `${data.asset.ip}:${data.asset.port}`
+                ? data.hostname || data.primary_ip || '-'
                 : 'Asset'}
           </h2>
           <button type="button" className="btn btn-sm" onClick={onClose}>×</button>
@@ -63,26 +63,35 @@ export default function AssetDetailDrawer({ assetId, onClose }: Props) {
 }
 
 function AssetBody({ detail }: { detail: AssetDetailResponse }) {
-  const { asset, events, risk, coverage, endpoints, provenance } = detail;
+  // Post-flatten: detail IS the flat asset; endpoints/events/provenance are siblings.
+  const asset = detail;
+  const events = detail.events;
+  const endpoints = detail.endpoints ?? [];
+  const provenance = detail.provenance;
   const cves = asCVEs(asset.cves);
   const suggestions = asset.metadata?.suggested ?? [];
 
-  // Derive fallbacks when the backend doesn't yet return roll-ups.
-  const riskOrDerived = risk ?? deriveRisk(cves);
-  const coverageOrDerived =
-    coverage ?? deriveCoverage(asset, endpoints ?? []);
+  // Risk rollup comes from the flattened response.
+  const riskOrDerived = asset.risk ?? deriveRisk(cves);
+  // Coverage rollup likewise — but its shape changed from CoverageFlags to
+  // the full Coverage struct with endpoints_with_scan_definition etc.
+  const coverageOrDerived = deriveCoverageFromDetail(asset, endpoints);
 
   return (
     <div className="drawer-body">
       {/* ❶ Identity */}
       <Section n="❶" title="Identity">
         <dl className="kv">
-          <dt>primary IP</dt><dd>{asset.ip}</dd>
+          <dt>primary IP</dt><dd>{asset.primary_ip || asset.ip || '-'}</dd>
           <dt>hostname</dt><dd>{asset.hostname || '-'}</dd>
           <dt>resource type</dt><dd>{asset.resource_type || 'host'}</dd>
           <dt>environment</dt><dd>{asset.environment || '-'}</dd>
           <dt>source</dt><dd>{asset.source}</dd>
-          <dt>scan policy</dt><dd><AllowlistBadge status={asset.allowlist_status} /></dd>
+          {asset.allowlist_status && (
+            <>
+              <dt>scan policy</dt><dd><AllowlistBadge status={asset.allowlist_status} /></dd>
+            </>
+          )}
         </dl>
         {asTechnologies(asset.technologies).length > 0 && (
           <p className="muted" style={{ fontSize: 12 }}>
@@ -94,9 +103,8 @@ function AssetBody({ detail }: { detail: AssetDetailResponse }) {
       {/* ❷ Lifecycle */}
       <Section n="❷" title="Lifecycle">
         <dl className="kv">
-          <dt>first seen</dt><dd>{new Date(asset.first_seen).toLocaleString()}</dd>
-          <dt>last seen</dt><dd>{new Date(asset.last_seen).toLocaleString()}</dd>
-          <dt>missed scans</dt><dd>{asset.missed_scan_count}</dd>
+          <dt>first seen</dt><dd>{formatAbsolute(asset.first_seen)}</dd>
+          <dt>last seen</dt><dd>{formatAbsolute(asset.last_seen)}</dd>
           {provenance?.first_target_id && (
             <>
               <dt>first target</dt><dd>{provenance.first_target_id}</dd>
@@ -125,7 +133,7 @@ function AssetBody({ detail }: { detail: AssetDetailResponse }) {
         <SuggestionsSection
           assetId={asset.id}
           suggestions={suggestions}
-          outOfPolicy={asset.allowlist_status === 'out_of_policy'}
+          outOfPolicy={asset.allowlist_status === 'out_of_policy' || false}
         />
       )}
 
@@ -148,7 +156,7 @@ function AssetBody({ detail }: { detail: AssetDetailResponse }) {
       </Section>
 
       <Section n="" title="Events">
-        <AssetEventTimeline events={events} />
+        <AssetEventTimeline events={events ?? []} />
       </Section>
     </div>
   );
@@ -233,30 +241,20 @@ function Pill({ label, count, sev }: { label: string; count: number; sev: string
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
 function EndpointsSection({
-  asset,
   endpoints,
 }: {
-  asset: DiscoveredAsset;
+  asset: AssetDetailResponse;
   endpoints: AssetEndpoint[];
 }) {
-  // Degrade gracefully: if backend doesn't yet return endpoints[], show a
-  // single synthetic row derived from the asset itself (asset_id = port).
-  const rows: AssetEndpoint[] =
-    endpoints.length > 0
-      ? endpoints
-      : [
-          {
-            id: asset.id,
-            asset_id: asset.id,
-            port: asset.port,
-            service: asset.service,
-            version: asset.version,
-            findings_count: Array.isArray(asset.cves) ? asset.cves.length : 0,
-            coverage: asset.coverage,
-          },
-        ];
+  // Degrade gracefully: if backend doesn't yet return endpoints[], show
+  // a placeholder message.
+  const rows: AssetEndpoint[] = endpoints;
 
   const [openId, setOpenId] = useState<string | null>(null);
+
+  if (rows.length === 0) {
+    return <p className="muted">No endpoints discovered for this asset.</p>;
+  }
 
   return (
     <table className="table" style={{ fontSize: 13 }}>
@@ -266,13 +264,11 @@ function EndpointsSection({
           <th>Service</th>
           <th>Version</th>
           <th>Findings</th>
-          <th>Coverage</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((ep) => {
           const open = openId === ep.id;
-          const cov = ep.coverage ?? { scan_configured: false, creds_mapped: false };
           return (
             <Fragment key={ep.id}>
               <tr
@@ -283,19 +279,10 @@ function EndpointsSection({
                 <td>{ep.service || '-'}</td>
                 <td>{ep.version || '-'}</td>
                 <td>{ep.findings_count ?? '-'}</td>
-                <td>
-                  <span style={{ color: cov.scan_configured ? '#2a9d8f' : '#e63946' }}>
-                    {cov.scan_configured ? '✔' : '❌'}
-                  </span>{' '}
-                  /{' '}
-                  <span style={{ color: cov.creds_mapped ? '#2a9d8f' : '#e63946' }}>
-                    {cov.creds_mapped ? '✔' : '❌'}
-                  </span>
-                </td>
               </tr>
               {open && (
                 <tr>
-                  <td colSpan={5} className="muted">
+                  <td colSpan={4} className="muted">
                     <div style={{ padding: '6px 4px' }}>
                       <div>
                         <strong>Service:</strong> {ep.service || '-'} {ep.version || ''}
@@ -322,47 +309,30 @@ function EndpointsSection({
 }
 
 // ── Coverage ─────────────────────────────────────────────────────────────────
-function deriveCoverage(asset: DiscoveredAsset, endpoints: AssetEndpoint[]): CoverageRollup {
-  const list = endpoints.length > 0
-    ? endpoints
-    : [
-        {
-          id: asset.id,
-          asset_id: asset.id,
-          port: asset.port,
-          service: asset.service,
-          coverage: asset.coverage,
-        } as AssetEndpoint,
-      ];
-  const total = list.length;
-  const withScan = list.filter((e) => e.coverage?.scan_configured).length;
-  const withCreds = list.filter((e) => e.coverage?.creds_mapped).length;
-  const gaps: CoverageRollup['gaps'] = [];
-  for (const ep of list) {
-    const c = ep.coverage ?? { scan_configured: false, creds_mapped: false };
-    if (!c.scan_configured) {
-      gaps.push({
-        endpoint_id: ep.id,
-        ip: asset.ip,
-        port: ep.port,
-        service: ep.service,
-        reason: 'no_scan',
-      });
-    } else if (!c.creds_mapped) {
-      gaps.push({
-        endpoint_id: ep.id,
-        ip: asset.ip,
-        port: ep.port,
-        service: ep.service,
-        reason: 'no_creds',
-      });
-    }
+function deriveCoverageFromDetail(
+  asset: AssetDetailResponse,
+  endpoints: AssetEndpoint[],
+): CoverageRollup {
+  // The flattened asset response includes a full Coverage object at
+  // asset.coverage with endpoints_total, endpoints_with_scan_definition, etc.
+  const cov = asset.coverage as Record<string, unknown> | undefined;
+  if (cov && typeof cov.endpoints_total === 'number') {
+    return {
+      endpoints_total: cov.endpoints_total as number,
+      endpoints_with_scan: (cov.endpoints_with_scan_definition ?? 0) as number,
+      endpoints_with_creds: (cov.endpoints_with_credential_mapping ?? 0) as number,
+      last_scan_at: cov.last_scan_at as string | undefined,
+      next_scan_at: cov.next_scan_at as string | undefined,
+      gaps: Array.isArray(cov.gaps) ? (cov.gaps as CoverageRollup['gaps']) : [],
+    };
   }
+  // Fallback: derive from endpoints
+  const total = endpoints.length;
   return {
     endpoints_total: total,
-    endpoints_with_scan: withScan,
-    endpoints_with_creds: withCreds,
-    gaps,
+    endpoints_with_scan: 0,
+    endpoints_with_creds: 0,
+    gaps: [],
   };
 }
 
@@ -388,13 +358,13 @@ function CoveragePanel({ coverage }: { coverage: CoverageRollup }) {
         {coverage.last_scan_at && (
           <>
             <dt>last scan</dt>
-            <dd>{new Date(coverage.last_scan_at).toLocaleString()}</dd>
+            <dd>{formatAbsolute(coverage.last_scan_at)}</dd>
           </>
         )}
         {coverage.next_scan_at && (
           <>
             <dt>next scan</dt>
-            <dd>{new Date(coverage.next_scan_at).toLocaleString()}</dd>
+            <dd>{formatAbsolute(coverage.next_scan_at)}</dd>
           </>
         )}
       </dl>
@@ -403,8 +373,8 @@ function CoveragePanel({ coverage }: { coverage: CoverageRollup }) {
           <h4 style={{ marginTop: 12 }}>Gaps</h4>
           <ul>
             {coverage.gaps.map((g) => (
-              <li key={`${g.endpoint_id}:${g.reason}`}>
-                {g.ip}:{g.port} {g.service ? `(${g.service}) ` : ''}— {labelGap(g.reason)}{' '}
+              <li key={`${g.endpoint_id || ''}:${g.reason}`}>
+                {g.ip || '-'}:{g.port} {g.service ? `(${g.service}) ` : ''}— {labelGap(g.reason)}{' '}
                 <button className="btn btn-sm" style={{ marginLeft: 4 }}>
                   {g.reason === 'no_creds' ? 'Map credential' : 'Configure scan'}
                 </button>

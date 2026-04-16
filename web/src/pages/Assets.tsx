@@ -18,6 +18,7 @@ import AssetsFilterChips, { type ChipId } from '../components/AssetsFilterChips'
 import AssetDetailDrawer from '../components/AssetDetailDrawer';
 import AssetsBulkActions from '../components/AssetsBulkActions';
 import PredicateBuilder, { type Predicate } from '../components/PredicateBuilder';
+import { formatAbsolute, formatRelative } from '../lib/time';
 
 // Three tabs over one filtered population per docs/plans/ui-shape.md §Assets:
 //   · Assets     — one row per asset (host-level)
@@ -42,7 +43,16 @@ function chipsToParams(chips: Set<ChipId>): AssetFilterParams {
 }
 
 function topSeverity(asset: DiscoveredAsset): string | null {
-  if (asset.risk?.max_severity) return asset.risk.max_severity;
+  const r = asset.risk;
+  if (r) {
+    if (r.max_severity) return r.max_severity;
+    if (r.critical > 0) return 'critical';
+    if (r.high > 0) return 'high';
+    if (r.medium > 0) return 'medium';
+    if (r.low > 0) return 'low';
+    if (r.info > 0) return 'info';
+  }
+  // Fallback to legacy cves array
   if (!Array.isArray(asset.cves) || asset.cves.length === 0) return null;
   const order = ['critical', 'high', 'medium', 'low', 'info'];
   for (const sev of order) {
@@ -51,18 +61,75 @@ function topSeverity(asset: DiscoveredAsset): string | null {
   return null;
 }
 
-function cveCount(asset: DiscoveredAsset): number {
+function findingsCount(asset: DiscoveredAsset): number {
+  const r = asset.risk;
+  if (r) return r.critical + r.high + r.medium + r.low + r.info;
   return Array.isArray(asset.cves) ? asset.cves.length : 0;
 }
 
-function Coverage({ scan, creds }: { scan: boolean; creds: boolean }) {
+function severityBadgeClass(sev: string): string {
+  switch (sev) {
+    case 'critical':
+    case 'high':
+      return 'badge badge-cve-critical';
+    case 'medium':
+      return 'badge badge-cve-medium';
+    case 'low':
+    case 'info':
+      return 'badge badge-cve-low';
+    default:
+      return 'badge';
+  }
+}
+
+/** Resolve the display hostname for an asset (flat or legacy shape). */
+function assetHost(a: DiscoveredAsset): string {
+  return a.hostname || a.primary_ip || a.ip || '-';
+}
+
+/** Resolve the display IP for an asset (flat or legacy shape). */
+function assetIP(a: DiscoveredAsset): string {
+  return a.primary_ip || a.ip || '-';
+}
+
+/** Coverage indicator per design-system.md: checkmark/cross with accessible labels. */
+function CoverageIndicator({ scan, creds }: { scan: boolean; creds: boolean }) {
   return (
     <span title={`Scan ${scan ? 'configured' : 'missing'} · Creds ${creds ? 'mapped' : 'missing'}`}>
-      <span style={{ color: scan ? '#2a9d8f' : '#e63946' }}>{scan ? '✔' : '❌'}</span>
+      <span
+        style={{ color: scan ? '#10b981' : '#ef4444' }}
+        aria-label={scan ? 'Scan configured' : 'Scan missing'}
+      >
+        {scan ? '\u2713' : '\u2717'}
+      </span>
       <span style={{ margin: '0 4px' }}>/</span>
-      <span style={{ color: creds ? '#2a9d8f' : '#e63946' }}>{creds ? '✔' : '❌'}</span>
+      <span
+        style={{ color: creds ? '#10b981' : '#ef4444' }}
+        aria-label={creds ? 'Credentials mapped' : 'Credentials missing'}
+      >
+        {creds ? '\u2713' : '\u2717'}
+      </span>
     </span>
   );
+}
+
+/** Derive scan/creds booleans from the coverage rollup object. */
+function deriveCoverage(a: DiscoveredAsset): { scan: boolean; creds: boolean } {
+  const cov = a.coverage;
+  if (!cov) return { scan: false, creds: false };
+  // New rollup shape from the flattened API:
+  if ('endpoints_with_scan_definition' in cov) {
+    return {
+      scan: (cov.endpoints_with_scan_definition ?? 0) > 0,
+      creds: (cov.endpoints_with_credential_mapping ?? 0) > 0,
+    };
+  }
+  // Legacy CoverageFlags shape (backwards compat):
+  const legacy = cov as unknown as { scan_configured?: boolean; creds_mapped?: boolean };
+  return {
+    scan: !!legacy.scan_configured,
+    creds: !!legacy.creds_mapped,
+  };
 }
 
 export default function Assets() {
@@ -278,7 +345,12 @@ function AssetsView({
   onSelect: (id: string) => void;
 }) {
   if (items.length === 0)
-    return <p className="muted">No assets. Create a target or trigger a discovery scan.</p>;
+    return (
+      <div className="ss-empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '48px 24px', color: '#6b7280', textAlign: 'center' }}>
+        <span style={{ fontSize: 40 }}>&#x1F4E6;</span>
+        <span>No assets found. Create a target or trigger a discovery scan.</span>
+      </div>
+    );
   return (
     <table className="table">
       <thead>
@@ -297,7 +369,7 @@ function AssetsView({
       <tbody>
         {items.map((a) => {
           const sev = topSeverity(a);
-          const cov = a.coverage ?? { scan_configured: false, creds_mapped: false };
+          const cov = deriveCoverage(a);
           return (
             <tr
               key={a.id}
@@ -309,21 +381,21 @@ function AssetsView({
                   type="checkbox"
                   checked={selected.has(a.id)}
                   onChange={() => onToggle(a.id)}
-                  aria-label={`Select ${a.hostname || a.ip}`}
+                  aria-label={`Select ${assetHost(a)}`}
                 />
               </td>
-              <td>{a.hostname || '-'}</td>
-              <td>{a.ip}</td>
-              <td>{a.resource_type || a.service || '-'}</td>
+              <td>{assetHost(a)}</td>
+              <td>{assetIP(a)}</td>
+              <td>{a.resource_type || '-'}</td>
               <td>{a.environment || '-'}</td>
-              <td>{a.endpoints_count ?? '—'}</td>
+              <td>{a.endpoints_count ?? 0}</td>
               <td>
-                {sev ? <span className={`badge badge-cve-${sev}`}>{sev}</span> : '—'}
+                {sev ? <span className={severityBadgeClass(sev)}>{sev}</span> : '-'}
               </td>
               <td>
-                <Coverage scan={cov.scan_configured} creds={cov.creds_mapped} />
+                <CoverageIndicator scan={cov.scan} creds={cov.creds} />
               </td>
-              <td>{new Date(a.last_seen).toLocaleString()}</td>
+              <td title={formatAbsolute(a.last_seen)}>{formatRelative(a.last_seen)}</td>
             </tr>
           );
         })}
@@ -333,6 +405,10 @@ function AssetsView({
 }
 
 // ── Endpoints tab ────────────────────────────────────────────────────────────
+// Post-refactor assets are host-level; endpoints live under asset_endpoints.
+// Until a dedicated /endpoints API surfaces all endpoints as a flat list,
+// we display one row per asset showing its primary_ip and endpoint count.
+// The detail drawer expands to per-port rows.
 function EndpointsView({
   items,
   selected,
@@ -344,27 +420,30 @@ function EndpointsView({
   onToggle: (id: string) => void;
   onSelect: (id: string) => void;
 }) {
-  // Until P4-backend exposes a dedicated /endpoints endpoint, the asset
-  // list doubles as the endpoint list (current schema is port-scoped per
-  // DiscoveredAsset row). This keeps the UI usable during the migration.
-  if (items.length === 0) return <p className="muted">No endpoints.</p>;
+  if (items.length === 0)
+    return (
+      <div className="ss-empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '48px 24px', color: '#6b7280', textAlign: 'center' }}>
+        <span style={{ fontSize: 40 }}>&#x1F50C;</span>
+        <span>No endpoints found.</span>
+      </div>
+    );
   return (
     <table className="table">
       <thead>
         <tr>
           <th style={{ width: 32 }}></th>
           <th>Host</th>
-          <th>IP:Port</th>
-          <th>Service</th>
-          <th>Tech</th>
+          <th>IP</th>
+          <th>Type</th>
+          <th>#Endpoints</th>
           <th>Findings</th>
           <th>Coverage</th>
         </tr>
       </thead>
       <tbody>
         {items.map((a) => {
-          const cov = a.coverage ?? { scan_configured: false, creds_mapped: false };
-          const techs = Array.isArray(a.technologies) ? (a.technologies as string[]).join(', ') : '';
+          const cov = deriveCoverage(a);
+          const fc = findingsCount(a);
           return (
             <tr
               key={a.id}
@@ -376,16 +455,18 @@ function EndpointsView({
                   type="checkbox"
                   checked={selected.has(a.id)}
                   onChange={() => onToggle(a.id)}
-                  aria-label={`Select ${a.ip}:${a.port}`}
+                  aria-label={`Select ${assetHost(a)}`}
                 />
               </td>
-              <td>{a.hostname || '-'}</td>
-              <td>{a.ip}:{a.port}</td>
-              <td>{a.service || '-'}</td>
-              <td>{techs || '-'}</td>
-              <td>{cveCount(a) || '-'}</td>
+              <td>{assetHost(a)}</td>
+              <td>{assetIP(a)}</td>
+              <td>{a.resource_type || '-'}</td>
+              <td>{a.endpoints_count ?? 0}</td>
               <td>
-                <Coverage scan={cov.scan_configured} creds={cov.creds_mapped} />
+                {fc > 0 ? <span className="badge badge-cve-medium">{fc}</span> : '-'}
+              </td>
+              <td>
+                <CoverageIndicator scan={cov.scan} creds={cov.creds} />
               </td>
             </tr>
           );
@@ -397,9 +478,9 @@ function EndpointsView({
 
 // ── Findings tab ─────────────────────────────────────────────────────────────
 function FindingsView({ items }: { items: DiscoveredAsset[] }) {
-  // ADR 007 splits findings into its own table; until P5 ships a Findings
-  // API we derive a minimal view from the CVE arrays already on the asset
-  // rows. This keeps the tab functional and honest about its data source.
+  // ADR 007 splits findings into its own table; until the Findings API is
+  // wired into this tab we derive a minimal view from the CVE arrays on
+  // the asset rows. This keeps the tab functional.
   type Row = {
     key: string;
     assetId: string;
@@ -419,13 +500,18 @@ function FindingsView({ items }: { items: DiscoveredAsset[] }) {
         severity: c.severity || 'info',
         title: c.id,
         source: c.template || 'nuclei',
-        asset: `${a.ip}:${a.port}`,
+        asset: assetIP(a),
         lastSeen: a.last_seen,
       });
     }
   }
   if (rows.length === 0)
-    return <p className="muted">No findings in the current filtered population.</p>;
+    return (
+      <div className="ss-empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '48px 24px', color: '#6b7280', textAlign: 'center' }}>
+        <span style={{ fontSize: 40 }}>&#x1F50D;</span>
+        <span>No findings in the current filtered population.</span>
+      </div>
+    );
   return (
     <table className="table">
       <thead>
@@ -440,11 +526,11 @@ function FindingsView({ items }: { items: DiscoveredAsset[] }) {
       <tbody>
         {rows.map((r) => (
           <tr key={r.key}>
-            <td><span className={`badge badge-cve-${r.severity}`}>{r.severity}</span></td>
+            <td><span className={severityBadgeClass(r.severity)}>{r.severity}</span></td>
             <td>{r.title}</td>
             <td>{r.source}</td>
             <td>{r.asset}</td>
-            <td>{new Date(r.lastSeen).toLocaleString()}</td>
+            <td title={formatAbsolute(r.lastSeen)}>{formatRelative(r.lastSeen)}</td>
           </tr>
         ))}
       </tbody>
