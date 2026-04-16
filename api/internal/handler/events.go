@@ -189,16 +189,17 @@ func (h *EventsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 		filter.ScanID = v
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		// Very unlikely with net/http, but guard anyway.
-		writeError(w, http.StatusInternalServerError, "streaming unsupported")
-		return
-	}
+	// http.NewResponseController unwraps any middleware wrappers to reach
+	// the underlying Flusher — a direct w.(http.Flusher) assertion fails
+	// when logging/metrics middleware wraps the writer.
+	rc := http.NewResponseController(w)
 
 	// SSE headers. Nginx, Cloud Run, and EventSource all expect these.
 	h.writeSSEHeaders(w)
-	flusher.Flush()
+	if err := rc.Flush(); err != nil {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
 
 	ctx := r.Context()
 	ch, unsub := h.bus.Subscribe(ctx, filter)
@@ -230,7 +231,7 @@ func (h *EventsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 				slog.Debug("sse write failed", "error", err)
 				return
 			}
-			flusher.Flush()
+			_ = rc.Flush()
 		case <-heartbeat.C:
 			// SSE comment lines start with ':'. Readable in curl -N as
 			// `: ping` and ignored by EventSource, so the client never
@@ -238,7 +239,7 @@ func (h *EventsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
 			}
-			flusher.Flush()
+			_ = rc.Flush()
 		}
 	}
 }
