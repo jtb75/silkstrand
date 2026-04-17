@@ -105,6 +105,7 @@ func run() error {
 	scanDefsH := handler.NewScanDefinitionsHandler(pgStore, sched.D)
 	credMapH := handler.NewCredentialMappingsHandler(pgStore)
 	dashH := handler.NewDashboardHandler(pgStore)
+	profilesH := handler.NewProfilesHandler(pgStore)
 	rulesH := handler.NewCorrelationRulesHandler(pgStore)
 	eventsH := handler.NewEventsHandler(eventBus, cfg.JWTSecret)
 
@@ -162,6 +163,16 @@ func run() error {
 	apiMux.HandleFunc("POST /api/v1/bundles/upload", bundlesH.Upload)
 	apiMux.HandleFunc("GET /api/v1/bundles/{id}/controls", bundlesH.ListControls)
 	apiMux.HandleFunc("GET /api/v1/controls", bundlesH.ListAllControls)
+
+	// Compliance profiles (ADR 010 D9 — Level 3A)
+	apiMux.HandleFunc("GET /api/v1/compliance-profiles", profilesH.List)
+	apiMux.HandleFunc("POST /api/v1/compliance-profiles", profilesH.Create)
+	apiMux.HandleFunc("GET /api/v1/compliance-profiles/{id}", profilesH.Get)
+	apiMux.HandleFunc("PUT /api/v1/compliance-profiles/{id}", profilesH.Update)
+	apiMux.HandleFunc("DELETE /api/v1/compliance-profiles/{id}", profilesH.Delete)
+	apiMux.HandleFunc("POST /api/v1/compliance-profiles/{id}/controls", profilesH.SetControls)
+	apiMux.HandleFunc("GET /api/v1/compliance-profiles/{id}/controls", profilesH.GetControls)
+	apiMux.HandleFunc("POST /api/v1/compliance-profiles/{id}/publish", profilesH.Publish)
 
 	// Agents
 	apiMux.HandleFunc("GET /api/v1/agents/downloads", agentsH.Downloads)

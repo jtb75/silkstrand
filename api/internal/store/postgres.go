@@ -2853,3 +2853,168 @@ func (s *PostgresStore) DeleteOldAgentLogs(ctx context.Context, maxAge time.Dura
 	rows, _ := result.RowsAffected()
 	return int(rows), nil
 }
+
+// --- Compliance profiles (ADR 010 D9 — Level 3A) --------------------
+
+const profileCols = `id, tenant_id, name, description, base_framework, status, version, bundle_id, created_at, updated_at, created_by`
+
+type profileScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanProfile(p *model.ComplianceProfile, s profileScanner) error {
+	return s.Scan(&p.ID, &p.TenantID, &p.Name, &p.Description, &p.BaseFramework,
+		&p.Status, &p.Version, &p.BundleID, &p.CreatedAt, &p.UpdatedAt, &p.CreatedBy)
+}
+
+func (s *PostgresStore) ListComplianceProfiles(ctx context.Context) ([]model.ComplianceProfile, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+profileCols+`,
+		        (SELECT COUNT(*) FROM profile_controls pc WHERE pc.profile_id = cp.id) AS control_count
+		 FROM compliance_profiles cp
+		 WHERE cp.tenant_id = $1
+		 ORDER BY cp.name`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing compliance profiles: %w", err)
+	}
+	defer rows.Close()
+	var out []model.ComplianceProfile
+	for rows.Next() {
+		var p model.ComplianceProfile
+		if err := rows.Scan(&p.ID, &p.TenantID, &p.Name, &p.Description, &p.BaseFramework,
+			&p.Status, &p.Version, &p.BundleID, &p.CreatedAt, &p.UpdatedAt, &p.CreatedBy, &p.ControlCount); err != nil {
+			return nil, fmt.Errorf("scanning compliance profile: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetComplianceProfile(ctx context.Context, id string) (*model.ComplianceProfile, error) {
+	tenantID := TenantID(ctx)
+	var p model.ComplianceProfile
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+profileCols+`,
+		        (SELECT COUNT(*) FROM profile_controls pc WHERE pc.profile_id = cp.id) AS control_count
+		 FROM compliance_profiles cp
+		 WHERE cp.id = $1 AND cp.tenant_id = $2`, id, tenantID)
+	if err := row.Scan(&p.ID, &p.TenantID, &p.Name, &p.Description, &p.BaseFramework,
+		&p.Status, &p.Version, &p.BundleID, &p.CreatedAt, &p.UpdatedAt, &p.CreatedBy, &p.ControlCount); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting compliance profile: %w", err)
+	}
+	return &p, nil
+}
+
+func (s *PostgresStore) CreateComplianceProfile(ctx context.Context, p model.ComplianceProfile) (*model.ComplianceProfile, error) {
+	tenantID := TenantID(ctx)
+	var out model.ComplianceProfile
+	row := s.db.QueryRowContext(ctx,
+		`INSERT INTO compliance_profiles (tenant_id, name, description, base_framework, created_by)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING `+profileCols,
+		tenantID, p.Name, p.Description, p.BaseFramework, p.CreatedBy)
+	if err := scanProfile(&out, row); err != nil {
+		return nil, fmt.Errorf("creating compliance profile: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) UpdateComplianceProfile(ctx context.Context, id string, p model.ComplianceProfile) (*model.ComplianceProfile, error) {
+	tenantID := TenantID(ctx)
+	var out model.ComplianceProfile
+	row := s.db.QueryRowContext(ctx,
+		`UPDATE compliance_profiles SET name = $1, description = $2, updated_at = NOW()
+		 WHERE id = $3 AND tenant_id = $4
+		 RETURNING `+profileCols,
+		p.Name, p.Description, id, tenantID)
+	if err := scanProfile(&out, row); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("updating compliance profile: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *PostgresStore) DeleteComplianceProfile(ctx context.Context, id string) error {
+	tenantID := TenantID(ctx)
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM compliance_profiles WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("deleting compliance profile: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *PostgresStore) SetProfileControls(ctx context.Context, profileID string, controlIDs []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM profile_controls WHERE profile_id = $1`, profileID); err != nil {
+		return fmt.Errorf("clearing profile controls: %w", err)
+	}
+
+	if len(controlIDs) > 0 {
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO profile_controls (profile_id, control_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`)
+		if err != nil {
+			return fmt.Errorf("preparing insert: %w", err)
+		}
+		defer stmt.Close()
+		for _, cid := range controlIDs {
+			if _, err := stmt.ExecContext(ctx, profileID, cid); err != nil {
+				return fmt.Errorf("inserting profile control %s: %w", cid, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing profile controls: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) GetProfileControls(ctx context.Context, profileID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT control_id FROM profile_controls WHERE profile_id = $1 ORDER BY control_id`, profileID)
+	if err != nil {
+		return nil, fmt.Errorf("listing profile controls: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var cid string
+		if err := rows.Scan(&cid); err != nil {
+			return nil, fmt.Errorf("scanning profile control: %w", err)
+		}
+		out = append(out, cid)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) PublishProfile(ctx context.Context, profileID string, bundleID string) error {
+	tenantID := TenantID(ctx)
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE compliance_profiles
+		 SET status = $1, version = version + 1, bundle_id = $2, updated_at = NOW()
+		 WHERE id = $3 AND tenant_id = $4`,
+		model.ProfileStatusPublished, bundleID, profileID, tenantID)
+	if err != nil {
+		return fmt.Errorf("publishing profile: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
