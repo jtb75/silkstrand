@@ -132,6 +132,13 @@ export default function ScanDefinitions() {
     return map;
   }, [scans, defs]);
 
+  // Look up the latest scan for a definition to surface error messages.
+  function latestScanForDef(defId: string): Scan | undefined {
+    if (!scans || !defs) return undefined;
+    type ScanWithDef = Scan & { scan_definition_id?: string };
+    return scans.find((s) => (s as ScanWithDef).scan_definition_id === defId);
+  }
+
   // Coverage Impact strip — fan out a per-def coverage fetch. Each row
   // answers "X covers N endpoints". Cached by definition id.
   const coverageQueries = useQueries({
@@ -456,26 +463,20 @@ export default function ScanDefinitions() {
               <th>Schedule</th>
               <th>Last</th>
               <th>Next</th>
-              <th>Scan status</th>
               <th>Status</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             {defs.map((d) => (
-              <tr key={d.id}>
+              <tr key={d.id} style={!d.enabled ? { opacity: 0.5 } : undefined}>
                 <td>{d.name}</td>
                 <td><span className="badge badge-type">{d.kind}</span></td>
                 <td>{scopeLabel(d)}</td>
                 <td>{d.schedule ?? <span className="muted">manual</span>}</td>
                 <td>{d.last_run_at ? new Date(d.last_run_at).toLocaleString() : '—'}</td>
                 <td>{d.next_run_at ? new Date(d.next_run_at).toLocaleString() : '—'}</td>
-                <td><ScanStatusChip status={defStatus[d.id]} /></td>
-                <td>
-                  <span className={`badge badge-${d.enabled ? 'completed' : 'disabled'}`}>
-                    {d.enabled ? 'enabled' : 'disabled'}
-                  </span>
-                </td>
+                <td><ScanStatusChip status={defStatus[d.id]} enabled={d.enabled} latestScan={latestScanForDef(d.id)} /></td>
                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   <button
                     className="btn btn-sm"
@@ -540,9 +541,16 @@ export default function ScanDefinitions() {
   );
 }
 
-// Status chip showing the current scan state for a definition.
-// Idle = no chip (avoids clutter). Running/Queued/Failed get a badge.
-function ScanStatusChip({ status }: { status?: { status: string; queuedCount: number } }) {
+// Unified status chip for a scan definition. Disabled takes precedence
+// over the scan state so the row clearly communicates "not running".
+function ScanStatusChip({ status, enabled, latestScan }: {
+  status?: { status: string; queuedCount: number };
+  enabled: boolean;
+  latestScan?: Scan;
+}) {
+  if (!enabled) {
+    return <span className="badge" style={{ background: '#9ca3af', color: '#fff' }}>Disabled</span>;
+  }
   if (!status || status.status === 'idle') return null;
   switch (status.status) {
     case 'running':
@@ -564,7 +572,12 @@ function ScanStatusChip({ status }: { status?: { status: string; queuedCount: nu
       );
     case 'failed':
       return (
-        <span className="badge badge-failed">Last run failed</span>
+        <span
+          className="badge badge-failed"
+          title={latestScan?.error_message || undefined}
+        >
+          Failed
+        </span>
       );
     default:
       return null;

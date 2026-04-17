@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jtb75/silkstrand/api/internal/crypto"
+	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
@@ -25,11 +26,12 @@ type AgentsHandler struct {
 	store       store.Store
 	hub         *websocket.Hub
 	ps          *pubsub.PubSub
+	bus         events.Bus
 	releasesURL string // base URL for agent binaries/installer, e.g. GCS bucket
 }
 
-func NewAgentsHandler(s store.Store, hub *websocket.Hub, ps *pubsub.PubSub, releasesURL string) *AgentsHandler {
-	return &AgentsHandler{store: s, hub: hub, ps: ps, releasesURL: releasesURL}
+func NewAgentsHandler(s store.Store, hub *websocket.Hub, ps *pubsub.PubSub, bus events.Bus, releasesURL string) *AgentsHandler {
+	return &AgentsHandler{store: s, hub: hub, ps: ps, bus: bus, releasesURL: releasesURL}
 }
 
 // GET /api/v1/agents
@@ -349,6 +351,27 @@ func (h *AgentsHandler) Upgrade(w http.ResponseWriter, r *http.Request) {
 		slog.Error("publishing upgrade directive", "agent_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to dispatch upgrade")
 		return
+	}
+	// Emit agent_status event so the UI reflects the upgrading state.
+	if h.bus != nil {
+		claims := middleware.GetClaims(r.Context())
+		tenantID := ""
+		if claims != nil {
+			tenantID = claims.TenantID
+		}
+		if tenantID != "" {
+			statusPayload, _ := json.Marshal(map[string]string{"status": "upgrading"})
+			if pubErr := h.bus.Publish(r.Context(), events.Event{
+				Kind:         "agent_status",
+				ResourceType: "agent",
+				ResourceID:   id,
+				TenantID:     tenantID,
+				OccurredAt:   time.Now(),
+				Payload:      statusPayload,
+			}); pubErr != nil {
+				slog.Error("publishing agent_status event", "agent_id", id, "error", pubErr)
+			}
+		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{
 		"status":  "requested",

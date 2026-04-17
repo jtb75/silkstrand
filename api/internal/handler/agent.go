@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jtb75/silkstrand/api/internal/crypto"
+	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -22,10 +24,11 @@ type AgentHandler struct {
 	store   store.Store
 	ps      *pubsub.PubSub
 	credKey []byte
+	bus     events.Bus
 }
 
-func NewAgentHandler(hub *websocket.Hub, s store.Store, ps *pubsub.PubSub, credKey []byte) *AgentHandler {
-	return &AgentHandler{hub: hub, store: s, ps: ps, credKey: credKey}
+func NewAgentHandler(hub *websocket.Hub, s store.Store, ps *pubsub.PubSub, credKey []byte, bus events.Bus) *AgentHandler {
+	return &AgentHandler{hub: hub, store: s, ps: ps, credKey: credKey, bus: bus}
 }
 
 // Connect handles the WebSocket upgrade for agent connections.
@@ -92,6 +95,7 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.UpdateAgentStatus(context.Background(), agentID, model.AgentStatusConnected); err != nil {
 		slog.Error("updating agent status", "agent_id", agentID, "error", err)
 	}
+	h.publishAgentStatus(agent.TenantID, agentID, "connected")
 
 	// HandleConnection blocks until the agent disconnects
 	if err := h.hub.HandleConnection(w, r, agentID); err != nil {
@@ -102,6 +106,7 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.UpdateAgentStatus(context.Background(), agentID, model.AgentStatusDisconnected); err != nil {
 		slog.Error("updating agent status on disconnect", "agent_id", agentID, "error", err)
 	}
+	h.publishAgentStatus(agent.TenantID, agentID, "disconnected")
 
 	if count, err := h.store.FailRunningScansForAgent(context.Background(), agentID); err != nil {
 		slog.Error("failing scans on agent disconnect", "agent_id", agentID, "error", err)
@@ -110,6 +115,25 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("agent disconnected", "agent_id", agentID)
+}
+
+// publishAgentStatus emits an agent_status event on the bus so SSE
+// subscribers (e.g. the tenant UI) can react to agent connect/disconnect/upgrade.
+func (h *AgentHandler) publishAgentStatus(tenantID, agentID, status string) {
+	if h.bus == nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{"status": status})
+	if err := h.bus.Publish(context.Background(), events.Event{
+		Kind:         "agent_status",
+		ResourceType: "agent",
+		ResourceID:   agentID,
+		TenantID:     tenantID,
+		OccurredAt:   time.Now(),
+		Payload:      payload,
+	}); err != nil {
+		slog.Error("publishing agent_status event", "agent_id", agentID, "status", status, "error", err)
+	}
 }
 
 func (h *AgentHandler) subscribeDirectives(ctx context.Context, agentID string) {
