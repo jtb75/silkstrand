@@ -198,7 +198,11 @@ export default function ScanDefinitions() {
     mutationFn: (id: string) => executeScanDefinition(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scans'] });
+      queryClient.invalidateQueries({ queryKey: ['scan-definitions'] });
       toast('Scan dispatched', 'success');
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['scans'] });
+      }, 1500);
     },
   });
 
