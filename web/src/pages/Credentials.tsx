@@ -503,6 +503,23 @@ function MapToEndpointPanel({
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  // Resolve mapped endpoint UUIDs to host:port labels.
+  const mappedEndpointIds = existingMappings
+    .filter((m) => m.scope_kind === 'asset_endpoint' && m.asset_endpoint_id)
+    .map((m) => m.asset_endpoint_id!);
+  const { data: mappedEndpointLabels } = useQuery({
+    queryKey: ['mapped-endpoint-labels', mappedEndpointIds],
+    queryFn: async () => {
+      const all = await listAssetEndpoints({ page_size: 500 });
+      const map = new Map<string, string>();
+      for (const ep of all.items) {
+        map.set(ep.id, `${ep.host || ep.ip}:${ep.port}`);
+      }
+      return map;
+    },
+    enabled: mappedEndpointIds.length > 0,
+  });
+
   const bulkMut = useMutation({
     mutationFn: (ids: string[]) => bulkCreateEndpointMappings(sourceId, ids),
     onSuccess: () => {
@@ -531,7 +548,7 @@ function MapToEndpointPanel({
           <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px' }}>
             {existingMappings.filter(m => m.scope_kind === 'asset_endpoint' && m.asset_endpoint_id).map(m => (
               <li key={m.id} style={{ padding: '4px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span style={{ flex: 1 }}>{m.asset_endpoint_id?.slice(0, 8)}… (mapped)</span>
+                <span style={{ flex: 1 }}>{mappedEndpointLabels?.get(m.asset_endpoint_id!) ?? `${m.asset_endpoint_id?.slice(0, 8)}…`} (mapped)</span>
                 <button
                   className="btn btn-sm btn-danger"
                   disabled={unmapMut.isPending}
