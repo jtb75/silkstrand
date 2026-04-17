@@ -47,6 +47,7 @@ export default function App() {
               <Route path="/targets" element={<Targets />} />
               <Route path="/agents" element={<Agents />} />
               <Route path="/scans" element={<Scans />} />
+              <Route path="/scans/*" element={<Scans />} />
               <Route path="/scans/:id" element={<ScanResults />} />
               <Route path="/findings" element={<Findings />} />
               <Route path="/team" element={<Team />} />
