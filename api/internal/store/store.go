@@ -61,6 +61,8 @@ type Store interface {
 	GetBundle(ctx context.Context, id string) (*model.Bundle, error)
 	ListBundlesForTenant(ctx context.Context, tenantID string) ([]model.Bundle, error)
 	UpsertBundle(ctx context.Context, b model.Bundle) (*model.Bundle, error)
+	ReplaceBundleControls(ctx context.Context, bundleID string, controls []model.BundleControl) error
+	ListBundleControls(ctx context.Context, bundleID string) ([]model.BundleControl, error)
 
 	// Tenants (internal)
 	CreateTenant(ctx context.Context, name string) (*model.Tenant, error)

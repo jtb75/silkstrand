@@ -80,15 +80,30 @@ type AgentLogEvent struct {
 }
 
 type Bundle struct {
-	ID         string    `json:"id"`
-	TenantID   *string   `json:"tenant_id,omitempty"`
-	Name       string    `json:"name"`
-	Version    string    `json:"version"`
-	Framework  string    `json:"framework"`
-	TargetType string    `json:"target_type"`
-	GCSPath    *string   `json:"gcs_path,omitempty"`
-	Signature  *string   `json:"signature,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	TenantID     *string   `json:"tenant_id,omitempty"`
+	Name         string    `json:"name"`
+	Version      string    `json:"version"`
+	Framework    string    `json:"framework"`
+	TargetType   string    `json:"target_type"`
+	Engine       *string   `json:"engine,omitempty"`
+	ControlCount int       `json:"control_count"`
+	GCSPath      *string   `json:"gcs_path,omitempty"`
+	Signature    *string   `json:"signature,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// BundleControl is per-control metadata extracted from control.yaml files
+// inside a bundle tarball. Populated at upload time. See ADR 010 D11.
+type BundleControl struct {
+	BundleID       string          `json:"bundle_id"`
+	ControlID      string          `json:"control_id"`
+	Name           string          `json:"name"`
+	Severity       *string         `json:"severity,omitempty"`
+	Section        *string         `json:"section,omitempty"`
+	Engine         string          `json:"engine"`
+	EngineVersions json.RawMessage `json:"engine_versions"`
+	Tags           json.RawMessage `json:"tags"`
 }
 
 type Target struct {

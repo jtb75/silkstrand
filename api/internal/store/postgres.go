@@ -618,10 +618,10 @@ func (s *PostgresStore) ConsumeInstallToken(ctx context.Context, tokenHash []byt
 func (s *PostgresStore) GetBundle(ctx context.Context, id string) (*model.Bundle, error) {
 	var b model.Bundle
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, name, version, framework, target_type, gcs_path, signature, created_at
+		`SELECT id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, created_at
 		   FROM bundles WHERE id = $1`, id).
 		Scan(&b.ID, &b.TenantID, &b.Name, &b.Version, &b.Framework, &b.TargetType,
-			&b.GCSPath, &b.Signature, &b.CreatedAt)
+			&b.Engine, &b.ControlCount, &b.GCSPath, &b.Signature, &b.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -633,7 +633,7 @@ func (s *PostgresStore) GetBundle(ctx context.Context, id string) (*model.Bundle
 
 func (s *PostgresStore) ListBundlesForTenant(ctx context.Context, tenantID string) ([]model.Bundle, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, tenant_id, name, version, framework, target_type, gcs_path, signature, created_at
+		`SELECT id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, created_at
 		   FROM bundles WHERE tenant_id IS NULL OR tenant_id = $1 ORDER BY name, version`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("listing bundles: %w", err)
@@ -643,7 +643,7 @@ func (s *PostgresStore) ListBundlesForTenant(ctx context.Context, tenantID strin
 	for rows.Next() {
 		var b model.Bundle
 		if err := rows.Scan(&b.ID, &b.TenantID, &b.Name, &b.Version, &b.Framework, &b.TargetType,
-			&b.GCSPath, &b.Signature, &b.CreatedAt); err != nil {
+			&b.Engine, &b.ControlCount, &b.GCSPath, &b.Signature, &b.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning bundle: %w", err)
 		}
 		out = append(out, b)
@@ -654,19 +654,76 @@ func (s *PostgresStore) ListBundlesForTenant(ctx context.Context, tenantID strin
 func (s *PostgresStore) UpsertBundle(ctx context.Context, b model.Bundle) (*model.Bundle, error) {
 	var out model.Bundle
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO bundles (id, tenant_id, name, version, framework, target_type, gcs_path, signature)
-		 VALUES (COALESCE(NULLIF($1, '')::uuid, uuid_generate_v4()), $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO bundles (id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature)
+		 VALUES (COALESCE(NULLIF($1, '')::uuid, uuid_generate_v4()), $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (id) DO UPDATE SET
 		   name = EXCLUDED.name, version = EXCLUDED.version, framework = EXCLUDED.framework,
-		   target_type = EXCLUDED.target_type, gcs_path = EXCLUDED.gcs_path, signature = EXCLUDED.signature
-		 RETURNING id, tenant_id, name, version, framework, target_type, gcs_path, signature, created_at`,
-		b.ID, b.TenantID, b.Name, b.Version, b.Framework, b.TargetType, b.GCSPath, b.Signature).
+		   target_type = EXCLUDED.target_type, engine = EXCLUDED.engine, control_count = EXCLUDED.control_count,
+		   gcs_path = EXCLUDED.gcs_path, signature = EXCLUDED.signature
+		 RETURNING id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, created_at`,
+		b.ID, b.TenantID, b.Name, b.Version, b.Framework, b.TargetType, b.Engine, b.ControlCount, b.GCSPath, b.Signature).
 		Scan(&out.ID, &out.TenantID, &out.Name, &out.Version, &out.Framework, &out.TargetType,
-			&out.GCSPath, &out.Signature, &out.CreatedAt)
+			&out.Engine, &out.ControlCount, &out.GCSPath, &out.Signature, &out.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("upserting bundle: %w", err)
 	}
 	return &out, nil
+}
+
+func (s *PostgresStore) ReplaceBundleControls(ctx context.Context, bundleID string, controls []model.BundleControl) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bundle_controls WHERE bundle_id = $1`, bundleID); err != nil {
+		return fmt.Errorf("deleting old controls: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO bundle_controls (bundle_id, control_id, name, severity, section, engine, engine_versions, tags)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
+	if err != nil {
+		return fmt.Errorf("preparing insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, c := range controls {
+		ev := c.EngineVersions
+		if ev == nil {
+			ev = []byte("[]")
+		}
+		tags := c.Tags
+		if tags == nil {
+			tags = []byte("[]")
+		}
+		if _, err := stmt.ExecContext(ctx, bundleID, c.ControlID, c.Name, c.Severity, c.Section, c.Engine, ev, tags); err != nil {
+			return fmt.Errorf("inserting control %s: %w", c.ControlID, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *PostgresStore) ListBundleControls(ctx context.Context, bundleID string) ([]model.BundleControl, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT bundle_id, control_id, name, severity, section, engine, engine_versions, tags
+		   FROM bundle_controls WHERE bundle_id = $1 ORDER BY control_id`, bundleID)
+	if err != nil {
+		return nil, fmt.Errorf("listing bundle controls: %w", err)
+	}
+	defer rows.Close()
+	var out []model.BundleControl
+	for rows.Next() {
+		var c model.BundleControl
+		if err := rows.Scan(&c.BundleID, &c.ControlID, &c.Name, &c.Severity, &c.Section,
+			&c.Engine, &c.EngineVersions, &c.Tags); err != nil {
+			return nil, fmt.Errorf("scanning bundle control: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // ======================================================================

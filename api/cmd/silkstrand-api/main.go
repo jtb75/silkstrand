@@ -94,7 +94,7 @@ func run() error {
 	agentsH := handler.NewAgentsHandler(pgStore, hub, ps, eventBus, cfg.AgentReleasesURL)
 	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey)
 	probeH := handler.NewProbeHandler(pgStore, ps, cfg.CredentialEncryptionKey)
-	bundlesH := handler.NewBundlesHandler(pgStore)
+	bundlesH := handler.NewBundlesHandler(pgStore, cfg.BundleStoragePath)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 	assetH := handler.NewAssetHandler(pgStore)
 
@@ -159,6 +159,8 @@ func run() error {
 
 	// Bundles
 	apiMux.HandleFunc("GET /api/v1/bundles", bundlesH.List)
+	apiMux.HandleFunc("POST /api/v1/bundles/upload", bundlesH.Upload)
+	apiMux.HandleFunc("GET /api/v1/bundles/{id}/controls", bundlesH.ListControls)
 
 	// Agents
 	apiMux.HandleFunc("GET /api/v1/agents/downloads", agentsH.Downloads)

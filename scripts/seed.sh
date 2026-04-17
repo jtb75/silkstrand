@@ -10,6 +10,10 @@ echo "Seeding backoffice database..."
 PGPASSWORD=localdev psql -h localhost -p 15433 -U silkstrand -d silkstrand_backoffice -f "$SCRIPT_DIR/seed-backoffice.sql"
 
 echo ""
+echo "Seeding CIS bundles + controls..."
+"$SCRIPT_DIR/seed-bundles.sh"
+
+echo ""
 echo "Done. Test credentials:"
 echo "  Agent ID:  00000000-0000-0000-0000-000000000010"
 echo "  Agent Key: test-agent-key"

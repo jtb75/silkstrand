@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS bundle_controls;
+ALTER TABLE bundles DROP COLUMN IF EXISTS engine;
+ALTER TABLE bundles DROP COLUMN IF EXISTS control_count;
