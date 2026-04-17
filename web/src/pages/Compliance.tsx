@@ -1,9 +1,14 @@
-import { useState, useRef, useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { useToast } from '../lib/toast';
-import { listBundles, getBundleControls, uploadBundle, listControls } from '../api/client';
+import {
+  listBundles, getBundleControls, uploadBundle, listControls,
+  listComplianceProfiles, createComplianceProfile, deleteComplianceProfile,
+  getProfileControls, setProfileControls, publishProfile,
+} from '../api/client';
 import type { Bundle, BundleControl, ControlEntry } from '../api/types';
+import type { ComplianceProfile } from '../api/client';
 import ControlDetailDrawer from '../components/ControlDetailDrawer';
 import FrameworkChip from '../components/FrameworkChip';
 
@@ -34,7 +39,7 @@ export default function Compliance() {
       <div style={{ marginTop: 24 }}>
         {tab === 'frameworks' && <FrameworksTab />}
         {tab === 'controls' && <ControlsTab />}
-        {tab === 'profiles' && <ProfilesPlaceholder />}
+        {tab === 'profiles' && <ProfilesTab />}
       </div>
     </div>
   );
@@ -524,14 +529,583 @@ function ControlsTab() {
   );
 }
 
-function ProfilesPlaceholder() {
+// ---------------------------------------------------------------------------
+// Profiles tab — custom compliance profiles (Level 3C)
+// ---------------------------------------------------------------------------
+
+function ProfilesTab() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [publishConfirm, setPublishConfirm] = useState<ComplianceProfile | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<ComplianceProfile | null>(null);
+
+  const { data: profiles, isLoading, error } = useQuery<ComplianceProfile[]>({
+    queryKey: ['compliance-profiles'],
+    queryFn: listComplianceProfiles,
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteComplianceProfile(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['compliance-profiles'] });
+      toast('Profile deleted', 'success');
+      setDeleteConfirm(null);
+    },
+    onError: (err: Error) => toast(err.message, 'error'),
+  });
+
+  const publishMut = useMutation({
+    mutationFn: (id: string) => publishProfile(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['compliance-profiles'] });
+      queryClient.invalidateQueries({ queryKey: ['bundles'] });
+      toast('Profile published', 'success');
+      setPublishConfirm(null);
+    },
+    onError: (err: Error) => {
+      if (err.message.includes('501') || err.message.toLowerCase().includes('not implemented')) {
+        toast('Bundle assembly not yet available — coming soon', 'info');
+      } else {
+        toast(err.message, 'error');
+      }
+      setPublishConfirm(null);
+    },
+  });
+
+  // If we're editing a profile, show the control picker full-page style.
+  if (editingProfileId) {
+    return (
+      <ControlPicker
+        profileId={editingProfileId}
+        onClose={() => {
+          setEditingProfileId(null);
+          queryClient.invalidateQueries({ queryKey: ['compliance-profiles'] });
+        }}
+      />
+    );
+  }
+
   return (
-    <section>
-      <h2>Custom profiles</h2>
-      <p className="muted">
-        Custom compliance profiles coming in Level 3. Build tenant-specific
-        bundles by selecting controls from the catalog.
-      </p>
-    </section>
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Profiles</h2>
+        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+          + New profile
+        </button>
+      </div>
+
+      {showCreate && (
+        <CreateProfileModal
+          onCreated={(profile) => {
+            setShowCreate(false);
+            queryClient.invalidateQueries({ queryKey: ['compliance-profiles'] });
+            setEditingProfileId(profile.id);
+          }}
+          onCancel={() => setShowCreate(false)}
+        />
+      )}
+
+      {isLoading && <p>Loading...</p>}
+      {error && <p className="error">Failed to load profiles: {(error as Error).message}</p>}
+
+      {!isLoading && profiles && profiles.length === 0 && !showCreate && (
+        <p className="muted">No custom profiles yet. Create one to build a tenant-specific compliance bundle.</p>
+      )}
+
+      {profiles && profiles.length > 0 && (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Based on</th>
+              <th>Controls</th>
+              <th>Version</th>
+              <th>Status</th>
+              <th style={{ textAlign: 'right' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {profiles.map((p) => (
+              <tr key={p.id}>
+                <td>{p.name}</td>
+                <td>{p.base_framework || 'Custom'}</td>
+                <td>{p.control_count}</td>
+                <td>{p.version}</td>
+                <td>
+                  <ProfileStatusBadge status={p.status} />
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <button className="btn btn-sm" onClick={() => setEditingProfileId(p.id)}>
+                      Edit
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => setPublishConfirm(p)}
+                    >
+                      Publish
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      style={{ color: '#ef4444' }}
+                      onClick={() => setDeleteConfirm(p)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* Publish confirmation modal */}
+      {publishConfirm && (
+        <div className="modal-backdrop" onClick={() => setPublishConfirm(null)}>
+          <div className="form-card" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>Publish profile</h3>
+            <p>
+              Publish <strong>{publishConfirm.name}</strong> v{publishConfirm.version + 1}?
+              This will build and sign a bundle from the selected controls.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn" onClick={() => setPublishConfirm(null)} disabled={publishMut.isPending}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={publishMut.isPending}
+                onClick={() => publishMut.mutate(publishConfirm.id)}
+              >
+                {publishMut.isPending ? 'Publishing...' : 'Publish'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <div className="modal-backdrop" onClick={() => setDeleteConfirm(null)}>
+          <div className="form-card" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>Delete profile</h3>
+            <p>
+              Delete <strong>{deleteConfirm.name}</strong>? This cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn" onClick={() => setDeleteConfirm(null)} disabled={deleteMut.isPending}>
+                Cancel
+              </button>
+              <button
+                className="btn"
+                style={{ background: '#ef4444', color: '#fff', border: 'none' }}
+                disabled={deleteMut.isPending}
+                onClick={() => deleteMut.mutate(deleteConfirm.id)}
+              >
+                {deleteMut.isPending ? 'Deleting...' : 'Delete profile'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProfileStatusBadge({ status }: { status: string }) {
+  if (status === 'published') {
+    return <span className="badge badge-completed">Published</span>;
+  }
+  return <span className="badge">Draft</span>;
+}
+
+// ---------------------------------------------------------------------------
+// Create profile modal
+// ---------------------------------------------------------------------------
+
+function CreateProfileModal({
+  onCreated,
+  onCancel,
+}: {
+  onCreated: (profile: ComplianceProfile) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [baseFramework, setBaseFramework] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const { data: bundles } = useQuery<Bundle[]>({
+    queryKey: ['bundles'],
+    queryFn: listBundles,
+  });
+
+  const frameworkOptions = useMemo(() => {
+    if (!bundles) return [];
+    const names = new Set<string>();
+    for (const b of bundles) {
+      if (b.id !== '11111111-1111-1111-1111-111111111111' && b.framework) {
+        names.add(b.framework);
+      }
+    }
+    return Array.from(names).sort();
+  }, [bundles]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) { setError('Name is required.'); return; }
+    setCreating(true);
+    setError(null);
+    try {
+      const profile = await createComplianceProfile({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        base_framework: baseFramework || undefined,
+      });
+
+      // If a base framework was selected, pre-populate controls from it.
+      if (baseFramework) {
+        try {
+          const controls = await listControls({ framework: baseFramework, page_size: 10000 });
+          if (controls.items.length > 0) {
+            const ids = controls.items.map((c) => c.control_id);
+            await setProfileControls(profile.id, ids);
+          }
+        } catch {
+          // Non-fatal: profile was created, controls just won't be pre-populated.
+        }
+      }
+
+      onCreated(profile);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="form-card" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ marginTop: 0 }}>New profile</h3>
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label htmlFor="profile-name">Name <span style={{ color: '#ef4444' }}>*</span></label>
+            <input
+              id="profile-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. ACME Database Hardening"
+              autoFocus
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="profile-desc">Description</label>
+            <textarea
+              id="profile-desc"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              placeholder="Optional description"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="profile-base">Start from</label>
+            <select
+              id="profile-base"
+              value={baseFramework}
+              onChange={(e) => setBaseFramework(e.target.value)}
+            >
+              <option value="">Blank (no controls)</option>
+              {frameworkOptions.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+            <small className="muted">
+              Selecting a framework pre-loads its controls into the picker.
+            </small>
+          </div>
+          {error && <p className="error">{error}</p>}
+          <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn" onClick={onCancel} disabled={creating}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={creating}>
+              {creating ? 'Creating...' : 'Create'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Control picker — full-page editor for a profile's control list
+// ---------------------------------------------------------------------------
+
+const PICKER_SEVERITY_OPTIONS = ['critical', 'high', 'medium', 'low', 'info'] as const;
+const PICKER_ENGINE_OPTIONS = ['postgresql', 'mssql', 'mongodb', 'mysql', 'host', 'cidr', 'cloud'] as const;
+
+function ControlPicker({
+  profileId,
+  onClose,
+}: {
+  profileId: string;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [initialLoaded, setInitialLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Filter state
+  const [framework, setFramework] = useState('');
+  const [engine, setEngine] = useState('');
+  const [severity, setSeverity] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+  const [searchText, setSearchText] = useState('');
+
+  // Load existing profile controls
+  useEffect(() => {
+    getProfileControls(profileId)
+      .then((ids) => {
+        setSelectedIds(new Set(ids));
+        setInitialLoaded(true);
+      })
+      .catch(() => setInitialLoaded(true));
+  }, [profileId]);
+
+  // Fetch available bundles for framework dropdown
+  const { data: bundles } = useQuery<Bundle[]>({
+    queryKey: ['bundles'],
+    queryFn: listBundles,
+  });
+
+  const frameworkOptions = useMemo(() => {
+    if (!bundles) return [];
+    const names = new Set<string>();
+    for (const b of bundles) {
+      if (b.id !== '11111111-1111-1111-1111-111111111111' && b.framework) {
+        names.add(b.framework);
+      }
+    }
+    return Array.from(names).sort();
+  }, [bundles]);
+
+  // Fetch all controls with filters
+  const { data, isLoading } = useQuery({
+    queryKey: ['controls', { framework, engine, severity, tag: tagFilter, q: searchText }],
+    queryFn: () =>
+      listControls({
+        framework: framework || undefined,
+        engine: engine || undefined,
+        severity: severity || undefined,
+        tag: tagFilter || undefined,
+        q: searchText || undefined,
+        page_size: 10000,
+      }),
+  });
+
+  const controls = useMemo(() => data?.items ?? [], [data]);
+
+  const toggleControl = useCallback((controlId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(controlId)) next.delete(controlId);
+      else next.add(controlId);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    const allVisible = controls.map((c) => c.control_id);
+    setSelectedIds((prev) => {
+      const allSelected = allVisible.every((id) => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) {
+        allVisible.forEach((id) => next.delete(id));
+      } else {
+        allVisible.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  }, [controls]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await setProfileControls(profileId, Array.from(selectedIds));
+      toast('Profile controls saved', 'success');
+      onClose();
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!initialLoaded) return <p>Loading profile controls...</p>;
+
+  const allVisibleSelected = controls.length > 0 && controls.every((c) => selectedIds.has(c.control_id));
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div>
+          <button className="btn btn-sm" onClick={onClose} style={{ marginRight: 12 }}>
+            &larr; Back to profiles
+          </button>
+          <strong>Edit profile controls</strong>
+          <span className="muted" style={{ marginLeft: 12 }}>
+            {selectedIds.size} control{selectedIds.size !== 1 ? 's' : ''} selected
+          </span>
+        </div>
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+
+      {/* Filter bar */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+        <select value={framework} onChange={(e) => setFramework(e.target.value)} style={{ minWidth: 140 }}>
+          <option value="">All frameworks</option>
+          {frameworkOptions.map((f) => (
+            <option key={f} value={f}>{f}</option>
+          ))}
+        </select>
+        <select value={engine} onChange={(e) => setEngine(e.target.value)} style={{ minWidth: 120 }}>
+          <option value="">All engines</option>
+          {PICKER_ENGINE_OPTIONS.map((e) => (
+            <option key={e} value={e}>{e}</option>
+          ))}
+        </select>
+        <select value={severity} onChange={(e) => setSeverity(e.target.value)} style={{ minWidth: 110 }}>
+          <option value="">All severities</option>
+          {PICKER_SEVERITY_OPTIONS.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="Tag..."
+          value={tagFilter}
+          onChange={(e) => setTagFilter(e.target.value)}
+          style={{ width: 120 }}
+        />
+        <input
+          type="text"
+          placeholder="Search control ID or name..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          style={{ flex: 1, minWidth: 180 }}
+        />
+      </div>
+
+      {isLoading && <p>Loading controls...</p>}
+
+      {!isLoading && controls.length === 0 && (
+        <p className="muted">No controls match the current filters.</p>
+      )}
+
+      {controls.length > 0 && (
+        <table className="table">
+          <thead>
+            <tr>
+              <th style={{ width: 36 }}>
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={toggleAll}
+                  title="Toggle all visible"
+                />
+              </th>
+              <th>Control ID</th>
+              <th>Name</th>
+              <th>Severity</th>
+              <th>Engine</th>
+              <th>Frameworks</th>
+              <th>Tags</th>
+            </tr>
+          </thead>
+          <tbody>
+            {controls.map((c) => {
+              const checked = selectedIds.has(c.control_id);
+              const tags = Array.isArray(c.tags) ? c.tags : [];
+              return (
+                <tr
+                  key={c.control_id}
+                  style={{ cursor: 'pointer', background: checked ? 'rgba(15, 118, 110, 0.05)' : undefined }}
+                  onClick={() => toggleControl(c.control_id)}
+                >
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleControl(c.control_id)}
+                    />
+                  </td>
+                  <td style={{ fontFamily: 'monospace', fontSize: 13 }}>{c.control_id}</td>
+                  <td>{c.name}</td>
+                  <td>
+                    {c.severity
+                      ? <SeverityBadge severity={c.severity} />
+                      : <span className="muted">{'\u2014'}</span>}
+                  </td>
+                  <td>{c.engine}</td>
+                  <td>
+                    {c.frameworks.map((fw) => (
+                      <FrameworkChip
+                        key={`${fw.bundle_id}-${fw.section}`}
+                        bundleName={fw.bundle_name}
+                        section={fw.section}
+                      />
+                    ))}
+                  </td>
+                  <td>
+                    {tags.length > 0
+                      ? tags.map((t) => (
+                          <span
+                            key={t}
+                            className="badge"
+                            style={{ fontSize: 11, padding: '1px 6px', marginRight: 4, opacity: 0.7 }}
+                          >
+                            {t}
+                          </span>
+                        ))
+                      : <span className="muted">{'\u2014'}</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {/* Selected controls summary strip */}
+      {selectedIds.size > 0 && (
+        <div style={{
+          position: 'sticky',
+          bottom: 0,
+          background: '#f9fafb',
+          borderTop: '1px solid #e5e7eb',
+          padding: '12px 16px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginTop: 16,
+        }}>
+          <span>{selectedIds.size} control{selectedIds.size !== 1 ? 's' : ''} selected</span>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
