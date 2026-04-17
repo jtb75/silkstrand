@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query';
+import { useToast } from '../lib/toast';
 import {
   listScanDefinitions,
   createScanDefinition,
@@ -12,9 +13,11 @@ import {
   listBundles,
   listAgents,
   listCollections,
+  listScans,
   type UpsertScanDefinitionRequest,
 } from '../api/client';
 import type {
+  Scan,
   ScanDefinition,
   ScanDefinitionKind,
   ScanDefinitionScopeKind,
@@ -55,6 +58,7 @@ function cronHelp(expr: string): string {
 
 export default function ScanDefinitions() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -96,6 +100,38 @@ export default function ScanDefinitions() {
     enabled: showForm && scopeKind === 'collection',
   });
 
+  // Scans list for deriving per-definition status chips. Invalidated
+  // via SSE scan_status events in Layout.tsx so chips update in real time.
+  const { data: scans } = useQuery<Scan[]>({
+    queryKey: ['scans'],
+    queryFn: listScans,
+  });
+
+  // Derive per-definition status chip from the latest scan(s).
+  const defStatus = useMemo(() => {
+    const map: Record<string, { status: string; queuedCount: number }> = {};
+    if (!scans || !defs) return map;
+    type ScanWithDef = Scan & { scan_definition_id?: string };
+    for (const d of defs) {
+      const matching = scans.filter(
+        (s) => (s as ScanWithDef).scan_definition_id === d.id,
+      );
+      const running = matching.filter((s) => s.status === 'running');
+      const queued = matching.filter((s) => s.status === 'queued');
+      const latest = matching[0]; // scans come back newest-first
+      if (running.length > 0) {
+        map[d.id] = { status: 'running', queuedCount: 0 };
+      } else if (queued.length > 0) {
+        map[d.id] = { status: 'queued', queuedCount: queued.length };
+      } else if (latest && latest.status === 'failed') {
+        map[d.id] = { status: 'failed', queuedCount: 0 };
+      } else {
+        map[d.id] = { status: 'idle', queuedCount: 0 };
+      }
+    }
+    return map;
+  }, [scans, defs]);
+
   // Coverage Impact strip — fan out a per-def coverage fetch. Each row
   // answers "X covers N endpoints". Cached by definition id.
   const coverageQueries = useQueries({
@@ -130,6 +166,7 @@ export default function ScanDefinitions() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scan-definitions'] });
       closeForm();
+      toast('Definition created', 'success');
     },
   });
 
@@ -144,18 +181,27 @@ export default function ScanDefinitions() {
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => deleteScanDefinition(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scan-definitions'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['scan-definitions'] });
+      toast('Definition deleted', 'success');
+    },
   });
 
   const executeMut = useMutation({
     mutationFn: (id: string) => executeScanDefinition(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scans'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['scans'] });
+      toast('Scan dispatched', 'success');
+    },
   });
 
   const toggleMut = useMutation({
     mutationFn: ({ id, enable }: { id: string; enable: boolean }) =>
       enable ? enableScanDefinition(id) : disableScanDefinition(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scan-definitions'] }),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['scan-definitions'] });
+      toast(`Definition ${vars.enable ? 'enabled' : 'disabled'}`, 'success');
+    },
   });
 
   function handleEdit(d: ScanDefinition) {
@@ -410,6 +456,7 @@ export default function ScanDefinitions() {
               <th>Schedule</th>
               <th>Last</th>
               <th>Next</th>
+              <th>Scan status</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -423,6 +470,7 @@ export default function ScanDefinitions() {
                 <td>{d.schedule ?? <span className="muted">manual</span>}</td>
                 <td>{d.last_run_at ? new Date(d.last_run_at).toLocaleString() : '—'}</td>
                 <td>{d.next_run_at ? new Date(d.next_run_at).toLocaleString() : '—'}</td>
+                <td><ScanStatusChip status={defStatus[d.id]} /></td>
                 <td>
                   <span className={`badge badge-${d.enabled ? 'completed' : 'disabled'}`}>
                     {d.enabled ? 'enabled' : 'disabled'}
@@ -490,4 +538,35 @@ export default function ScanDefinitions() {
       )}
     </div>
   );
+}
+
+// Status chip showing the current scan state for a definition.
+// Idle = no chip (avoids clutter). Running/Queued/Failed get a badge.
+function ScanStatusChip({ status }: { status?: { status: string; queuedCount: number } }) {
+  if (!status || status.status === 'idle') return null;
+  switch (status.status) {
+    case 'running':
+      return (
+        <span className="badge badge-completed" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: 'var(--ss-success, #10b981)',
+            animation: 'pulse 1.5s ease-in-out infinite',
+          }} />
+          Running
+        </span>
+      );
+    case 'queued':
+      return (
+        <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          Queued{status.queuedCount > 1 ? ` (${status.queuedCount})` : ''}
+        </span>
+      );
+    case 'failed':
+      return (
+        <span className="badge badge-failed">Last run failed</span>
+      );
+    default:
+      return null;
+  }
 }

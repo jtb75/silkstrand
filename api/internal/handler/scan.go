@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -22,10 +25,11 @@ type ScanHandler struct {
 	store store.Store
 	ps    *pubsub.PubSub
 	hub   *websocket.Hub
+	bus   events.Bus
 }
 
-func NewScanHandler(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub) *ScanHandler {
-	return &ScanHandler{store: s, ps: ps, hub: hub}
+func NewScanHandler(s store.Store, ps *pubsub.PubSub, hub *websocket.Hub, bus events.Bus) *ScanHandler {
+	return &ScanHandler{store: s, ps: ps, hub: hub, bus: bus}
 }
 
 func (h *ScanHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +111,7 @@ func (h *ScanHandler) Create(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	publishScanStatus(r.Context(), h.bus, scan)
 	writeJSON(w, http.StatusCreated, scan)
 }
 
@@ -137,4 +142,39 @@ func (h *ScanHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// publishScanStatus emits a scan_status event on the bus so SSE
+// subscribers (toast notifications, cache invalidation) get real-time
+// scan state changes. Non-blocking; failures are logged and swallowed.
+func publishScanStatus(ctx context.Context, bus events.Bus, scan *model.Scan) {
+	if bus == nil || scan == nil {
+		return
+	}
+	type scanStatusPayload struct {
+		Status           string  `json:"status"`
+		ScanDefinitionID *string `json:"scan_definition_id"`
+		AgentID          *string `json:"agent_id"`
+	}
+	payload, _ := json.Marshal(scanStatusPayload{
+		Status:           scan.Status,
+		ScanDefinitionID: scan.ScanDefinitionID,
+		AgentID:          scan.AgentID,
+	})
+	if err := bus.Publish(ctx, events.Event{
+		TenantID:     scan.TenantID,
+		Kind:         "scan_status",
+		ResourceType: "scan",
+		ResourceID:   scan.ID,
+		OccurredAt:   time.Now().UTC(),
+		Payload:      payload,
+	}); err != nil {
+		slog.Warn("scan_status publish failed", "scan_id", scan.ID, "error", err)
+	}
+}
+
+// PublishScanStatusFromScan is an exported variant so main.go WSS
+// handlers can emit scan_status events without duplicating the logic.
+func PublishScanStatusFromScan(ctx context.Context, bus events.Bus, scan *model.Scan) {
+	publishScanStatus(ctx, bus, scan)
 }
