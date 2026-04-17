@@ -63,6 +63,7 @@ type Store interface {
 	UpsertBundle(ctx context.Context, b model.Bundle) (*model.Bundle, error)
 	ReplaceBundleControls(ctx context.Context, bundleID string, controls []model.BundleControl) error
 	ListBundleControls(ctx context.Context, bundleID string) ([]model.BundleControl, error)
+	ListControls(ctx context.Context, tenantID string, filter ControlFilter) ([]ControlRow, int, error)
 
 	// Tenants (internal)
 	CreateTenant(ctx context.Context, name string) (*model.Tenant, error)
@@ -402,6 +403,31 @@ type AgentLogFilter struct {
 	ScanID string
 	Limit  int
 	Order  string // "asc" or "desc"
+}
+
+// ControlFilter is the parsed query for ListControls.
+type ControlFilter struct {
+	Framework string
+	Engine    string
+	Severity  string
+	Tag       string
+	Q         string
+	Page      int
+	PageSize  int
+}
+
+// ControlRow is one (control, bundle) pair returned from the DB.
+// The handler groups these by ControlID to build the nested response.
+type ControlRow struct {
+	ControlID      string
+	Name           string
+	Severity       *string
+	Engine         string
+	EngineVersions json.RawMessage
+	Tags           json.RawMessage
+	Section        *string
+	BundleID       string
+	BundleName     string
 }
 
 // --- Context plumbing ------------------------------------------------

@@ -333,6 +333,24 @@ export interface BundleControl {
   tags: string[];
 }
 
+// Cross-framework control catalog (Level 2A)
+
+export interface ControlFrameworkMapping {
+  bundle_id: string;
+  bundle_name: string;
+  section: string;
+}
+
+export interface ControlEntry {
+  control_id: string;
+  name: string;
+  severity: string;
+  engine: string;
+  engine_versions: string[];
+  tags: string[];
+  frameworks: ControlFrameworkMapping[];
+}
+
 // ADR 007 — scan definitions + findings
 
 export type ScanDefinitionKind = 'compliance' | 'discovery';
