@@ -204,7 +204,8 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 		targetIdentifier = target.Identifier
 		targetConfig = target.Config
 	} else if d.AssetEndpointID != "" {
-		ep, asset, err := h.store.GetAssetEndpointByID(ctx, d.AssetEndpointID)
+		epCtx := store.WithTenantID(ctx, d.TenantID)
+		ep, asset, err := h.store.GetAssetEndpointByID(epCtx, d.AssetEndpointID)
 		if err != nil {
 			slog.Error("looking up endpoint for directive", "endpoint_id", d.AssetEndpointID, "error", err)
 			return
