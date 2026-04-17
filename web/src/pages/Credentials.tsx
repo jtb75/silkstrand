@@ -321,7 +321,8 @@ function EditSourceForm({
         <>
           <div className="form-group">
             <label htmlFor="edit_username">Username</label>
-            <input id="edit_username" name="edit_username" type="text" required />
+            <input id="edit_username" name="edit_username" type="text" required
+              defaultValue={(source.config as Record<string, unknown>)?.username as string ?? ''} />
           </div>
           <div className="form-group">
             <label htmlFor="edit_password">Password (leave blank to keep existing)</label>

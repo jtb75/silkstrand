@@ -334,9 +334,10 @@ func (h *CredentialsHandler) encryptStaticConfig(raw json.RawMessage) (json.RawM
 	} else {
 		stored = credJSON
 	}
-	cfg, err := json.Marshal(model.StaticCredentialConfig{
-		Type:          "database",
-		EncryptedData: encodeBase64(stored),
+	cfg, err := json.Marshal(map[string]any{
+		"type":           "database",
+		"username":       username,
+		"encrypted_data": encodeBase64(stored),
 	})
 	if err != nil {
 		return nil, errors.New("failed to build credential config")
