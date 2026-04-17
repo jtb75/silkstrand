@@ -656,7 +656,7 @@ func (s *PostgresStore) UpsertBundle(ctx context.Context, b model.Bundle) (*mode
 	var out model.Bundle
 	err := s.db.QueryRowContext(ctx,
 		`INSERT INTO bundles (id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, tarball_hash)
-		 VALUES (COALESCE(NULLIF($1, '')::uuid, uuid_generate_v4()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 VALUES (COALESCE(NULLIF($1::text, '')::uuid, uuid_generate_v4()), NULLIF($2::text, '')::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 ON CONFLICT (name, version) DO UPDATE SET
 		   framework = EXCLUDED.framework,
 		   target_type = EXCLUDED.target_type, engine = EXCLUDED.engine, control_count = EXCLUDED.control_count,
