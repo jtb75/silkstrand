@@ -110,9 +110,13 @@ type ScanStartedPayload struct {
 }
 
 // ScanResultsPayload is sent to the server with completed scan results.
+// When Partial is true, the server writes findings but keeps the scan
+// status as running — more results are coming. When false (or absent for
+// backwards compatibility with legacy agents), the scan is marked completed.
 type ScanResultsPayload struct {
 	ScanID  string          `json:"scan_id"`
 	Results json.RawMessage `json:"results"`
+	Partial bool            `json:"partial,omitempty"`
 }
 
 // ScanErrorPayload is sent to the server when scan execution fails.
