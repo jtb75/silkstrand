@@ -19,6 +19,10 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap lets http.NewResponseController walk through this wrapper to
+// reach the underlying Flusher — required for SSE streaming.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // Hijack implements http.Hijacker, required for WebSocket upgrades.
 func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
