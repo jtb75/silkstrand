@@ -222,6 +222,17 @@ type Store interface {
 	// directive after create succeeds.
 	CreateScanForDefinition(ctx context.Context, in CreateScanForDefinitionInput) (*model.Scan, error)
 
+	// --- Compliance profiles (ADR 010 D9 — Level 3A) ----------------
+
+	ListComplianceProfiles(ctx context.Context) ([]model.ComplianceProfile, error)
+	GetComplianceProfile(ctx context.Context, id string) (*model.ComplianceProfile, error)
+	CreateComplianceProfile(ctx context.Context, p model.ComplianceProfile) (*model.ComplianceProfile, error)
+	UpdateComplianceProfile(ctx context.Context, id string, p model.ComplianceProfile) (*model.ComplianceProfile, error)
+	DeleteComplianceProfile(ctx context.Context, id string) error
+	SetProfileControls(ctx context.Context, profileID string, controlIDs []string) error
+	GetProfileControls(ctx context.Context, profileID string) ([]string, error)
+	PublishProfile(ctx context.Context, profileID string, bundleID string) error
+
 	// Collection membership resolution — used for finding filters and
 	// scheduler dispatch. Returns endpoint ids for scope=endpoint/finding
 	// collections, asset ids for scope=asset.

@@ -770,6 +770,48 @@ export const mintStreamToken = (filter?: StreamTokenRequest) =>
     body: JSON.stringify({ filter: filter ?? {} }),
   });
 
+// --- Compliance profiles (Level 3A) ---
+
+export interface ComplianceProfile {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description?: string;
+  base_framework?: string;
+  status: 'draft' | 'published';
+  version: number;
+  bundle_id?: string;
+  control_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const listComplianceProfiles = () =>
+  request<ComplianceProfile[]>('/api/v1/compliance-profiles');
+
+export const createComplianceProfile = (req: { name: string; description?: string; base_framework?: string }) =>
+  request<ComplianceProfile>('/api/v1/compliance-profiles', { method: 'POST', body: JSON.stringify(req) });
+
+export const getComplianceProfile = (id: string) =>
+  request<ComplianceProfile>(`/api/v1/compliance-profiles/${id}`);
+
+export const updateComplianceProfile = (id: string, req: { name?: string; description?: string }) =>
+  request<ComplianceProfile>(`/api/v1/compliance-profiles/${id}`, { method: 'PUT', body: JSON.stringify(req) });
+
+export const deleteComplianceProfile = (id: string) =>
+  request<void>(`/api/v1/compliance-profiles/${id}`, { method: 'DELETE' });
+
+export const getProfileControls = (id: string) =>
+  request<string[]>(`/api/v1/compliance-profiles/${id}/controls`);
+
+export const setProfileControls = (id: string, controlIds: string[]) =>
+  request<void>(`/api/v1/compliance-profiles/${id}/controls`, {
+    method: 'POST', body: JSON.stringify({ control_ids: controlIds }),
+  });
+
+export const publishProfile = (id: string) =>
+  request<ComplianceProfile>(`/api/v1/compliance-profiles/${id}/publish`, { method: 'POST' });
+
 // Absolute SSE URL builder — combines the active DC base URL with the
 // /api/v1/events/stream path and the minted token. Exposed so
 // `useEventStream` can construct a URL without duplicating the

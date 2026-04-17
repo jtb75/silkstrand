@@ -480,6 +480,28 @@ type CredentialMapping struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+// ----- Compliance profiles (ADR 010 D9 — Level 3A) ---------------
+
+type ComplianceProfile struct {
+	ID            string    `json:"id"`
+	TenantID      string    `json:"tenant_id"`
+	Name          string    `json:"name"`
+	Description   *string   `json:"description,omitempty"`
+	BaseFramework *string   `json:"base_framework,omitempty"`
+	Status        string    `json:"status"`
+	Version       int       `json:"version"`
+	BundleID      *string   `json:"bundle_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	CreatedBy     *string   `json:"created_by,omitempty"`
+	ControlCount  int       `json:"control_count"`
+}
+
+const (
+	ProfileStatusDraft     = "draft"
+	ProfileStatusPublished = "published"
+)
+
 // ----- Agent statuses (unchanged) --------------------------------
 
 const (
