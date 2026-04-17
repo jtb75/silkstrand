@@ -7,6 +7,7 @@ import type {
   CreateAgentResponse,
   AgentDownloads,
   Bundle,
+  BundleControl,
   AssetListResponse,
   AssetDetailResponse,
 } from './types';
@@ -122,6 +123,31 @@ export const getScan = (id: string) => request<Scan>(`/api/v1/scans/${id}`);
 export const deleteScan = (id: string) =>
   request<void>(`/api/v1/scans/${id}`, { method: 'DELETE' });
 export const listBundles = () => request<Bundle[]>('/api/v1/bundles');
+
+export const getBundleControls = (bundleId: string) =>
+  request<BundleControl[]>(`/api/v1/bundles/${bundleId}/controls`);
+
+export const uploadBundle = (tarball: File, signature?: File) => {
+  const form = new FormData();
+  form.append('tarball', tarball);
+  if (signature) form.append('signature', signature);
+  return fetch(`${dcBaseURL()}/api/v1/bundles/upload`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${getToken()}` },
+    body: form,
+  }).then(async (res) => {
+    if (res.status === 401) {
+      clearToken();
+      window.location.href = '/login';
+      throw new Error('Unauthorized');
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Upload failed: ${res.status}`);
+    }
+    return res.json();
+  });
+};
 
 // Assets (ADR 003 R1a)
 export interface AssetFilterParams {

@@ -424,7 +424,9 @@ export default function ScanDefinitions() {
               >
                 <option value="">Select a bundle…</option>
                 {bundles?.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name} v{b.version}</option>
+                  <option key={b.id} value={b.id}>
+                    {b.name} v{b.version}{b.engine ? ` (${b.engine}` : ''}{b.control_count ? `, ${b.control_count} controls)` : b.engine ? ')' : ''}
+                  </option>
                 ))}
               </select>
             </div>

@@ -316,6 +316,21 @@ export interface Bundle {
   version: string;
   framework: string;
   target_type: string;
+  engine?: string;
+  control_count?: number;
+  gcs_path?: string;
+  created_at?: string;
+}
+
+export interface BundleControl {
+  bundle_id: string;
+  control_id: string;
+  name: string;
+  severity?: string;
+  section?: string;
+  engine: string;
+  engine_versions: string[];
+  tags: string[];
 }
 
 // ADR 007 — scan definitions + findings
