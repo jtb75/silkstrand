@@ -355,6 +355,11 @@ const (
 
 	ScanTypeCompliance = "compliance"
 	ScanTypeDiscovery  = "discovery"
+
+	// DiscoveryBundleID is the well-known UUID for the global discovery
+	// bundle seeded by migration 015. Discovery scans reference it so
+	// the scan row always has a valid bundle_id FK.
+	DiscoveryBundleID = "11111111-1111-1111-1111-111111111111"
 )
 
 type CreateScanRequest struct {
