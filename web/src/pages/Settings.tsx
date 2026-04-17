@@ -4,15 +4,14 @@ import { getToken } from '../api/client';
 import { useAuth } from '../auth/useAuth';
 import Team from './Team';
 import Credentials from './Credentials';
-import Bundles from './Bundles';
 
 // P5-b: Settings is now the single Setup surface (per ui-shape.md §Nav
 // Band 4). Team is folded in as a tab; the old top-level Team entry is
 // gone. Credentials consolidates DB/host auth + Integrations + Vaults.
-// Bundles is the bundle management surface (ADR 010 PR 5).
+// Bundles moved to the top-level Compliance page (Level 1).
 // Audit log is a placeholder until ADR 005 / O7.
 
-type Tab = 'profile' | 'team' | 'credentials' | 'bundles' | 'audit';
+type Tab = 'profile' | 'team' | 'credentials' | 'audit';
 
 export default function Settings() {
   const { user, active } = useAuth();
@@ -28,7 +27,6 @@ export default function Settings() {
         <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>Profile</TabButton>
         {isAdmin && <TabButton active={tab === 'team'} onClick={() => setTab('team')}>Team</TabButton>}
         <TabButton active={tab === 'credentials'} onClick={() => setTab('credentials')}>Credentials</TabButton>
-        <TabButton active={tab === 'bundles'} onClick={() => setTab('bundles')}>Bundles</TabButton>
         {isAdmin && <TabButton active={tab === 'audit'} onClick={() => setTab('audit')}>Audit</TabButton>}
       </div>
 
@@ -36,7 +34,6 @@ export default function Settings() {
         {tab === 'profile' && <ProfileTab />}
         {tab === 'team' && isAdmin && <Team />}
         {tab === 'credentials' && <Credentials />}
-        {tab === 'bundles' && <Bundles />}
         {tab === 'audit' && isAdmin && <AuditPlaceholder />}
       </div>
     </div>

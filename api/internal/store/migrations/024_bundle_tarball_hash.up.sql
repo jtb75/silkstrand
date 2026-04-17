@@ -1,0 +1,1 @@
+ALTER TABLE bundles ADD COLUMN IF NOT EXISTS tarball_hash TEXT;

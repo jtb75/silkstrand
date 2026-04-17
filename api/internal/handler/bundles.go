@@ -5,6 +5,8 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -148,6 +150,10 @@ func (h *BundlesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Compute SHA-256 hash of the tarball for verification.
+	hashSum := sha256.Sum256(tarballData)
+	tarballHash := hex.EncodeToString(hashSum[:])
+
 	// Build the bundle model.
 	engine := manifest.Engine
 	b := model.Bundle{
@@ -158,6 +164,7 @@ func (h *BundlesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		TargetType:   manifest.Engine, // engine doubles as target_type for compatibility
 		Engine:       &engine,
 		ControlCount: len(manifest.Controls),
+		TarballHash:  &tarballHash,
 	}
 
 	// Upsert the bundle row.
@@ -448,6 +455,7 @@ type UpsertBundleRequest struct {
 	ControlCount int     `json:"control_count,omitempty"`
 	GCSPath      *string `json:"gcs_path,omitempty"`
 	Signature    *string `json:"signature,omitempty"`
+	TarballHash  *string `json:"tarball_hash,omitempty"`
 }
 
 // InternalUpsertBundle is mounted on the /internal/v1 mux.
@@ -472,6 +480,7 @@ func (h *InternalHandler) UpsertBundle(w http.ResponseWriter, r *http.Request) {
 		ControlCount: req.ControlCount,
 		GCSPath:      req.GCSPath,
 		Signature:    req.Signature,
+		TarballHash:  req.TarballHash,
 	}
 	out, err := h.store.UpsertBundle(r.Context(), b)
 	if err != nil {
