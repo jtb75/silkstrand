@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query';
 import { useToast } from '../lib/toast';
 import {
@@ -14,7 +14,9 @@ import {
   listAgents,
   listCollections,
   listScans,
+  listAssetEndpoints,
   type UpsertScanDefinitionRequest,
+  type AssetEndpointRow,
 } from '../api/client';
 import type {
   Scan,
@@ -100,6 +102,29 @@ export default function ScanDefinitions() {
     queryFn: () => listCollections({ scope: 'endpoint' }),
     enabled: showForm && scopeKind === 'collection',
   });
+
+  // All endpoints — used to resolve UUIDs to host:port labels in the
+  // scope column and for the endpoint search picker in the form.
+  const { data: allEndpoints } = useQuery({
+    queryKey: ['asset-endpoints-all'],
+    queryFn: () => listAssetEndpoints({ page_size: 500 }),
+  });
+  const endpointMap = useMemo(() => {
+    const m = new Map<string, AssetEndpointRow>();
+    for (const ep of allEndpoints?.items ?? []) m.set(ep.id, ep);
+    return m;
+  }, [allEndpoints]);
+
+  // All collections (all scopes) — used for scope label resolution in the table.
+  const { data: allCollections } = useQuery<Collection[]>({
+    queryKey: ['collections-all'],
+    queryFn: () => listCollections(),
+  });
+  const collectionMap = useMemo(() => {
+    const m = new Map<string, Collection>();
+    for (const c of allCollections ?? []) m.set(c.id, c);
+    return m;
+  }, [allCollections]);
 
   // Scans list for deriving per-definition status chips. Invalidated
   // via SSE scan_status events in Layout.tsx so chips update in real time.
@@ -262,10 +287,20 @@ export default function ScanDefinitions() {
 
   function scopeLabel(d: ScanDefinition): string {
     switch (d.scope_kind) {
-      case 'asset_endpoint':
+      case 'asset_endpoint': {
+        if (d.asset_endpoint_id) {
+          const ep = endpointMap.get(d.asset_endpoint_id);
+          if (ep) return `${ep.host || ep.ip}:${ep.port}`;
+        }
         return `Endpoint:${d.asset_endpoint_id?.slice(0, 8) ?? '?'}`;
-      case 'collection':
+      }
+      case 'collection': {
+        if (d.collection_id) {
+          const col = collectionMap.get(d.collection_id);
+          if (col) return col.name;
+        }
         return `Collection:${d.collection_id?.slice(0, 8) ?? '?'}`;
+      }
       case 'cidr':
         return `CIDR:${d.cidr ?? '?'}`;
     }
@@ -340,17 +375,11 @@ export default function ScanDefinitions() {
           </div>
 
           {scopeKind === 'asset_endpoint' && (
-            <div className="form-group">
-              <label htmlFor="sd-endpoint">Asset endpoint ID</label>
-              <input
-                id="sd-endpoint"
-                type="text"
-                placeholder="uuid of asset_endpoint"
-                value={endpointId}
-                onChange={(e) => setEndpointId(e.target.value)}
-                required
-              />
-            </div>
+            <EndpointSearchPicker
+              endpointId={endpointId}
+              endpointMap={endpointMap}
+              onSelect={setEndpointId}
+            />
           )}
 
           {scopeKind === 'collection' && (
@@ -595,4 +624,118 @@ function ScanStatusChip({ status, enabled, latestScan }: {
     default:
       return null;
   }
+}
+
+// Search-as-you-type endpoint picker. Queries the asset-endpoints API
+// and shows results as a dropdown. Selected endpoint's host:port is
+// displayed below the input; the parent receives the UUID.
+function EndpointSearchPicker({
+  endpointId,
+  endpointMap,
+  onSelect,
+}: {
+  endpointId: string;
+  endpointMap: Map<string, AssetEndpointRow>;
+  onSelect: (id: string) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  const { data: results } = useQuery({
+    queryKey: ['endpoint-picker', search],
+    queryFn: () => listAssetEndpoints({ q: search || undefined, page_size: 20 }),
+    enabled: search.length >= 2,
+  });
+
+  const items = results?.items ?? [];
+  const selected = endpointId ? endpointMap.get(endpointId) : undefined;
+
+  // Close dropdown on outside click.
+  const handleClickOutside = useCallback((e: MouseEvent) => {
+    if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+      setOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [handleClickOutside]);
+
+  function endpointLabel(ep: AssetEndpointRow): string {
+    const label = `${ep.host || ep.ip}:${ep.port}`;
+    return ep.service ? `${label} (${ep.service})` : label;
+  }
+
+  return (
+    <div className="form-group" ref={wrapperRef} style={{ position: 'relative' }}>
+      <label htmlFor="sd-endpoint">Asset endpoint</label>
+      <input
+        id="sd-endpoint"
+        type="search"
+        placeholder="Search by host, IP, or service..."
+        value={search}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => { if (search.length >= 2) setOpen(true); }}
+      />
+      {open && search.length >= 2 && items.length > 0 && (
+        <ul style={{
+          position: 'absolute', zIndex: 10, top: '100%', left: 0, right: 0,
+          background: '#fff', border: '1px solid #d1d5db', borderRadius: 4,
+          maxHeight: 220, overflowY: 'auto', listStyle: 'none', padding: 0,
+          margin: 0, boxShadow: '0 4px 12px rgba(0,0,0,.1)',
+        }}>
+          {items.map((ep) => (
+            <li
+              key={ep.id}
+              style={{
+                padding: '6px 10px', cursor: 'pointer',
+                background: ep.id === endpointId ? '#eff6ff' : undefined,
+              }}
+              onMouseDown={() => {
+                onSelect(ep.id);
+                setSearch('');
+                setOpen(false);
+              }}
+            >
+              {endpointLabel(ep)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && search.length >= 2 && items.length === 0 && (
+        <div style={{
+          position: 'absolute', zIndex: 10, top: '100%', left: 0, right: 0,
+          background: '#fff', border: '1px solid #d1d5db', borderRadius: 4,
+          padding: '8px 10px', color: '#6b7280',
+        }}>
+          No endpoints found.
+        </div>
+      )}
+      {selected && (
+        <p style={{ margin: '4px 0 0', fontSize: 13 }}>
+          Selected: <strong>{endpointLabel(selected)}</strong>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ marginLeft: 8 }}
+            onClick={() => onSelect('')}
+          >
+            Clear
+          </button>
+        </p>
+      )}
+      {endpointId && !selected && (
+        <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>
+          Endpoint: {endpointId.slice(0, 8)}...
+        </p>
+      )}
+      {/* Hidden required input so native form validation fires when no endpoint is selected */}
+      <input type="hidden" value={endpointId} required />
+    </div>
+  );
 }
