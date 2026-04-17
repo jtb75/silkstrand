@@ -40,11 +40,13 @@ func (ps *PubSub) Ping(ctx context.Context) error {
 
 // Directive is a scan directive sent to an agent.
 type Directive struct {
-	ScanID        string `json:"scan_id"`
-	ScanType      string `json:"scan_type,omitempty"` // empty == "compliance" (back-compat)
-	BundleID      string `json:"bundle_id"`
-	BundleVersion string `json:"bundle_version,omitempty"`
-	TargetID      string `json:"target_id"`
+	ScanID          string `json:"scan_id"`
+	ScanType        string `json:"scan_type,omitempty"` // empty == "compliance" (back-compat)
+	BundleID        string `json:"bundle_id"`
+	BundleVersion   string `json:"bundle_version,omitempty"`
+	TargetID        string `json:"target_id"`
+	AssetEndpointID string `json:"asset_endpoint_id,omitempty"` // set for collection/endpoint-scoped scans
+	TenantID        string `json:"tenant_id,omitempty"`         // for credential resolution via mappings
 }
 
 // PublishDirective sends a scan directive to a specific agent's channel.

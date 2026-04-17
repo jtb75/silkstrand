@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
@@ -18,6 +19,8 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/store"
 	"github.com/jtb75/silkstrand/api/internal/websocket"
 )
+
+var base64Std = base64.StdEncoding
 
 type AgentHandler struct {
 	hub     *websocket.Hub
@@ -199,8 +202,9 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 	}
 
 	// Discovery scans don't carry credentials. Compliance scans do; fetch
-	// from credential_sources (type=static), falling back to the legacy
-	// credentials table through the ADR 004 C0 rollback window.
+	// from the target's credential_source (type=static), falling back to
+	// credential_mappings (collection → credential_source) when the
+	// target has no direct binding.
 	scanType := d.ScanType
 	if scanType == "" {
 		scanType = "compliance"
@@ -228,37 +232,74 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 }
 
 func (h *AgentHandler) fetchCredentialForDirective(ctx context.Context, d pubsub.Directive) json.RawMessage {
-	encryptedCreds, _, credErr := h.store.GetStaticCredentialForTarget(ctx, d.TargetID)
-	switch {
-	case credErr != nil:
-		slog.Info("credential.fetch",
-			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-			"outcome", "error", "error", credErr)
-		return nil
-	case encryptedCreds == nil:
-		slog.Info("credential.fetch",
-			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-			"outcome", "miss")
-		return nil
+	// 1. Try the target-level credential_source (direct binding).
+	if d.TargetID != "" {
+		encryptedCreds, _, credErr := h.store.GetStaticCredentialForTarget(ctx, d.TargetID)
+		switch {
+		case credErr != nil:
+			slog.Info("credential.fetch",
+				"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+				"outcome", "error", "error", credErr)
+		case encryptedCreds != nil:
+			return h.decryptCredential(encryptedCreds, d.ScanID, d.TargetID, "target")
+		default:
+			slog.Info("credential.fetch",
+				"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+				"outcome", "miss")
+		}
 	}
+
+	// 2. Fall back to credential_mappings: find a credential_source
+	//    mapped to any collection containing this scan's endpoint.
+	if d.AssetEndpointID != "" && d.TenantID != "" {
+		cs, err := h.store.ResolveCredentialForEndpoint(ctx, d.TenantID, d.AssetEndpointID)
+		if err != nil {
+			slog.Warn("credential.fetch.mapping_resolve",
+				"endpoint", d.AssetEndpointID, "scan_id", d.ScanID, "error", err)
+		} else if cs != nil {
+			return h.decryptStaticSource(cs, d.ScanID, d.AssetEndpointID)
+		}
+	}
+
+	return nil
+}
+
+// decryptCredential decrypts a raw credential blob (from GetStaticCredentialForTarget).
+func (h *AgentHandler) decryptCredential(encrypted []byte, scanID, ref, via string) json.RawMessage {
 	if len(h.credKey) == 0 {
-		// No encryption key configured — pass through as-is (local dev).
-		slog.Info("credential.fetch",
-			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-			"outcome", "ok_plaintext")
-		return encryptedCreds
+		slog.Info("credential.fetch", "via", via, "ref", ref, "scan_id", scanID, "outcome", "ok_plaintext")
+		return encrypted
 	}
-	decrypted, err := crypto.Decrypt(encryptedCreds, h.credKey)
+	decrypted, err := crypto.Decrypt(encrypted, h.credKey)
 	if err != nil {
-		slog.Info("credential.fetch",
-			"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+		slog.Info("credential.fetch", "via", via, "ref", ref, "scan_id", scanID,
 			"outcome", "decrypt_error", "error", err)
 		return nil
 	}
-	slog.Info("credential.fetch",
-		"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-		"outcome", "ok")
+	slog.Info("credential.fetch", "via", via, "ref", ref, "scan_id", scanID, "outcome", "ok")
 	return decrypted
+}
+
+// decryptStaticSource extracts and decrypts the credential from a
+// credential_source row resolved via credential_mappings.
+func (h *AgentHandler) decryptStaticSource(cs *model.CredentialSource, scanID, endpointID string) json.RawMessage {
+	var cfg model.StaticCredentialConfig
+	if err := json.Unmarshal(cs.Config, &cfg); err != nil {
+		slog.Warn("credential.fetch.mapping_parse",
+			"source_id", cs.ID, "scan_id", scanID, "error", err)
+		return nil
+	}
+	data, err := base64Decode(cfg.EncryptedData)
+	if err != nil {
+		slog.Warn("credential.fetch.mapping_decode",
+			"source_id", cs.ID, "scan_id", scanID, "error", err)
+		return nil
+	}
+	return h.decryptCredential(data, scanID, endpointID, "mapping")
+}
+
+func base64Decode(s string) ([]byte, error) {
+	return base64Std.DecodeString(s)
 }
 
 // SelfDelete is called by the agent itself during uninstall, authed with

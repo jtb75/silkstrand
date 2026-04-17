@@ -2,6 +2,7 @@ package handler
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -12,6 +13,8 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/store"
 )
+
+var base64Enc = base64.StdEncoding
 
 // credentialSourceTypeAllowed mirrors the DB CHECK constraint added in
 // migration 017. Kept here so the API rejects invalid types with a clean
@@ -147,6 +150,7 @@ var secretKeysByType = map[string][]string{
 type credentialSourceView struct {
 	ID        string          `json:"id"`
 	TenantID  string          `json:"tenant_id"`
+	Name      string          `json:"name"`
 	Type      string          `json:"type"`
 	Config    json.RawMessage `json:"config"`
 	CreatedAt string          `json:"created_at"`
@@ -175,15 +179,18 @@ func scrubConfig(t string, cfg json.RawMessage) json.RawMessage {
 }
 
 func toView(cs model.CredentialSource) credentialSourceView {
-	// Static sources carry encrypted_data; scrub it universally so
-	// plaintext/ciphertext never reaches the UI.
+	// Static sources carry encrypted_data; scrub it but expose the
+	// username so the list view can display it.
 	cfg := cs.Config
 	if cs.Type == model.CredentialSourceTypeStatic {
 		var m map[string]any
 		if json.Unmarshal(cfg, &m) == nil {
+			// Replace encrypted_data with the sentinel; never expose ciphertext.
 			if _, ok := m["encrypted_data"]; ok {
 				m["encrypted_data"] = "(set)"
 			}
+			// Always show password as masked (the UI relies on this sentinel).
+			m["password"] = "(set)"
 			if out, err := json.Marshal(m); err == nil {
 				cfg = out
 			}
@@ -194,6 +201,7 @@ func toView(cs model.CredentialSource) credentialSourceView {
 	return credentialSourceView{
 		ID:        cs.ID,
 		TenantID:  cs.TenantID,
+		Name:      cs.Name,
 		Type:      cs.Type,
 		Config:    cfg,
 		CreatedAt: cs.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -247,10 +255,9 @@ func (h *CredentialsHandler) GetSource(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateSource — POST /api/v1/credential-sources
-// Body: {type: "slack"|"webhook"|..., config: {...}}
-// For type=static, callers should continue to use the target credential
-// PUT endpoint; direct creates are accepted but must include a fully
-// encrypted payload (advanced workflow).
+// Body: {name: "...", type: "static"|"slack"|..., config: {...}}
+// For type=static, config should contain {username, password}. The
+// handler encrypts these before storing.
 func (h *CredentialsHandler) CreateSource(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil || claims.TenantID == "" {
@@ -258,6 +265,7 @@ func (h *CredentialsHandler) CreateSource(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req struct {
+		Name   string          `json:"name"`
 		Type   string          `json:"type"`
 		Config json.RawMessage `json:"config"`
 	}
@@ -272,7 +280,17 @@ func (h *CredentialsHandler) CreateSource(w http.ResponseWriter, r *http.Request
 	if len(req.Config) == 0 {
 		req.Config = json.RawMessage(`{}`)
 	}
-	id, err := h.store.CreateCredentialSource(r.Context(), claims.TenantID, req.Type, req.Config)
+	// Static sources: encrypt username+password into the config JSONB so
+	// plaintext credentials are never at rest.
+	if req.Type == model.CredentialSourceTypeStatic {
+		cfg, err := h.encryptStaticConfig(req.Config)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		req.Config = cfg
+	}
+	id, err := h.store.CreateCredentialSource(r.Context(), claims.TenantID, req.Name, req.Type, req.Config)
 	if err != nil {
 		slog.Error("creating credential source", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create credential source")
@@ -286,8 +304,53 @@ func (h *CredentialsHandler) CreateSource(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusCreated, toView(*cs))
 }
 
+// encryptStaticConfig takes the raw config containing {username,
+// password} and returns a config JSONB with {type, encrypted_data}
+// where encrypted_data is AES-256-GCM encrypted base64. The
+// username is stored as the "type" field for display purposes.
+func (h *CredentialsHandler) encryptStaticConfig(raw json.RawMessage) (json.RawMessage, error) {
+	var incoming map[string]any
+	if err := json.Unmarshal(raw, &incoming); err != nil {
+		return nil, errors.New("config must be a JSON object")
+	}
+	username, _ := incoming["username"].(string)
+	password, _ := incoming["password"].(string)
+	if username == "" || password == "" {
+		return nil, errors.New("username and password are required for static credentials")
+	}
+	// The agent needs {username, password} as plaintext in the decrypted
+	// payload — encrypt the entire credential JSON blob.
+	credJSON, _ := json.Marshal(map[string]string{
+		"username": username,
+		"password": password,
+	})
+	var stored []byte
+	if len(h.encKey) > 0 {
+		var err error
+		stored, err = crypto.Encrypt(credJSON, h.encKey)
+		if err != nil {
+			return nil, errors.New("failed to encrypt credential")
+		}
+	} else {
+		stored = credJSON
+	}
+	cfg, err := json.Marshal(model.StaticCredentialConfig{
+		Type:          "database",
+		EncryptedData: encodeBase64(stored),
+	})
+	if err != nil {
+		return nil, errors.New("failed to build credential config")
+	}
+	return cfg, nil
+}
+
+func encodeBase64(data []byte) string {
+	return base64Enc.EncodeToString(data)
+}
+
 // UpdateSource — PUT /api/v1/credential-sources/{id}
 // Preserves secret fields when they are blank in the incoming config.
+// For static type: blank password means "keep existing".
 func (h *CredentialsHandler) UpdateSource(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil || claims.TenantID == "" {
@@ -306,35 +369,70 @@ func (h *CredentialsHandler) UpdateSource(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req struct {
+		Name   *string         `json:"name"`
 		Config json.RawMessage `json:"config"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// Merge incoming config with existing, preserving blank/sentinel
-	// secret keys.
-	var incoming, current map[string]any
-	if err := json.Unmarshal(req.Config, &incoming); err != nil {
-		writeError(w, http.StatusBadRequest, "config must be a JSON object")
-		return
+	name := existing.Name
+	if req.Name != nil {
+		name = *req.Name
 	}
-	_ = json.Unmarshal(existing.Config, &current)
-	for _, k := range secretKeysByType[existing.Type] {
-		if v, ok := incoming[k]; !ok || v == "" || v == "(set)" {
-			if cur, ok := current[k]; ok {
-				incoming[k] = cur
-			} else {
-				delete(incoming, k)
+
+	var merged json.RawMessage
+	if existing.Type == model.CredentialSourceTypeStatic {
+		// Static update: if password is blank/missing, keep the existing
+		// encrypted config. If password is provided, re-encrypt.
+		var incoming map[string]any
+		if err := json.Unmarshal(req.Config, &incoming); err != nil {
+			writeError(w, http.StatusBadRequest, "config must be a JSON object")
+			return
+		}
+		password, _ := incoming["password"].(string)
+		if password == "" || password == "(set)" {
+			// Keep existing encrypted config as-is.
+			merged = existing.Config
+		} else {
+			username, _ := incoming["username"].(string)
+			if username == "" {
+				writeError(w, http.StatusBadRequest, "username is required")
+				return
+			}
+			cfg, err := h.encryptStaticConfig(req.Config)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			merged = cfg
+		}
+	} else {
+		// Non-static: merge preserving blank secret keys.
+		var incoming, current map[string]any
+		if err := json.Unmarshal(req.Config, &incoming); err != nil {
+			writeError(w, http.StatusBadRequest, "config must be a JSON object")
+			return
+		}
+		_ = json.Unmarshal(existing.Config, &current)
+		for _, k := range secretKeysByType[existing.Type] {
+			if v, ok := incoming[k]; !ok || v == "" || v == "(set)" {
+				if cur, ok := current[k]; ok {
+					incoming[k] = cur
+				} else {
+					delete(incoming, k)
+				}
 			}
 		}
+		var mergeErr error
+		merged, mergeErr = json.Marshal(incoming)
+		if mergeErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to serialize config")
+			return
+		}
 	}
-	merged, err := json.Marshal(incoming)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to serialize config")
-		return
-	}
-	if err := h.store.UpdateCredentialSourceConfig(r.Context(), id, merged); err != nil {
+
+	if err := h.store.UpdateCredentialSource(r.Context(), id, name, merged); err != nil {
 		slog.Error("updating credential source", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update credential source")
 		return

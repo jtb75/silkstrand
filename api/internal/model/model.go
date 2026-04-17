@@ -99,6 +99,7 @@ type Target struct {
 type CredentialSource struct {
 	ID        string          `json:"id"`
 	TenantID  string          `json:"tenant_id"`
+	Name      string          `json:"name"`
 	Type      string          `json:"type"`
 	Config    json.RawMessage `json:"config"`
 	CreatedAt time.Time       `json:"created_at"`

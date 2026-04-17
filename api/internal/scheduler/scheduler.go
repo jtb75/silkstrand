@@ -226,12 +226,16 @@ func (d Dispatcher) dispatchOne(ctx context.Context, def model.ScanDefinition, e
 	directive := pubsub.Directive{
 		ScanID:   sc.ID,
 		ScanType: scanType,
+		TenantID: def.TenantID,
 	}
 	if bundleID != nil {
 		directive.BundleID = *bundleID
 	}
 	if targetID != nil {
 		directive.TargetID = *targetID
+	}
+	if endpointID != nil {
+		directive.AssetEndpointID = *endpointID
 	}
 	if err := d.PubSub.PublishDirective(ctx, *def.AgentID, directive); err != nil {
 		return fmt.Errorf("publishing directive: %w", err)
@@ -264,12 +268,16 @@ func (d Dispatcher) DrainAgentQueue(ctx context.Context, agentID string) {
 	directive := pubsub.Directive{
 		ScanID:   next.ID,
 		ScanType: next.ScanType,
+		TenantID: next.TenantID,
 	}
 	if next.BundleID != nil {
 		directive.BundleID = *next.BundleID
 	}
 	if next.TargetID != nil {
 		directive.TargetID = *next.TargetID
+	}
+	if next.AssetEndpointID != nil {
+		directive.AssetEndpointID = *next.AssetEndpointID
 	}
 	if err := d.PubSub.PublishDirective(ctx, agentID, directive); err != nil {
 		slog.Error("drain_queue.publish", "scan", next.ID, "agent", agentID, "error", err)
