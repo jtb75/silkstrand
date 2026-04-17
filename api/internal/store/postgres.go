@@ -831,19 +831,69 @@ func (s *PostgresStore) UpdateCredentialSource(ctx context.Context, id, name str
 	return nil
 }
 
-// ResolveCredentialForEndpoint finds a static credential_source mapped
-// (via credential_mappings → collections) to any collection containing
-// the given endpoint. Returns the first match or nil.
+// ResolveCredentialForEndpoint finds a static credential_source for the
+// given endpoint using most-specific-first precedence:
+//  1. Endpoint-level mapping (scope_kind='asset_endpoint')
+//  2. Asset-level mapping (scope_kind='asset')
+//  3. Collection-level mapping (scope_kind='collection') — legacy path
+//
+// First match wins; returns nil if no mapping resolves.
 func (s *PostgresStore) ResolveCredentialForEndpoint(ctx context.Context, tenantID, endpointID string) (*model.CredentialSource, error) {
+	// 1. Endpoint-level: direct mapping to this endpoint.
+	cs, err := s.resolveBySQL(ctx,
+		`SELECT cs.id, cs.tenant_id, cs.name, cs.type, cs.config, cs.created_at, cs.updated_at
+		   FROM credential_sources cs
+		   JOIN credential_mappings cm ON cm.credential_source_id = cs.id
+		  WHERE cm.scope_kind = 'asset_endpoint'
+		    AND cm.asset_endpoint_id = $1
+		    AND cm.tenant_id = $2
+		  LIMIT 1`, endpointID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve endpoint-level: %w", err)
+	}
+	if cs != nil {
+		return cs, nil
+	}
+
+	// 2. Asset-level: look up the endpoint's parent asset, then find a
+	//    mapping scoped to that asset.
+	var assetID sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT asset_id FROM asset_endpoints WHERE id = $1`, endpointID).
+		Scan(&assetID); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("looking up endpoint asset: %w", err)
+	}
+	if assetID.Valid {
+		cs, err = s.resolveBySQL(ctx,
+			`SELECT cs.id, cs.tenant_id, cs.name, cs.type, cs.config, cs.created_at, cs.updated_at
+			   FROM credential_sources cs
+			   JOIN credential_mappings cm ON cm.credential_source_id = cs.id
+			  WHERE cm.scope_kind = 'asset'
+			    AND cm.asset_id = $1
+			    AND cm.tenant_id = $2
+			  LIMIT 1`, assetID.String, tenantID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve asset-level: %w", err)
+		}
+		if cs != nil {
+			return cs, nil
+		}
+	}
+
+	// 3. Collection-level: iterate collection-scoped mappings and check
+	//    if any collection contains this endpoint (legacy path).
 	mappings, err := s.ListCredentialMappings(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("listing credential mappings: %w", err)
 	}
 	for _, m := range mappings {
-		members, err := s.CollectionEndpointIDs(ctx, m.CollectionID)
+		if m.ScopeKind != model.MappingScopeCollection || m.CollectionID == nil {
+			continue
+		}
+		members, err := s.CollectionEndpointIDs(ctx, *m.CollectionID)
 		if err != nil {
 			slog.Warn("resolveCredentialForEndpoint: collection lookup failed",
-				"collection_id", m.CollectionID, "error", err)
+				"collection_id", *m.CollectionID, "error", err)
 			continue
 		}
 		for _, id := range members {
@@ -859,6 +909,28 @@ func (s *PostgresStore) ResolveCredentialForEndpoint(ctx context.Context, tenant
 		}
 	}
 	return nil, nil
+}
+
+// resolveBySQL executes the given query (must return credential_source columns)
+// and returns the first static credential_source or nil.
+func (s *PostgresStore) resolveBySQL(ctx context.Context, query string, args ...any) (*model.CredentialSource, error) {
+	var cs model.CredentialSource
+	var cfgRaw []byte
+	err := s.db.QueryRowContext(ctx, query, args...).
+		Scan(&cs.ID, &cs.TenantID, &cs.Name, &cs.Type, &cfgRaw, &cs.CreatedAt, &cs.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cs.Type != model.CredentialSourceTypeStatic {
+		return nil, nil
+	}
+	if len(cfgRaw) > 0 {
+		_ = json.Unmarshal(cfgRaw, &cs.Config)
+	}
+	return &cs, nil
 }
 
 func (s *PostgresStore) DeleteCredentialSource(ctx context.Context, id string) error {
@@ -1037,7 +1109,8 @@ func (s *PostgresStore) ListCredentialSources(ctx context.Context, tenantID stri
 
 func (s *PostgresStore) ListCredentialMappings(ctx context.Context, tenantID string) ([]model.CredentialMapping, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, tenant_id, collection_id, credential_source_id, created_at
+		`SELECT id, tenant_id, scope_kind, collection_id, asset_endpoint_id, asset_id,
+		        credential_source_id, created_at
 		   FROM credential_mappings WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("listing credential mappings: %w", err)
@@ -1046,7 +1119,8 @@ func (s *PostgresStore) ListCredentialMappings(ctx context.Context, tenantID str
 	out := []model.CredentialMapping{}
 	for rows.Next() {
 		var m model.CredentialMapping
-		if err := rows.Scan(&m.ID, &m.TenantID, &m.CollectionID, &m.CredentialSourceID, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.TenantID, &m.ScopeKind, &m.CollectionID,
+			&m.AssetEndpointID, &m.AssetID, &m.CredentialSourceID, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning credential mapping: %w", err)
 		}
 		out = append(out, m)
@@ -1057,9 +1131,11 @@ func (s *PostgresStore) ListCredentialMappings(ctx context.Context, tenantID str
 func (s *PostgresStore) GetCredentialMapping(ctx context.Context, id string) (*model.CredentialMapping, error) {
 	var m model.CredentialMapping
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, collection_id, credential_source_id, created_at
+		`SELECT id, tenant_id, scope_kind, collection_id, asset_endpoint_id, asset_id,
+		        credential_source_id, created_at
 		   FROM credential_mappings WHERE id = $1`, id).
-		Scan(&m.ID, &m.TenantID, &m.CollectionID, &m.CredentialSourceID, &m.CreatedAt)
+		Scan(&m.ID, &m.TenantID, &m.ScopeKind, &m.CollectionID,
+			&m.AssetEndpointID, &m.AssetID, &m.CredentialSourceID, &m.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1069,15 +1145,17 @@ func (s *PostgresStore) GetCredentialMapping(ctx context.Context, id string) (*m
 	return &m, nil
 }
 
-func (s *PostgresStore) CreateCredentialMapping(ctx context.Context, tenantID, collectionID, credentialSourceID string) (*model.CredentialMapping, error) {
+func (s *PostgresStore) CreateCredentialMapping(ctx context.Context, in CreateCredentialMappingInput) (*model.CredentialMapping, error) {
 	var m model.CredentialMapping
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO credential_mappings (tenant_id, collection_id, credential_source_id)
-		 VALUES ($1, $2, $3)
-		 ON CONFLICT (collection_id, credential_source_id) DO UPDATE SET created_at = credential_mappings.created_at
-		 RETURNING id, tenant_id, collection_id, credential_source_id, created_at`,
-		tenantID, collectionID, credentialSourceID).
-		Scan(&m.ID, &m.TenantID, &m.CollectionID, &m.CredentialSourceID, &m.CreatedAt)
+		`INSERT INTO credential_mappings
+		   (tenant_id, scope_kind, collection_id, asset_endpoint_id, asset_id, credential_source_id)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, tenant_id, scope_kind, collection_id, asset_endpoint_id, asset_id,
+		           credential_source_id, created_at`,
+		in.TenantID, in.ScopeKind, in.CollectionID, in.AssetEndpointID, in.AssetID, in.CredentialSourceID).
+		Scan(&m.ID, &m.TenantID, &m.ScopeKind, &m.CollectionID,
+			&m.AssetEndpointID, &m.AssetID, &m.CredentialSourceID, &m.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("creating credential mapping: %w", err)
 	}

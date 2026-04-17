@@ -307,6 +307,7 @@ export default function Assets() {
         selectionCount={selected.size}
         resolveEndpointIds={() => Array.from(selected)}
         onClear={() => setSelected(new Set())}
+        scopeKind={tab === 'assets' ? 'asset' : 'asset_endpoint'}
       />
 
       {saveOpen && (

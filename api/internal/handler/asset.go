@@ -115,12 +115,34 @@ func (h *AssetHandler) ListEndpoints(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list endpoints")
 		return
 	}
+	// Pre-compute credential coverage for all returned endpoints using
+	// endpoint-level and asset-level mappings (fast SQL check). Collection-
+	// level coverage is omitted here for performance — the detail route and
+	// asset rollups include all three levels.
+	tenantID := store.TenantID(r.Context())
+	allMappings, _ := h.store.ListCredentialMappings(r.Context(), tenantID)
+	epDirect := map[string]bool{}
+	assetDirect := map[string]bool{}
+	for _, m := range allMappings {
+		switch m.ScopeKind {
+		case model.MappingScopeAssetEndpoint:
+			if m.AssetEndpointID != nil {
+				epDirect[*m.AssetEndpointID] = true
+			}
+		case model.MappingScopeAsset:
+			if m.AssetID != nil {
+				assetDirect[*m.AssetID] = true
+			}
+		}
+	}
+
 	out := make([]map[string]any, 0, len(items))
 	for _, ep := range items {
 		var techs []string
 		if len(ep.Technologies) > 0 {
 			_ = json.Unmarshal(ep.Technologies, &techs)
 		}
+		hasCred := epDirect[ep.ID] || assetDirect[ep.AssetID]
 		row := map[string]any{
 			"id":              ep.ID,
 			"asset_id":        ep.AssetID,
@@ -132,7 +154,7 @@ func (h *AssetHandler) ListEndpoints(w http.ResponseWriter, r *http.Request) {
 			"version":         ep.Version,
 			"technologies":    techs,
 			"findings_count":  ep.FindingsCount,
-			"coverage":        map[string]bool{"has_scan_definition": false, "has_credential_mapping": false},
+			"coverage":        map[string]bool{"has_scan_definition": false, "has_credential_mapping": hasCred},
 			"last_seen":       ep.LastSeen,
 		}
 		out = append(out, row)
@@ -295,14 +317,53 @@ func buildRollups(ctx context.Context, s store.Store) (*rollups, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Build credential coverage map across all three scope levels.
+	credMatch := map[string]bool{}
+
+	// Load all mappings for this tenant and bucket by scope.
+	tenantID := store.TenantID(ctx)
+	allMappings, err := s.ListCredentialMappings(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	epDirect := map[string]bool{}   // endpoint_id → has direct mapping
+	assetDirect := map[string]bool{} // asset_id → has asset-level mapping
+	var collectionMappings []model.CredentialMapping
+	for _, m := range allMappings {
+		switch m.ScopeKind {
+		case model.MappingScopeAssetEndpoint:
+			if m.AssetEndpointID != nil {
+				epDirect[*m.AssetEndpointID] = true
+			}
+		case model.MappingScopeAsset:
+			if m.AssetID != nil {
+				assetDirect[*m.AssetID] = true
+			}
+		case model.MappingScopeCollection:
+			collectionMappings = append(collectionMappings, m)
+		}
+	}
+
+	// Mark endpoints with direct or asset-level mappings.
+	for i := range views {
+		v := views[i]
+		if epDirect[v.Endpoint.ID] || assetDirect[v.Asset.ID] {
+			credMatch[v.Endpoint.ID] = true
+		}
+	}
+
+	// Collection-level: only evaluate if there are collection mappings
+	// and endpoints not yet matched.
 	mappedColls, err := s.CollectionsWithCredentialMappings(ctx)
 	if err != nil {
 		return nil, err
 	}
-	credMatch := map[string]bool{}
 	if len(mappedColls) > 0 {
 		for i := range views {
 			v := views[i]
+			if credMatch[v.Endpoint.ID] {
+				continue // already matched at a more specific level
+			}
 			for _, c := range mappedColls {
 				if matchesCollection(&v.Asset, &v.Endpoint, c) {
 					credMatch[v.Endpoint.ID] = true
@@ -311,6 +372,7 @@ func buildRollups(ctx context.Context, s store.Store) (*rollups, error) {
 			}
 		}
 	}
+	_ = collectionMappings // used above for bucketing only
 	return &rollups{
 		endpointsByAsset: epByAsset,
 		sdEndpoints:      sd,

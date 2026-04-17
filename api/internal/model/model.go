@@ -435,10 +435,20 @@ const (
 
 // ----- Credential mappings + asset relationships (placeholders) --
 
+// Credential mapping scope kinds.
+const (
+	MappingScopeCollection    = "collection"
+	MappingScopeAssetEndpoint = "asset_endpoint"
+	MappingScopeAsset         = "asset"
+)
+
 type CredentialMapping struct {
 	ID                 string    `json:"id"`
 	TenantID           string    `json:"tenant_id"`
-	CollectionID       string    `json:"collection_id"`
+	ScopeKind          string    `json:"scope_kind"`
+	CollectionID       *string   `json:"collection_id,omitempty"`
+	AssetEndpointID    *string   `json:"asset_endpoint_id,omitempty"`
+	AssetID            *string   `json:"asset_id,omitempty"`
 	CredentialSourceID string    `json:"credential_source_id"`
 	CreatedAt          time.Time `json:"created_at"`
 }

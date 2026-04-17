@@ -91,10 +91,10 @@ type Store interface {
 	// dispatched via collection fan-out (no per-target binding required).
 	ResolveCredentialForEndpoint(ctx context.Context, tenantID, endpointID string) (*model.CredentialSource, error)
 
-	// Credential mappings (ADR 006 P6 — collection ↔ credential_source).
+	// Credential mappings (ADR 006 P6 — collection/asset/endpoint ↔ credential_source).
 	ListCredentialMappings(ctx context.Context, tenantID string) ([]model.CredentialMapping, error)
 	GetCredentialMapping(ctx context.Context, id string) (*model.CredentialMapping, error)
-	CreateCredentialMapping(ctx context.Context, tenantID, collectionID, credentialSourceID string) (*model.CredentialMapping, error)
+	CreateCredentialMapping(ctx context.Context, in CreateCredentialMappingInput) (*model.CredentialMapping, error)
 	DeleteCredentialMapping(ctx context.Context, id string) error
 	CountMappingsForSource(ctx context.Context, sourceID string) (int, error)
 	SetTargetCredentialSource(ctx context.Context, targetID, sourceID string) error
@@ -327,6 +327,18 @@ type CreateScanForDefinitionInput struct {
 	AssetEndpointID  *string
 	BundleID         *string
 	ScanType         string
+}
+
+// CreateCredentialMappingInput carries the three-way scope for a new
+// credential mapping. Exactly one of CollectionID, AssetEndpointID, or
+// AssetID must be non-nil; ScopeKind must match.
+type CreateCredentialMappingInput struct {
+	TenantID           string
+	ScopeKind          string
+	CollectionID       *string
+	AssetEndpointID    *string
+	AssetID            *string
+	CredentialSourceID string
 }
 
 // AssetFilter is the parsed query for ListAssets.
