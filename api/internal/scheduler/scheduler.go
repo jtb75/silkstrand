@@ -206,8 +206,9 @@ func (d Dispatcher) dispatchOne(ctx context.Context, def model.ScanDefinition, e
 			"scan", sc.ID, "reason", "no agent or pubsub")
 		return nil
 	}
-	// Check if agent already has a running/pending scan — queue if busy.
-	busy, err := d.Store.AgentHasRunningScan(ctx, *def.AgentID)
+	// Check if agent already has another running/pending scan — queue if busy.
+	// Exclude the scan we just created so it doesn't see itself.
+	busy, err := d.Store.AgentHasRunningScanExcluding(ctx, *def.AgentID, sc.ID)
 	if err != nil {
 		return fmt.Errorf("checking agent busy: %w", err)
 	}

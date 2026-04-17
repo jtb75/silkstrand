@@ -115,6 +115,7 @@ type Store interface {
 	DeleteScan(ctx context.Context, id string) error
 	FailRunningScansForAgent(ctx context.Context, agentID string) (int, error)
 	AgentHasRunningScan(ctx context.Context, agentID string) (bool, error)
+	AgentHasRunningScanExcluding(ctx context.Context, agentID, excludeScanID string) (bool, error)
 	OldestQueuedScanForAgent(ctx context.Context, agentID string) (*model.Scan, error)
 	FailStaleQueuedScans(ctx context.Context, maxAge time.Duration) (int, error)
 

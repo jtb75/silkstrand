@@ -352,10 +352,14 @@ func (s *PostgresStore) FailRunningScansForAgent(ctx context.Context, agentID st
 }
 
 func (s *PostgresStore) AgentHasRunningScan(ctx context.Context, agentID string) (bool, error) {
+	return s.AgentHasRunningScanExcluding(ctx, agentID, "")
+}
+
+func (s *PostgresStore) AgentHasRunningScanExcluding(ctx context.Context, agentID, excludeScanID string) (bool, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM scans WHERE agent_id = $1 AND status IN ($2, $3))`,
-		agentID, model.ScanStatusPending, model.ScanStatusRunning).Scan(&exists)
+		`SELECT EXISTS(SELECT 1 FROM scans WHERE agent_id = $1 AND status IN ($2, $3) AND id != COALESCE(NULLIF($4, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid))`,
+		agentID, model.ScanStatusPending, model.ScanStatusRunning, excludeScanID).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("checking agent running scan: %w", err)
 	}
