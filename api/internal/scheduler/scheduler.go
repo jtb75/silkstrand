@@ -203,8 +203,8 @@ func (d Dispatcher) dispatchOne(ctx context.Context, def model.ScanDefinition, e
 		ScanID:   sc.ID,
 		ScanType: scanType,
 	}
-	if def.BundleID != nil {
-		directive.BundleID = *def.BundleID
+	if bundleID != nil {
+		directive.BundleID = *bundleID
 	}
 	if targetID != nil {
 		directive.TargetID = *targetID
