@@ -46,7 +46,9 @@ type Risk struct {
 // GET /api/v1/assets — list with coverage + risk.
 func (h *AssetHandler) List(w http.ResponseWriter, r *http.Request) {
 	f := store.AssetFilter{
-		Source: r.URL.Query().Get("source"),
+		Source:      r.URL.Query().Get("source"),
+		Environment: r.URL.Query().Get("environment"),
+		Q:           r.URL.Query().Get("q"),
 	}
 	items, total, err := h.store.ListAssets(r.Context(), f)
 	if err != nil {
