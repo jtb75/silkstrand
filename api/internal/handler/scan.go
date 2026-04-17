@@ -75,7 +75,7 @@ func (h *ScanHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if scan.AgentID != nil && h.ps != nil {
 		agentID := *scan.AgentID
 		// Check if agent already has a running/pending scan — queue if busy.
-		busy, busyErr := h.store.AgentHasRunningScan(r.Context(), agentID)
+		busy, busyErr := h.store.AgentHasRunningScanExcluding(r.Context(), agentID, scan.ID)
 		if busyErr != nil {
 			slog.Error("checking agent busy", "agent_id", agentID, "error", busyErr)
 		}

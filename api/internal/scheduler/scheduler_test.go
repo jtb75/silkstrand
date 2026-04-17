@@ -75,6 +75,10 @@ func (f *fakeStore) AgentHasRunningScan(ctx context.Context, agentID string) (bo
 	return false, nil
 }
 
+func (f *fakeStore) AgentHasRunningScanExcluding(ctx context.Context, agentID, excludeScanID string) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeStore) UpdateScanStatus(ctx context.Context, scanID, status string) error {
 	return nil
 }
