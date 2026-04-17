@@ -67,7 +67,7 @@ jobs:
         run: |
           SHA=${{ needs.validate-tag.outputs.sha }}
           IMAGE="${{ env.GAR_REGISTRY }}/api:sha-${SHA}"
-          docker build -t ${IMAGE} -t ${{ env.GAR_REGISTRY }}/api:latest -f api/Dockerfile api/
+          docker build -t ${IMAGE} -t ${{ env.GAR_REGISTRY }}/api:latest -f api/Dockerfile .
           docker push ${IMAGE}
           docker push ${{ env.GAR_REGISTRY }}/api:latest
 

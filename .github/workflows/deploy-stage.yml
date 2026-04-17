@@ -92,7 +92,7 @@ jobs:
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           IMAGE="${{ env.GAR_REGISTRY }}/api:sha-${SHORT_SHA}"
-          docker build -t ${IMAGE} -t ${{ env.GAR_REGISTRY }}/api:latest -f api/Dockerfile api/
+          docker build -t ${IMAGE} -t ${{ env.GAR_REGISTRY }}/api:latest -f api/Dockerfile .
           docker push ${IMAGE}
           docker push ${{ env.GAR_REGISTRY }}/api:latest
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
