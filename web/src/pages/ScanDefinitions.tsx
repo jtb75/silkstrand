@@ -59,7 +59,8 @@ function cronHelp(expr: string): string {
 export default function ScanDefinitions() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [showForm, setShowForm] = useState(false);
+  const autoOpen = typeof window !== 'undefined' && window.location.pathname.includes('/definitions/new');
+  const [showForm, setShowForm] = useState(autoOpen);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const [name, setName] = useState('');
