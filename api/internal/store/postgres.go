@@ -1194,9 +1194,10 @@ func (s *PostgresStore) ListAssets(ctx context.Context, filter AssetFilter) ([]m
 		   FROM assets
 		  WHERE tenant_id = $1
 		    AND ($2 = '' OR source = $2)
+		    AND ($5 = '' OR host(primary_ip)::text ILIKE '%' || $5 || '%' OR COALESCE(hostname,'') ILIKE '%' || $5 || '%')
 		  ORDER BY last_seen DESC
 		  LIMIT $3 OFFSET $4`,
-		tenantID, filter.Source, filter.PageSize, offset)
+		tenantID, filter.Source, filter.PageSize, offset, filter.Q)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing assets: %w", err)
 	}
