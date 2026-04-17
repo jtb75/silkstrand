@@ -87,6 +87,10 @@ func (f *fakeStore) FailStaleQueuedScans(ctx context.Context, maxAge time.Durati
 	return 0, nil
 }
 
+func (f *fakeStore) DeleteOldAgentLogs(ctx context.Context, maxAge time.Duration) (int, error) {
+	return 0, nil
+}
+
 func (f *fakeStore) OldestQueuedScanForAgent(ctx context.Context, agentID string) (*model.Scan, error) {
 	return nil, nil
 }

@@ -166,6 +166,7 @@ func run() error {
 	apiMux.HandleFunc("POST /api/v1/agents", agentsH.Create)
 	apiMux.HandleFunc("GET /api/v1/agents/{id}", agentsH.Get)
 	apiMux.HandleFunc("GET /api/v1/agents/{id}/allowlist", agentsH.GetAllowlist)
+	apiMux.HandleFunc("GET /api/v1/agents/{id}/logs", agentsH.Logs)
 	apiMux.HandleFunc("POST /api/v1/agents/{id}/rotate-key", agentsH.RotateKey)
 	apiMux.HandleFunc("POST /api/v1/agents/{id}/upgrade", agentsH.Upgrade)
 	apiMux.HandleFunc("DELETE /api/v1/agents/{id}", agentsH.Delete)
@@ -349,7 +350,6 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			handleAssetDiscovered(ctx, s, notifier, sched, bus, agentID, msg.Payload)
 
 		case websocket.TypeAgentLog:
-			slog.Info("agent_log received", "agent_id", agentID, "payload_len", len(msg.Payload))
 			handleAgentLog(ctx, s, bus, agentID, msg.Payload)
 
 		case websocket.TypeDiscoveryCompleted:
@@ -553,13 +553,12 @@ func handleAllowlistSnapshot(ctx context.Context, s store.Store, agentID string,
 	// naturally. If this becomes a UX gap we'll revisit.
 }
 
-// handleAgentLog receives the agent's {type:"agent_log"} WSS message and
-// republishes it on the event bus for SSE consumers. Per ADR 008 D5 we
-// DO NOT persist — subscribers that arrive late miss the line (it's
-// still on the agent's local file). Tenant is resolved from the agent
-// row so cross-tenant leakage is impossible.
+// handleAgentLog receives the agent's {type:"agent_log"} WSS message,
+// persists it to the agent_log_events table, and republishes on the
+// event bus for SSE live-tail consumers. Tenant is resolved from the
+// agent row so cross-tenant leakage is impossible.
 func handleAgentLog(ctx context.Context, s store.Store, bus events.Bus, agentID string, payload json.RawMessage) {
-	if bus == nil || len(payload) == 0 {
+	if len(payload) == 0 {
 		return
 	}
 	agent, err := s.GetAgentByID(ctx, agentID)
@@ -570,15 +569,39 @@ func handleAgentLog(ctx context.Context, s store.Store, bus events.Bus, agentID 
 		slog.Warn("agent_log: agent lookup failed", "agent_id", agentID, "error", err)
 		return
 	}
-	if err := bus.Publish(ctx, events.Event{
-		TenantID:     agent.TenantID,
-		Kind:         "agent_log",
-		ResourceType: "agent",
-		ResourceID:   agentID,
-		OccurredAt:   time.Now().UTC(),
-		Payload:      payload,
+
+	// Parse payload to extract structured fields for the table.
+	var logEntry struct {
+		Level  string `json:"level"`
+		Msg    string `json:"msg"`
+		ScanID string `json:"scan_id"`
+	}
+	_ = json.Unmarshal(payload, &logEntry)
+
+	// Persist to DB — best effort; don't block the SSE path on failure.
+	if err := s.InsertAgentLogEvent(ctx, store.AgentLogEventInput{
+		TenantID: agent.TenantID,
+		AgentID:  agentID,
+		ScanID:   logEntry.ScanID,
+		Level:    logEntry.Level,
+		Msg:      logEntry.Msg,
+		Attrs:    payload,
 	}); err != nil {
-		slog.Warn("agent_log publish failed", "agent_id", agentID, "error", err)
+		slog.Warn("agent_log persist failed", "agent_id", agentID, "error", err)
+	}
+
+	// Publish to bus for SSE live tail (existing behavior).
+	if bus != nil {
+		if err := bus.Publish(ctx, events.Event{
+			TenantID:     agent.TenantID,
+			Kind:         "agent_log",
+			ResourceType: "agent",
+			ResourceID:   agentID,
+			OccurredAt:   time.Now().UTC(),
+			Payload:      payload,
+		}); err != nil {
+			slog.Warn("agent_log publish failed", "agent_id", agentID, "error", err)
+		}
 	}
 }
 

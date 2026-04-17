@@ -79,6 +79,13 @@ func (s *Scheduler) Tick(ctx context.Context) {
 		slog.Info("scheduler.stale_sweep", "failed", n)
 	}
 
+	// Purge agent log events older than 24 hours.
+	if n, err := s.D.Store.DeleteOldAgentLogs(ctx, 24*time.Hour); err != nil {
+		slog.Error("scheduler.agent_log_purge", "error", err)
+	} else if n > 0 {
+		slog.Info("scheduler.agent_log_purge", "deleted", n)
+	}
+
 	now := time.Now().UTC()
 	claimed, err := s.D.Store.ClaimDueScanDefinitions(ctx, now, nextRun, 32)
 	if err != nil {

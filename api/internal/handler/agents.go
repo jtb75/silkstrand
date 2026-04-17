@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -131,6 +132,75 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"agent":   agent,
 		"api_key": rawKey, // shown once; store securely
+	})
+}
+
+// GET /api/v1/agents/{id}/logs
+// Query params: since, until (RFC3339), level, scan_id, limit (max 1000), order (asc|desc)
+func (h *AgentsHandler) Logs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	agent, err := h.store.GetAgent(r.Context(), id)
+	if err != nil {
+		slog.Error("getting agent for logs", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if agent == nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+
+	q := r.URL.Query()
+	var f store.AgentLogFilter
+
+	if s := q.Get("since"); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid since parameter")
+			return
+		}
+		f.Since = &t
+	} else {
+		// Default: 24 hours ago
+		t := time.Now().Add(-24 * time.Hour)
+		f.Since = &t
+	}
+
+	if s := q.Get("until"); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid until parameter")
+			return
+		}
+		f.Until = &t
+	}
+
+	f.Level = q.Get("level")
+	f.ScanID = q.Get("scan_id")
+	f.Order = q.Get("order")
+	if f.Order == "" {
+		f.Order = "desc"
+	}
+
+	if s := q.Get("limit"); s != "" {
+		var n int
+		if _, err := fmt.Sscanf(s, "%d", &n); err == nil && n > 0 {
+			f.Limit = n
+		}
+	}
+	if f.Limit <= 0 {
+		f.Limit = 200
+	}
+
+	items, total, err := h.store.ListAgentLogEvents(r.Context(), id, f)
+	if err != nil {
+		slog.Error("listing agent logs", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list logs")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": items,
+		"total": total,
 	})
 }
 

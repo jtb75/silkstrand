@@ -482,6 +482,34 @@ export interface AgentAllowlist {
 
 export const getAgentAllowlist = (id: string) =>
   request<AgentAllowlist>(`/api/v1/agents/${id}/allowlist`);
+
+// Agent log events (persisted console lines)
+export interface AgentLogEntry {
+  id: string;
+  agent_id: string;
+  scan_id?: string;
+  level: string;
+  msg: string;
+  attrs: Record<string, unknown>;
+  occurred_at: string;
+}
+
+export const getAgentLogs = (agentId: string, params?: {
+  since?: string; until?: string; level?: string;
+  scan_id?: string; limit?: number; order?: 'asc' | 'desc';
+}) => {
+  const u = new URLSearchParams();
+  if (params?.since) u.set('since', params.since);
+  if (params?.until) u.set('until', params.until);
+  if (params?.level) u.set('level', params.level);
+  if (params?.scan_id) u.set('scan_id', params.scan_id);
+  if (params?.limit) u.set('limit', String(params.limit));
+  if (params?.order) u.set('order', params.order);
+  const qs = u.toString();
+  return request<{ items: AgentLogEntry[]; total: number }>(
+    `/api/v1/agents/${agentId}/logs${qs ? `?${qs}` : ''}`,
+  );
+};
 export const createInstallToken = () =>
   request<{ install_token: string; expires_at: string }>('/api/v1/agents/install-tokens', {
     method: 'POST',

@@ -141,8 +141,6 @@ export function useEventStream<T = unknown>(
       } catch {
         return;
       }
-      // eslint-disable-next-line no-console
-      console.debug('[sse]', parsed.kind, parsed);
       setEvents((prev) => {
         const next = prev.length >= bufferSize
           ? prev.slice(prev.length - bufferSize + 1)
