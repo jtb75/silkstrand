@@ -179,12 +179,13 @@ export function useEventStream<T = unknown>(
 
       es.onopen = () => setStatus('connected');
       es.onerror = () => {
-        // EventSource will auto-retry internally, but our token may have
-        // rotated; do a full mint + reopen to be safe.
         setStatus('reconnecting');
         closeEventSource();
-        // Fire-and-forget; the catch in refreshAndOpen sets status=error.
-        void refreshAndOpen();
+        // Backoff before reconnecting to prevent a flood if the
+        // endpoint is transiently unreachable.
+        setTimeout(() => {
+          if (!cancelled) void refreshAndOpen();
+        }, 3000);
       };
     }
 
