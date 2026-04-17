@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -179,14 +180,51 @@ func (h *AgentHandler) subscribeUpgrades(ctx context.Context, agentID string) {
 }
 
 func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d pubsub.Directive) {
-	// Look up target to enrich the directive with connection details
-	target, err := h.store.GetTargetByID(ctx, d.TargetID)
-	if err != nil {
-		slog.Error("looking up target for directive", "target_id", d.TargetID, "error", err)
-		return
-	}
-	if target == nil {
-		slog.Error("target not found for directive", "target_id", d.TargetID)
+	// Resolve connection details. Endpoint-scoped compliance scans
+	// don't have a target — derive host:port from the endpoint + parent asset.
+	var targetID, targetType, targetIdentifier string
+	var targetConfig json.RawMessage
+
+	if d.TargetID != "" {
+		target, err := h.store.GetTargetByID(ctx, d.TargetID)
+		if err != nil {
+			slog.Error("looking up target for directive", "target_id", d.TargetID, "error", err)
+			return
+		}
+		if target == nil {
+			slog.Error("target not found for directive", "target_id", d.TargetID)
+			return
+		}
+		targetID = target.ID
+		targetType = target.Type
+		targetIdentifier = target.Identifier
+		targetConfig = target.Config
+	} else if d.AssetEndpointID != "" {
+		ep, asset, err := h.store.GetAssetEndpointByID(ctx, d.AssetEndpointID)
+		if err != nil {
+			slog.Error("looking up endpoint for directive", "endpoint_id", d.AssetEndpointID, "error", err)
+			return
+		}
+		if ep == nil || asset == nil {
+			slog.Error("endpoint or asset not found for directive", "endpoint_id", d.AssetEndpointID)
+			return
+		}
+		ip := ""
+		if asset.PrimaryIP != nil {
+			ip = *asset.PrimaryIP
+		}
+		svc := ""
+		if ep.Service != nil {
+			svc = *ep.Service
+		}
+		if svc == "" {
+			svc = "database"
+		}
+		targetType = svc
+		targetIdentifier = ip + ":" + strconv.Itoa(ep.Port)
+		targetConfig, _ = json.Marshal(map[string]any{"port": ep.Port, "host": ip})
+	} else {
+		slog.Error("directive has no target or endpoint", "scan_id", d.ScanID)
 		return
 	}
 
@@ -201,10 +239,6 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 		return
 	}
 
-	// Discovery scans don't carry credentials. Compliance scans do; fetch
-	// from the target's credential_source (type=static), falling back to
-	// credential_mappings (collection → credential_source) when the
-	// target has no direct binding.
 	scanType := d.ScanType
 	if scanType == "" {
 		scanType = "compliance"
@@ -214,14 +248,13 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 		creds = h.fetchCredentialForDirective(ctx, d)
 	}
 
-	// Build enriched directive message
 	var bundleURL string
 	if bundle.GCSPath != nil {
 		bundleURL = *bundle.GCSPath
 	}
 	msg := websocket.NewDirectiveMessage(
 		d.ScanID, scanType, d.BundleID, bundle.Name, bundle.Version, bundleURL,
-		d.TargetID, target.Type, target.Identifier, target.Config, creds,
+		targetID, targetType, targetIdentifier, targetConfig, creds,
 	)
 
 	if err := h.hub.Send(agentID, msg); err != nil {
