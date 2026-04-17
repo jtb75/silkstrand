@@ -67,8 +67,15 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 // Tick runs one scheduler cycle: claim due definitions, advance their
-// next_run_at, and dispatch each.
+// next_run_at, and dispatch each. Also sweeps stale queued scans.
 func (s *Scheduler) Tick(ctx context.Context) {
+	// Sweep queued scans older than 30 minutes.
+	if n, err := s.D.Store.FailStaleQueuedScans(ctx, 30*time.Minute); err != nil {
+		slog.Error("scheduler.stale_sweep", "error", err)
+	} else if n > 0 {
+		slog.Info("scheduler.stale_sweep", "failed", n)
+	}
+
 	now := time.Now().UTC()
 	claimed, err := s.D.Store.ClaimDueScanDefinitions(ctx, now, nextRun, 32)
 	if err != nil {
@@ -199,6 +206,18 @@ func (d Dispatcher) dispatchOne(ctx context.Context, def model.ScanDefinition, e
 			"scan", sc.ID, "reason", "no agent or pubsub")
 		return nil
 	}
+	// Check if agent already has a running/pending scan — queue if busy.
+	busy, err := d.Store.AgentHasRunningScan(ctx, *def.AgentID)
+	if err != nil {
+		return fmt.Errorf("checking agent busy: %w", err)
+	}
+	if busy {
+		if err := d.Store.UpdateScanStatus(ctx, sc.ID, model.ScanStatusQueued); err != nil {
+			return fmt.Errorf("queueing scan: %w", err)
+		}
+		slog.Info("scheduler.queued", "scan", sc.ID, "agent", *def.AgentID)
+		return nil
+	}
 	directive := pubsub.Directive{
 		ScanID:   sc.ID,
 		ScanType: scanType,
@@ -214,4 +233,41 @@ func (d Dispatcher) dispatchOne(ctx context.Context, def model.ScanDefinition, e
 	}
 	slog.Info("scheduler.dispatched", "definition", def.ID, "scan", sc.ID, "agent", *def.AgentID)
 	return nil
+}
+
+// DrainAgentQueue checks if the given agent has queued scans and
+// dispatches the oldest one. Called from terminal scan states
+// (completed, failed) and from the stuck-scan cleanup path.
+func (d Dispatcher) DrainAgentQueue(ctx context.Context, agentID string) {
+	if d.PubSub == nil {
+		return
+	}
+	next, err := d.Store.OldestQueuedScanForAgent(ctx, agentID)
+	if err != nil {
+		slog.Error("drain_queue.load", "agent", agentID, "error", err)
+		return
+	}
+	if next == nil {
+		return
+	}
+	// Transition queued → pending before publishing the directive.
+	if err := d.Store.UpdateScanStatus(ctx, next.ID, model.ScanStatusPending); err != nil {
+		slog.Error("drain_queue.status", "scan", next.ID, "error", err)
+		return
+	}
+	directive := pubsub.Directive{
+		ScanID:   next.ID,
+		ScanType: next.ScanType,
+	}
+	if next.BundleID != nil {
+		directive.BundleID = *next.BundleID
+	}
+	if next.TargetID != nil {
+		directive.TargetID = *next.TargetID
+	}
+	if err := d.PubSub.PublishDirective(ctx, agentID, directive); err != nil {
+		slog.Error("drain_queue.publish", "scan", next.ID, "agent", agentID, "error", err)
+		return
+	}
+	slog.Info("drain_queue.dispatched", "scan", next.ID, "agent", agentID)
 }

@@ -114,6 +114,9 @@ type Store interface {
 	FailScan(ctx context.Context, id, reason string) error
 	DeleteScan(ctx context.Context, id string) error
 	FailRunningScansForAgent(ctx context.Context, agentID string) (int, error)
+	AgentHasRunningScan(ctx context.Context, agentID string) (bool, error)
+	OldestQueuedScanForAgent(ctx context.Context, agentID string) (*model.Scan, error)
+	FailStaleQueuedScans(ctx context.Context, maxAge time.Duration) (int, error)
 
 	// --- Assets + endpoints (ADR 006 D2) ----------------------------
 	//
