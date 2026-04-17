@@ -90,6 +90,7 @@ type Bundle struct {
 	ControlCount int       `json:"control_count"`
 	GCSPath      *string   `json:"gcs_path,omitempty"`
 	Signature    *string   `json:"signature,omitempty"`
+	TarballHash  *string   `json:"tarball_hash,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 

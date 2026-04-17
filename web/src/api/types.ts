@@ -319,6 +319,7 @@ export interface Bundle {
   engine?: string;
   control_count?: number;
   gcs_path?: string;
+  tarball_hash?: string;
   created_at?: string;
 }
 

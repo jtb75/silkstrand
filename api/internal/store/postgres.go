@@ -619,10 +619,10 @@ func (s *PostgresStore) ConsumeInstallToken(ctx context.Context, tokenHash []byt
 func (s *PostgresStore) GetBundle(ctx context.Context, id string) (*model.Bundle, error) {
 	var b model.Bundle
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, created_at
+		`SELECT id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, tarball_hash, created_at
 		   FROM bundles WHERE id = $1`, id).
 		Scan(&b.ID, &b.TenantID, &b.Name, &b.Version, &b.Framework, &b.TargetType,
-			&b.Engine, &b.ControlCount, &b.GCSPath, &b.Signature, &b.CreatedAt)
+			&b.Engine, &b.ControlCount, &b.GCSPath, &b.Signature, &b.TarballHash, &b.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -634,7 +634,7 @@ func (s *PostgresStore) GetBundle(ctx context.Context, id string) (*model.Bundle
 
 func (s *PostgresStore) ListBundlesForTenant(ctx context.Context, tenantID string) ([]model.Bundle, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, created_at
+		`SELECT id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, tarball_hash, created_at
 		   FROM bundles WHERE tenant_id IS NULL OR tenant_id = $1 ORDER BY name, version`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("listing bundles: %w", err)
@@ -644,7 +644,7 @@ func (s *PostgresStore) ListBundlesForTenant(ctx context.Context, tenantID strin
 	for rows.Next() {
 		var b model.Bundle
 		if err := rows.Scan(&b.ID, &b.TenantID, &b.Name, &b.Version, &b.Framework, &b.TargetType,
-			&b.Engine, &b.ControlCount, &b.GCSPath, &b.Signature, &b.CreatedAt); err != nil {
+			&b.Engine, &b.ControlCount, &b.GCSPath, &b.Signature, &b.TarballHash, &b.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning bundle: %w", err)
 		}
 		out = append(out, b)
@@ -655,16 +655,16 @@ func (s *PostgresStore) ListBundlesForTenant(ctx context.Context, tenantID strin
 func (s *PostgresStore) UpsertBundle(ctx context.Context, b model.Bundle) (*model.Bundle, error) {
 	var out model.Bundle
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO bundles (id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature)
-		 VALUES (COALESCE(NULLIF($1, '')::uuid, uuid_generate_v4()), $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`INSERT INTO bundles (id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, tarball_hash)
+		 VALUES (COALESCE(NULLIF($1, '')::uuid, uuid_generate_v4()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 ON CONFLICT (id) DO UPDATE SET
 		   name = EXCLUDED.name, version = EXCLUDED.version, framework = EXCLUDED.framework,
 		   target_type = EXCLUDED.target_type, engine = EXCLUDED.engine, control_count = EXCLUDED.control_count,
-		   gcs_path = EXCLUDED.gcs_path, signature = EXCLUDED.signature
-		 RETURNING id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, created_at`,
-		b.ID, b.TenantID, b.Name, b.Version, b.Framework, b.TargetType, b.Engine, b.ControlCount, b.GCSPath, b.Signature).
+		   gcs_path = EXCLUDED.gcs_path, signature = EXCLUDED.signature, tarball_hash = EXCLUDED.tarball_hash
+		 RETURNING id, tenant_id, name, version, framework, target_type, engine, control_count, gcs_path, signature, tarball_hash, created_at`,
+		b.ID, b.TenantID, b.Name, b.Version, b.Framework, b.TargetType, b.Engine, b.ControlCount, b.GCSPath, b.Signature, b.TarballHash).
 		Scan(&out.ID, &out.TenantID, &out.Name, &out.Version, &out.Framework, &out.TargetType,
-			&out.Engine, &out.ControlCount, &out.GCSPath, &out.Signature, &out.CreatedAt)
+			&out.Engine, &out.ControlCount, &out.GCSPath, &out.Signature, &out.TarballHash, &out.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("upserting bundle: %w", err)
 	}
