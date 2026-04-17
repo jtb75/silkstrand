@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listAgents, rotateAgentKey, deleteAgent, getAgentDownloads,
   createInstallToken, upgradeAgent, getAgentAllowlist,
+  listScans,
   type AgentAllowlist,
 } from '../api/client';
-import type { Agent, AgentDownloads } from '../api/types';
+import type { Agent, AgentDownloads, Scan } from '../api/types';
 import { useAuth } from '../auth/useAuth';
 import AgentLogConsole from '../components/AgentLogConsole';
 
@@ -19,6 +20,23 @@ export default function Agents() {
     queryKey: ['agents'],
     queryFn: listAgents,
   });
+
+  // Scans list for deriving per-agent "running scan" indicator. Invalidated
+  // via SSE scan_status events in Layout.tsx so indicators update in real time.
+  const { data: scans } = useQuery<Scan[]>({
+    queryKey: ['scans'],
+    queryFn: listScans,
+  });
+
+  const agentHasRunningScan = useMemo(() => {
+    const set = new Set<string>();
+    if (scans) {
+      for (const s of scans) {
+        if (s.status === 'running' && s.agent_id) set.add(s.agent_id);
+      }
+    }
+    return set;
+  }, [scans]);
 
   const { data: downloads } = useQuery<AgentDownloads>({
     queryKey: ['agent-downloads'],
@@ -162,7 +180,22 @@ export default function Agents() {
               <tr key={a.id}>
                 <td>{a.name}</td>
                 <td className="text-muted" style={{ fontSize: 12 }}>{a.id.slice(0, 8)}…</td>
-                <td>{a.status}</td>
+                <td>
+                  {a.status}
+                  {agentHasRunningScan.has(a.id) && (
+                    <span
+                      className="badge badge-completed"
+                      style={{ marginLeft: 8, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    >
+                      <span style={{
+                        width: 6, height: 6, borderRadius: '50%',
+                        background: 'var(--ss-success, #10b981)',
+                        animation: 'pulse 1.5s ease-in-out infinite',
+                      }} />
+                      Running scan
+                    </span>
+                  )}
+                </td>
                 <td>{a.version ?? '—'}</td>
                 <td>{a.last_heartbeat ? new Date(a.last_heartbeat).toLocaleString() : '—'}</td>
                 <td style={{ textAlign: 'right' }}>

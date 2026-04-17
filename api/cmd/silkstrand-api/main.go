@@ -73,12 +73,11 @@ func run() error {
 	websocket.AllowedOrigins = cfg.AllowedOrigins
 	hub := websocket.NewHub()
 	notifier := notify.New(pgStore, cfg.CredentialEncryptionKey)
-	sched := scheduler.New(pgStore, ps)
 	// Events bus — in-process pub/sub for SSE fan-out. Passed to handlers
-	// that need to publish (agent WSS → scan_progress, agent_log) and to
-	// the events handler that exposes the SSE subscriber endpoint.
-	// PR D wires the agent_log publisher; scan_progress lands in PR B.
+	// that need to publish (agent WSS → scan_progress, agent_log, scan_status)
+	// and to the events handler that exposes the SSE subscriber endpoint.
 	eventBus := events.NewMemoryBus()
+	sched := scheduler.New(pgStore, ps, eventBus)
 	hub.OnMessage = buildOnMessage(pgStore, ps, notifier, sched.D, eventBus)
 
 	// Scheduler goroutine (ADR 007 D4). Started before routes are served
@@ -90,7 +89,7 @@ func run() error {
 	// Handlers — surviving surface
 	healthH := handler.NewHealthHandler(pgStore, redisPingFunc(ps))
 	targetH := handler.NewTargetHandler(pgStore)
-	scanH := handler.NewScanHandler(pgStore, ps, hub)
+	scanH := handler.NewScanHandler(pgStore, ps, hub, eventBus)
 	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey)
 	agentsH := handler.NewAgentsHandler(pgStore, hub, ps, cfg.AgentReleasesURL)
 	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey)
@@ -297,10 +296,13 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			if err := s.UpdateScanStatus(ctx, payload.ScanID, model.ScanStatusRunning); err != nil {
 				slog.Error("updating scan to running", "scan_id", payload.ScanID, "error", err)
 			}
+			if scan, _ := s.GetScanByID(ctx, payload.ScanID); scan != nil {
+				handler.PublishScanStatusFromScan(ctx, bus, scan)
+			}
 			slog.Info("scan started", "agent_id", agentID, "scan_id", payload.ScanID)
 
 		case websocket.TypeScanResults:
-			handleScanResults(ctx, s, agentID, msg.Payload)
+			handleScanResults(ctx, s, bus, agentID, msg.Payload)
 			sched.DrainAgentQueue(ctx, agentID)
 
 		case websocket.TypeScanError:
@@ -311,6 +313,9 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			}
 			if err := s.FailScan(ctx, payload.ScanID, payload.Error); err != nil {
 				slog.Error("updating scan to failed", "scan_id", payload.ScanID, "error", err)
+			}
+			if scan, _ := s.GetScanByID(ctx, payload.ScanID); scan != nil {
+				handler.PublishScanStatusFromScan(ctx, bus, scan)
 			}
 			slog.Warn("scan failed", "agent_id", agentID, "scan_id", payload.ScanID, "error", payload.Error)
 			sched.DrainAgentQueue(ctx, agentID)
@@ -340,7 +345,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			handleAllowlistSnapshot(ctx, s, agentID, msg.Payload)
 
 		case websocket.TypeAssetDiscovered:
-			handleAssetDiscovered(ctx, s, notifier, sched, agentID, msg.Payload)
+			handleAssetDiscovered(ctx, s, notifier, sched, bus, agentID, msg.Payload)
 
 		case websocket.TypeAgentLog:
 			handleAgentLog(ctx, s, bus, agentID, msg.Payload)
@@ -353,6 +358,9 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			}
 			if err := s.UpdateScanStatus(ctx, payload.ScanID, model.ScanStatusCompleted); err != nil {
 				slog.Error("updating discovery scan to completed", "scan_id", payload.ScanID, "error", err)
+			}
+			if scan, _ := s.GetScanByID(ctx, payload.ScanID); scan != nil {
+				handler.PublishScanStatusFromScan(ctx, bus, scan)
 			}
 			slog.Info("discovery completed", "agent_id", agentID, "scan_id", payload.ScanID,
 				"assets_found", payload.AssetsFound, "hosts_scanned", payload.HostsScanned)
@@ -399,7 +407,7 @@ func redisPingFunc(ps *pubsub.PubSub) func(context.Context) error {
 // service, ...) tuples into assets + asset_endpoints, logs provenance,
 // derives asset_events for deltas, and runs the collection-aware rule
 // engine per endpoint.
-func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.Dispatcher, sched scheduler.Dispatcher, agentID string, payload json.RawMessage) {
+func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.Dispatcher, sched scheduler.Dispatcher, bus events.Bus, agentID string, payload json.RawMessage) {
 	var batch websocket.AssetDiscoveredPayload
 	if err := json.Unmarshal(payload, &batch); err != nil {
 		slog.Error("parsing asset_discovered payload", "agent_id", agentID, "error", err)
@@ -414,6 +422,8 @@ func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.
 		if err := s.UpdateScanStatus(ctx, scan.ID, model.ScanStatusRunning); err != nil {
 			slog.Error("updating discovery scan to running", "scan_id", scan.ID, "error", err)
 		}
+		scan.Status = model.ScanStatusRunning
+		handler.PublishScanStatusFromScan(ctx, bus, scan)
 	}
 
 	// Load tenant rules + allowlist snapshot once per batch.
@@ -865,7 +875,7 @@ func strPtrOrNil(s string) *string {
 // array under `results` with per-control rows. Shape is tolerant —
 // each row provides at least id/status; title + severity + evidence
 // are optional.
-func handleScanResults(ctx context.Context, s store.Store, agentID string, payload json.RawMessage) {
+func handleScanResults(ctx context.Context, s store.Store, bus events.Bus, agentID string, payload json.RawMessage) {
 	var wrapper struct {
 		ScanID  string            `json:"scan_id"`
 		Results []json.RawMessage `json:"results"`
@@ -934,6 +944,9 @@ func handleScanResults(ctx context.Context, s store.Store, agentID string, paylo
 	}
 	if err := s.UpdateScanStatus(ctx, wrapper.ScanID, model.ScanStatusCompleted); err != nil {
 		slog.Error("updating scan to completed", "scan_id", wrapper.ScanID, "error", err)
+	}
+	if completedScan, _ := s.GetScanByID(ctx, wrapper.ScanID); completedScan != nil {
+		handler.PublishScanStatusFromScan(ctx, bus, completedScan)
 	}
 	slog.Info("scan_results processed",
 		"agent_id", agentID, "scan_id", wrapper.ScanID, "results", len(wrapper.Results))

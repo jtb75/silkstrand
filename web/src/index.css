@@ -688,3 +688,21 @@ a:hover {
   font-size: 13px;
 }
 .suggestion:last-child { border-bottom: none; }
+
+/* Pulse dot animation for "Running" status chips */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Badge variant for warning (queued scans) */
+.badge-warning {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+/* Badge variant for disabled scan definitions */
+.badge-disabled {
+  background-color: #e5e7eb;
+  color: #6b7280;
+}

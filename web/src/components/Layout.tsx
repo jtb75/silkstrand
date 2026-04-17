@@ -1,11 +1,30 @@
+import { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../auth/useAuth';
+import { useEventStream } from '../lib/events';
 import TenantSwitcher from './TenantSwitcher';
 import './Layout.css';
 
 export default function Layout() {
   const { user, active, logout } = useAuth();
   const isAdmin = active?.role === 'admin';
+  const queryClient = useQueryClient();
+
+  // SSE: subscribe to scan_status events for real-time cache invalidation.
+  // When any scan changes state, invalidate the scans and definitions
+  // queries so list views update without manual refresh.
+  const { events } = useEventStream<{ status: string }>(
+    { kinds: ['scan_status'] },
+    { enabled: !!active },
+  );
+
+  useEffect(() => {
+    if (events.length > 0) {
+      queryClient.invalidateQueries({ queryKey: ['scans'] });
+      queryClient.invalidateQueries({ queryKey: ['scan-definitions'] });
+    }
+  }, [events.length, queryClient]);
 
   return (
     <div className="layout">

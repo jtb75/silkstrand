@@ -2,11 +2,13 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -26,6 +28,7 @@ import (
 type Dispatcher struct {
 	Store  store.Store
 	PubSub *pubsub.PubSub
+	Bus    events.Bus
 }
 
 // Scheduler polls for due scan_definitions and dispatches them. One
@@ -38,9 +41,9 @@ type Scheduler struct {
 }
 
 // New builds a Scheduler with a default 30s tick per ADR 007 D4.
-func New(s store.Store, ps *pubsub.PubSub) *Scheduler {
+func New(s store.Store, ps *pubsub.PubSub, bus events.Bus) *Scheduler {
 	return &Scheduler{
-		D:        Dispatcher{Store: s, PubSub: ps},
+		D:        Dispatcher{Store: s, PubSub: ps, Bus: bus},
 		Interval: 30 * time.Second,
 	}
 }
@@ -216,6 +219,7 @@ func (d Dispatcher) dispatchOne(ctx context.Context, def model.ScanDefinition, e
 		if err := d.Store.UpdateScanStatus(ctx, sc.ID, model.ScanStatusQueued); err != nil {
 			return fmt.Errorf("queueing scan: %w", err)
 		}
+		d.publishScanStatus(ctx, sc.ID)
 		slog.Info("scheduler.queued", "scan", sc.ID, "agent", *def.AgentID)
 		return nil
 	}
@@ -256,6 +260,7 @@ func (d Dispatcher) DrainAgentQueue(ctx context.Context, agentID string) {
 		slog.Error("drain_queue.status", "scan", next.ID, "error", err)
 		return
 	}
+	d.publishScanStatus(ctx, next.ID)
 	directive := pubsub.Directive{
 		ScanID:   next.ID,
 		ScanType: next.ScanType,
@@ -271,4 +276,36 @@ func (d Dispatcher) DrainAgentQueue(ctx context.Context, agentID string) {
 		return
 	}
 	slog.Info("drain_queue.dispatched", "scan", next.ID, "agent", agentID)
+}
+
+// publishScanStatus loads the current scan row and emits a scan_status
+// event on the bus. Best-effort: errors are logged but not propagated.
+func (d Dispatcher) publishScanStatus(ctx context.Context, scanID string) {
+	if d.Bus == nil {
+		return
+	}
+	scan, err := d.Store.GetScanByID(ctx, scanID)
+	if err != nil || scan == nil {
+		return
+	}
+	type scanStatusPayload struct {
+		Status           string  `json:"status"`
+		ScanDefinitionID *string `json:"scan_definition_id"`
+		AgentID          *string `json:"agent_id"`
+	}
+	payload, _ := json.Marshal(scanStatusPayload{
+		Status:           scan.Status,
+		ScanDefinitionID: scan.ScanDefinitionID,
+		AgentID:          scan.AgentID,
+	})
+	if err := d.Bus.Publish(ctx, events.Event{
+		TenantID:     scan.TenantID,
+		Kind:         "scan_status",
+		ResourceType: "scan",
+		ResourceID:   scan.ID,
+		OccurredAt:   time.Now().UTC(),
+		Payload:      payload,
+	}); err != nil {
+		slog.Warn("scan_status publish failed", "scan_id", scan.ID, "error", err)
+	}
 }
