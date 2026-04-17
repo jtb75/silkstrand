@@ -1277,7 +1277,7 @@ func (s *PostgresStore) ListAssetEndpoints(ctx context.Context, filter AssetEndp
 		    AND ($5 = '' OR host(a.primary_ip)::text ILIKE '%' || $5 || '%'
 		         OR COALESCE(a.hostname,'') ILIKE '%' || $5 || '%'
 		         OR COALESCE(ae.service,'') ILIKE '%' || $5 || '%'
-		         OR ae.port::text = $5)
+		         OR ae.port::text LIKE '%' || $5 || '%')
 		  ORDER BY a.primary_ip, ae.port
 		  LIMIT $6 OFFSET $7`,
 		tenantID, filter.Service, filter.Port, filter.Source, filter.Q,
@@ -1311,7 +1311,7 @@ func (s *PostgresStore) ListAssetEndpoints(ctx context.Context, filter AssetEndp
 		    AND ($5 = '' OR host(a.primary_ip)::text ILIKE '%' || $5 || '%'
 		         OR COALESCE(a.hostname,'') ILIKE '%' || $5 || '%'
 		         OR COALESCE(ae.service,'') ILIKE '%' || $5 || '%'
-		         OR ae.port::text = $5)`,
+		         OR ae.port::text LIKE '%' || $5 || '%')`,
 		tenantID, filter.Service, filter.Port, filter.Source, filter.Q).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting asset endpoints: %w", err)
 	}
