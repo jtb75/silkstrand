@@ -1,0 +1,14 @@
+id: pg-tls-enabled
+name: Ensure TLS is enabled and configured correctly
+description: >
+  Verify that ssl = on in the PostgreSQL configuration to encrypt TCP traffic.
+severity: high
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "6.8"
+    title: "Ensure TLS is enabled and configured correctly"
+tags: ['encryption', 'network', 'tls']
+requires_auth: true

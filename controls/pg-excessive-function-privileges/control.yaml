@@ -1,0 +1,14 @@
+id: pg-excessive-function-privileges
+name: Ensure excessive function privileges are revoked
+description: >
+  Verify no user-created SECURITY DEFINER functions exist outside pg_catalog.
+severity: high
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "4.5"
+    title: "Ensure excessive function privileges are revoked"
+tags: ['access-control', 'privilege-escalation']
+requires_auth: true

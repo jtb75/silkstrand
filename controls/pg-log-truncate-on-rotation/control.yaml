@@ -1,0 +1,14 @@
+id: pg-log-truncate-on-rotation
+name: Ensure log_truncate_on_rotation is enabled
+description: >
+  Verify that log_truncate_on_rotation is enabled to overwrite same-named log files on rotation.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.7"
+    title: "Ensure log_truncate_on_rotation is enabled"
+tags: ['logging', 'audit']
+requires_auth: true

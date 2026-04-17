@@ -1,0 +1,14 @@
+id: mssql-sa-disabled
+name: Ensure the sa Login Account is set to Disabled
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 2.13.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.13"
+    title: "Ensure the sa Login Account is set to Disabled"
+tags: ['access-control', 'authentication']
+requires_auth: true

@@ -1,0 +1,14 @@
+id: pg-weak-ssl-ciphers
+name: Ensure Weak SSL/TLS Ciphers Are Disabled
+description: >
+  Verify that ssl_ciphers excludes weak cipher suites.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "6.10"
+    title: "Ensure Weak SSL/TLS Ciphers Are Disabled"
+tags: ['encryption', 'network', 'tls']
+requires_auth: true

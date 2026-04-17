@@ -1,0 +1,14 @@
+id: mongo-log-append
+name: Ensure that new entries are appended to the end of the log file
+description: >
+  CIS MongoDB 8 Benchmark control 5.4.
+severity: medium
+engine:
+  - name: mongodb
+    versions: ["6", "7", "8"]
+frameworks:
+  - id: cis-mongodb-8
+    section: "5.4"
+    title: "Ensure that new entries are appended to the end of the log file"
+tags: ['logging', 'audit']
+requires_auth: true

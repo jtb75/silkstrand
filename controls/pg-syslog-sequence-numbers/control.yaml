@@ -1,0 +1,14 @@
+id: pg-syslog-sequence-numbers
+name: Ensure syslog messages are not suppressed
+description: >
+  Verify that syslog_sequence_numbers is enabled so syslog messages are not suppressed.
+severity: low
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.11"
+    title: "Ensure syslog messages are not suppressed"
+tags: ['logging', 'audit']
+requires_auth: true

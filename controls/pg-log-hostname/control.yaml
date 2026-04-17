@@ -1,0 +1,14 @@
+id: pg-log-hostname
+name: Ensure log_hostname is set correctly
+description: >
+  Verify that log_hostname is configured to log hostnames for connection logging.
+severity: low
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.23"
+    title: "Ensure log_hostname is set correctly"
+tags: ['logging', 'audit']
+requires_auth: true

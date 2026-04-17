@@ -1,0 +1,14 @@
+id: mssql-check-policy-all-logins
+name: Ensure CHECK_POLICY is set to ON for All SQL Authenticated Logins
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 4.3.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "4.3"
+    title: "Ensure CHECK_POLICY is set to ON for All SQL Authenticated Logins"
+tags: ['authentication', 'password-policy']
+requires_auth: true

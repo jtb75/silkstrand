@@ -1,0 +1,14 @@
+id: mongo-weak-protocols-disabled
+name: Ensure Weak Protocols are Disabled
+description: >
+  CIS MongoDB 8 Benchmark control 4.2.
+severity: medium
+engine:
+  - name: mongodb
+    versions: ["6", "7", "8"]
+frameworks:
+  - id: cis-mongodb-8
+    section: "4.2"
+    title: "Ensure Weak Protocols are Disabled"
+tags: ['encryption', 'network', 'tls']
+requires_auth: true

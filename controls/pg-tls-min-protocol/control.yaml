@@ -1,0 +1,14 @@
+id: pg-tls-min-protocol
+name: Ensure the TLSv1.0 and TLSv1.1 Protocols are Disabled
+description: >
+  Verify that ssl_min_protocol_version is set to TLSv1.2 or higher.
+severity: high
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "6.9"
+    title: "Ensure the TLSv1.0 and TLSv1.1 Protocols are Disabled"
+tags: ['encryption', 'network', 'tls']
+requires_auth: true

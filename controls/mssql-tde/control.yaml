@@ -1,0 +1,14 @@
+id: mssql-tde
+name: Ensure Databases are Encrypted with TDE
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 7.5.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "7.5"
+    title: "Ensure Databases are Encrypted with TDE"
+tags: ['encryption', 'data-protection']
+requires_auth: true

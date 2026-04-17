@@ -1,0 +1,14 @@
+id: pg-log-min-messages
+name: Ensure the correct messages are written to the server log
+description: >
+  Verify that log_min_messages is set to capture messages at warning level or more verbose.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.14"
+    title: "Ensure the correct messages are written to the server log"
+tags: ['logging', 'audit']
+requires_auth: true

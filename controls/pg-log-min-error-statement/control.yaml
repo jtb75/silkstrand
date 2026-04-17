@@ -1,0 +1,14 @@
+id: pg-log-min-error-statement
+name: Ensure the correct SQL statements generating errors are recorded
+description: >
+  Verify that log_min_error_statement captures errors at or above the error level.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.15"
+    title: "Ensure the correct SQL statements generating errors are recorded"
+tags: ['logging', 'audit']
+requires_auth: true

@@ -1,0 +1,14 @@
+id: mssql-auto-close-off
+name: Ensure AUTO_CLOSE is set to OFF on contained databases
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 2.15.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.15"
+    title: "Ensure AUTO_CLOSE is set to OFF on contained databases"
+tags: ['hardening', 'surface-reduction']
+requires_auth: true

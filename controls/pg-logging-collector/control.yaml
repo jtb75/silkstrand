@@ -1,0 +1,14 @@
+id: pg-logging-collector
+name: Ensure the logging collector is enabled
+description: >
+  Verify that the logging_collector parameter is enabled to capture log output.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.3"
+    title: "Ensure the logging collector is enabled"
+tags: ['logging', 'audit']
+requires_auth: true

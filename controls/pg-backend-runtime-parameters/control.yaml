@@ -1,0 +1,14 @@
+id: pg-backend-runtime-parameters
+name: Ensure backend runtime parameters are configured correctly
+description: >
+  Verify that post_auth_delay is zero to prevent intentional query delays.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "6.2"
+    title: "Ensure backend runtime parameters are configured correctly"
+tags: ['hardening', 'configuration']
+requires_auth: true

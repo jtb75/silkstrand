@@ -1,0 +1,14 @@
+id: pg-log-rotation-age
+name: Ensure the maximum log file lifetime is set correctly
+description: >
+  Verify that log_rotation_age is set to ensure timely log file rotation.
+severity: low
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.8"
+    title: "Ensure the maximum log file lifetime is set correctly"
+tags: ['logging', 'audit']
+requires_auth: true

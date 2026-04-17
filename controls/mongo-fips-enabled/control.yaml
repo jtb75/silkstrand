@@ -1,0 +1,14 @@
+id: mongo-fips-enabled
+name: Ensure Federal Information Processing Standard (FIPS) is enabled
+description: >
+  CIS MongoDB 8 Benchmark control 4.4.
+severity: medium
+engine:
+  - name: mongodb
+    versions: ["6", "7", "8"]
+frameworks:
+  - id: cis-mongodb-8
+    section: "4.4"
+    title: "Ensure Federal Information Processing Standard (FIPS) is enabled"
+tags: ['encryption', 'compliance', 'fips']
+requires_auth: true

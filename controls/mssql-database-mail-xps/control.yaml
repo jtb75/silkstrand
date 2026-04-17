@@ -1,0 +1,14 @@
+id: mssql-database-mail-xps
+name: Ensure Database Mail XPs is set to 0
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 2.4.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.4"
+    title: "Ensure Database Mail XPs is set to 0"
+tags: ['hardening', 'surface-reduction']
+requires_auth: true

@@ -1,0 +1,14 @@
+id: mssql-hide-instance
+name: Ensure Hide Instance option is set to Yes
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 2.12.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.12"
+    title: "Ensure Hide Instance option is set to Yes"
+tags: ['hardening', 'surface-reduction']
+requires_auth: true

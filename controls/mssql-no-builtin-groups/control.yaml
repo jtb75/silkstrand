@@ -1,0 +1,14 @@
+id: mssql-no-builtin-groups
+name: Ensure Windows BUILTIN groups are not SQL Logins
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 3.9.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.9"
+    title: "Ensure Windows BUILTIN groups are not SQL Logins"
+tags: ['access-control', 'authentication']
+requires_auth: true

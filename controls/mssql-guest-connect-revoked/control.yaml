@@ -1,0 +1,14 @@
+id: mssql-guest-connect-revoked
+name: Ensure CONNECT permissions on guest user is Revoked
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 3.2.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.2"
+    title: "Ensure CONNECT permissions on guest user is Revoked"
+tags: ['access-control', 'authentication']
+requires_auth: true
