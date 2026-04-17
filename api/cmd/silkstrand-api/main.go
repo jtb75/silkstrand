@@ -349,6 +349,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			handleAssetDiscovered(ctx, s, notifier, sched, bus, agentID, msg.Payload)
 
 		case websocket.TypeAgentLog:
+			slog.Info("agent_log received", "agent_id", agentID, "payload_len", len(msg.Payload))
 			handleAgentLog(ctx, s, bus, agentID, msg.Payload)
 
 		case websocket.TypeDiscoveryCompleted:
