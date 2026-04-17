@@ -1,17 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { bulkMapCredentials } from '../api/client';
+import { bulkMapCredentials, bulkCreateAssetMappings } from '../api/client';
+import type { MappingScopeKind } from '../api/client';
 
-// Bulk Actions bar — persistent across the Assets / Endpoints / Findings
-// tabs whenever the selection is non-empty. Phase-1 actions per ui-shape.md:
-//   · Map Credentials — pick a credential_source, POST to
-//     /credential-mappings/bulk for every selected endpoint
-//   · Create Scan — hand the selected endpoint ids to the new scan
-//     definition flow (pre-fill + redirect)
-//
-// Assets-tab selection is passed as endpoint ids via the onResolveEndpoints
-// callback so that host-level selections can expand to all their endpoints.
+// Bulk Actions bar -- persistent across the Assets / Endpoints / Findings
+// tabs whenever the selection is non-empty. Actions:
+//   - Map Credentials -- scope-aware: endpoint_ids on Endpoints tab,
+//     asset_ids on Assets tab
+//   - Create Scan -- hand endpoint ids to scan definition flow
 
 interface CredentialSourceLite {
   id: string;
@@ -21,19 +18,19 @@ interface CredentialSourceLite {
 
 interface Props {
   selectionCount: number;
-  // Caller resolves the current selection (host rows, endpoint rows, or
-  // finding rows) down to the endpoint ids needed by the two actions.
+  // Caller resolves the current selection down to IDs for the action.
   resolveEndpointIds: () => string[];
   onClear: () => void;
-  // Optional fetcher for credential sources; defaults to a tiny inline
-  // GET so this component stays drop-in. If credentials page supplies a
-  // richer list, we can plumb it later.
+  // Which scope the current selection represents. Defaults to 'asset_endpoint'
+  // for backwards compat (Endpoints tab).
+  scopeKind?: MappingScopeKind;
 }
 
 export default function AssetsBulkActions({
   selectionCount,
   resolveEndpointIds,
   onClear,
+  scopeKind = 'asset_endpoint',
 }: Props) {
   const [modal, setModal] = useState<null | 'credentials'>(null);
 
@@ -48,14 +45,17 @@ export default function AssetsBulkActions({
         <button className="btn btn-sm" onClick={() => setModal('credentials')}>
           Map Credentials
         </button>
-        <CreateScanButton resolveEndpointIds={resolveEndpointIds} />
+        {scopeKind === 'asset_endpoint' && (
+          <CreateScanButton resolveEndpointIds={resolveEndpointIds} />
+        )}
         <button className="btn btn-sm" onClick={onClear}>
           Clear
         </button>
       </div>
       {modal === 'credentials' && (
         <MapCredentialsModal
-          endpointIds={resolveEndpointIds()}
+          ids={resolveEndpointIds()}
+          scopeKind={scopeKind}
           onClose={() => setModal(null)}
         />
       )}
@@ -81,18 +81,18 @@ function CreateScanButton({ resolveEndpointIds }: { resolveEndpointIds: () => st
 }
 
 function MapCredentialsModal({
-  endpointIds,
+  ids,
+  scopeKind,
   onClose,
 }: {
-  endpointIds: string[];
+  ids: string[];
+  scopeKind: MappingScopeKind;
   onClose: () => void;
 }) {
   const [sourceId, setSourceId] = useState<string>('');
   const { data: sources, error: listErr, isLoading } = useQuery({
     queryKey: ['credential-sources'],
     queryFn: async () => {
-      // Until a dedicated client method lands, hit the endpoint directly.
-      // Failures degrade to an empty list with an error banner.
       const res = await fetch('/api/v1/credential-sources', {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('silkstrand_token') ?? ''}`,
@@ -104,20 +104,27 @@ function MapCredentialsModal({
   });
 
   const mut = useMutation({
-    mutationFn: () =>
-      bulkMapCredentials({ endpoint_ids: endpointIds, credential_source_id: sourceId }),
+    mutationFn: () => {
+      if (scopeKind === 'asset') {
+        return bulkCreateAssetMappings(sourceId, ids);
+      }
+      // Default: endpoint-level
+      return bulkMapCredentials({ endpoint_ids: ids, credential_source_id: sourceId });
+    },
     onSuccess: () => onClose(),
   });
+
+  const scopeLabel = scopeKind === 'asset' ? 'asset' : 'endpoint';
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <header className="modal-header">
-          <h3>Map credentials to {endpointIds.length} endpoint{endpointIds.length === 1 ? '' : 's'}</h3>
-          <button className="btn btn-sm" onClick={onClose}>×</button>
+          <h3>Map credentials to {ids.length} {scopeLabel}{ids.length === 1 ? '' : 's'}</h3>
+          <button className="btn btn-sm" onClick={onClose}>x</button>
         </header>
         <div className="modal-body">
-          {isLoading && <p>Loading sources…</p>}
+          {isLoading && <p>Loading sources...</p>}
           {listErr && <p className="error">{(listErr as Error).message}</p>}
           {sources && (
             <div className="form-group">
@@ -127,7 +134,7 @@ function MapCredentialsModal({
                 value={sourceId}
                 onChange={(e) => setSourceId(e.target.value)}
               >
-                <option value="">— select —</option>
+                <option value="">-- select --</option>
                 {sources.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name} ({s.type})
@@ -144,10 +151,10 @@ function MapCredentialsModal({
           </button>
           <button
             className="btn btn-primary"
-            disabled={!sourceId || mut.isPending || endpointIds.length === 0}
+            disabled={!sourceId || mut.isPending || ids.length === 0}
             onClick={() => mut.mutate()}
           >
-            {mut.isPending ? 'Applying…' : `Apply to ${endpointIds.length}`}
+            {mut.isPending ? 'Applying...' : `Apply to ${ids.length}`}
           </button>
         </footer>
       </div>

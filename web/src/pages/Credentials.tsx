@@ -2,13 +2,18 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   bulkCreateCredentialMappings,
+  bulkCreateEndpointMappings,
+  bulkCreateAssetMappings,
   createCredentialSource,
   deleteCredentialMapping,
   deleteCredentialSource,
+  listAssetEndpoints,
+  listAssets,
   listCollections,
   listCredentialMappings,
   listCredentialSources,
   updateCredentialSource,
+  type CredentialMapping,
   type CredentialSource,
   type CredentialSourceType,
 } from '../api/client';
@@ -164,7 +169,7 @@ function SourceRow({
     queryFn: listCredentialMappings,
     enabled: supportsMappings,
   });
-  const [showMapModal, setShowMapModal] = useState(false);
+  const [mapScope, setMapScope] = useState<'collection' | 'asset_endpoint' | 'asset' | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
   const mapped = (mappings ?? []).filter((m) => m.credential_source_id === source.id);
 
@@ -180,9 +185,16 @@ function SourceRow({
         {supportsMappings && (
           <td>
             <span style={{ marginRight: 8 }}>{mapped.length} mapped</span>
-            <button className="btn btn-sm" onClick={() => setShowMapModal(true)}>
-              Map to collection...
-            </button>
+            <select
+              value=""
+              onChange={(e) => setMapScope(e.target.value as 'collection' | 'asset_endpoint' | 'asset')}
+              style={{ fontSize: 12 }}
+            >
+              <option value="">Map to...</option>
+              <option value="asset_endpoint">Endpoint</option>
+              <option value="asset">Asset</option>
+              <option value="collection">Collection</option>
+            </select>
           </td>
         )}
         <td style={{ display: 'flex', gap: 6 }}>
@@ -199,13 +211,35 @@ function SourceRow({
           </td>
         </tr>
       )}
-      {showMapModal && (
+      {mapScope === 'collection' && (
         <tr>
           <td colSpan={supportsMappings ? 7 : 6}>
             <MapToCollectionPanel
               sourceId={source.id}
-              existingMappings={mapped}
-              onClose={() => setShowMapModal(false)}
+              existingMappings={mapped.filter((m) => m.scope_kind === 'collection')}
+              onClose={() => setMapScope(null)}
+            />
+          </td>
+        </tr>
+      )}
+      {mapScope === 'asset_endpoint' && (
+        <tr>
+          <td colSpan={supportsMappings ? 7 : 6}>
+            <MapToEndpointPanel
+              sourceId={source.id}
+              existingMappings={mapped.filter((m) => m.scope_kind === 'asset_endpoint')}
+              onClose={() => setMapScope(null)}
+            />
+          </td>
+        </tr>
+      )}
+      {mapScope === 'asset' && (
+        <tr>
+          <td colSpan={supportsMappings ? 7 : 6}>
+            <MapToAssetPanel
+              sourceId={source.id}
+              existingMappings={mapped.filter((m) => m.scope_kind === 'asset')}
+              onClose={() => setMapScope(null)}
             />
           </td>
         </tr>
@@ -365,7 +399,7 @@ function MapToCollectionPanel({
   onClose,
 }: {
   sourceId: string;
-  existingMappings: Array<{ id: string; collection_id: string }>;
+  existingMappings: CredentialMapping[];
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -444,6 +478,212 @@ function MapToCollectionPanel({
           onClick={() => bulkMut.mutate(Array.from(selected))}
         >
           {bulkMut.isPending ? 'Mapping...' : `Map ${selected.size} collection(s)`}
+        </button>
+        {unmapMut.isPending && <span className="muted">Unmapping...</span>}
+      </div>
+    </div>
+  );
+}
+
+function MapToEndpointPanel({
+  sourceId,
+  existingMappings,
+  onClose,
+}: {
+  sourceId: string;
+  existingMappings: CredentialMapping[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const { data: endpoints } = useQuery({
+    queryKey: ['asset-endpoints', { q: search }],
+    queryFn: () => listAssetEndpoints({ q: search || undefined, page: 1, page_size: 50 }),
+    enabled: search.length >= 1,
+  });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const bulkMut = useMutation({
+    mutationFn: (ids: string[]) => bulkCreateEndpointMappings(sourceId, ids),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credential-mappings'] });
+      onClose();
+    },
+  });
+
+  const unmapMut = useMutation({
+    mutationFn: deleteCredentialMapping,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['credential-mappings'] }),
+  });
+
+  const items = endpoints?.items ?? [];
+  const mappedIds = new Set(existingMappings.map((m) => m.asset_endpoint_id).filter(Boolean));
+
+  return (
+    <div className="form-card" style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <strong>Map credential to endpoints</strong>
+        <button className="btn btn-sm" onClick={onClose}>Close</button>
+      </div>
+      <input
+        type="search"
+        placeholder="Search endpoints by host, IP, service..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        style={{ width: '100%', marginTop: 8 }}
+      />
+      {search.length >= 1 && items.length === 0 && (
+        <p className="muted" style={{ marginTop: 8 }}>No endpoints found.</p>
+      )}
+      {items.length > 0 && (
+        <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0', maxHeight: 300, overflowY: 'auto' }}>
+          {items.map((ep) => {
+            const already = mappedIds.has(ep.id);
+            const mapping = already ? existingMappings.find((m) => m.asset_endpoint_id === ep.id) : null;
+            return (
+              <li key={ep.id} style={{ padding: '4px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1 }}>
+                  <input
+                    type="checkbox"
+                    disabled={already}
+                    checked={already || selected.has(ep.id)}
+                    onChange={() => {
+                      setSelected((prev) => {
+                        const n = new Set(prev);
+                        if (n.has(ep.id)) n.delete(ep.id); else n.add(ep.id);
+                        return n;
+                      });
+                    }}
+                  />
+                  <span>{ep.host || ep.ip}:{ep.port}</span>
+                  {ep.service && <span className="muted">({ep.service})</span>}
+                  {already && <span className="muted">(mapped)</span>}
+                </label>
+                {already && mapping && (
+                  <button
+                    className="btn btn-sm btn-danger"
+                    disabled={unmapMut.isPending}
+                    onClick={() => unmapMut.mutate(mapping.id)}
+                  >
+                    Unmap
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {bulkMut.error && <p className="error">{(bulkMut.error as Error).message}</p>}
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <button
+          className="btn btn-primary"
+          disabled={selected.size === 0 || bulkMut.isPending}
+          onClick={() => bulkMut.mutate(Array.from(selected))}
+        >
+          {bulkMut.isPending ? 'Mapping...' : `Map ${selected.size} endpoint(s)`}
+        </button>
+        {unmapMut.isPending && <span className="muted">Unmapping...</span>}
+      </div>
+    </div>
+  );
+}
+
+function MapToAssetPanel({
+  sourceId,
+  existingMappings,
+  onClose,
+}: {
+  sourceId: string;
+  existingMappings: CredentialMapping[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const { data: assets } = useQuery({
+    queryKey: ['assets', { q: search }],
+    queryFn: () => listAssets({ q: search || undefined, page: 1, page_size: 50 }),
+    enabled: search.length >= 1,
+  });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const bulkMut = useMutation({
+    mutationFn: (ids: string[]) => bulkCreateAssetMappings(sourceId, ids),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credential-mappings'] });
+      onClose();
+    },
+  });
+
+  const unmapMut = useMutation({
+    mutationFn: deleteCredentialMapping,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['credential-mappings'] }),
+  });
+
+  const items = assets?.items ?? [];
+  const mappedIds = new Set(existingMappings.map((m) => m.asset_id).filter(Boolean));
+
+  return (
+    <div className="form-card" style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <strong>Map credential to assets</strong>
+        <button className="btn btn-sm" onClick={onClose}>Close</button>
+      </div>
+      <input
+        type="search"
+        placeholder="Search assets by hostname, IP..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        style={{ width: '100%', marginTop: 8 }}
+      />
+      {search.length >= 1 && items.length === 0 && (
+        <p className="muted" style={{ marginTop: 8 }}>No assets found.</p>
+      )}
+      {items.length > 0 && (
+        <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0', maxHeight: 300, overflowY: 'auto' }}>
+          {items.map((a) => {
+            const already = mappedIds.has(a.id);
+            const mapping = already ? existingMappings.find((m) => m.asset_id === a.id) : null;
+            return (
+              <li key={a.id} style={{ padding: '4px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1 }}>
+                  <input
+                    type="checkbox"
+                    disabled={already}
+                    checked={already || selected.has(a.id)}
+                    onChange={() => {
+                      setSelected((prev) => {
+                        const n = new Set(prev);
+                        if (n.has(a.id)) n.delete(a.id); else n.add(a.id);
+                        return n;
+                      });
+                    }}
+                  />
+                  <span>{a.hostname || a.primary_ip || a.ip || '-'}</span>
+                  {a.resource_type && <span className="muted">({a.resource_type})</span>}
+                  {already && <span className="muted">(mapped)</span>}
+                </label>
+                {already && mapping && (
+                  <button
+                    className="btn btn-sm btn-danger"
+                    disabled={unmapMut.isPending}
+                    onClick={() => unmapMut.mutate(mapping.id)}
+                  >
+                    Unmap
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {bulkMut.error && <p className="error">{(bulkMut.error as Error).message}</p>}
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <button
+          className="btn btn-primary"
+          disabled={selected.size === 0 || bulkMut.isPending}
+          onClick={() => bulkMut.mutate(Array.from(selected))}
+        >
+          {bulkMut.isPending ? 'Mapping...' : `Map ${selected.size} asset(s)`}
         </button>
         {unmapMut.isPending && <span className="muted">Unmapping...</span>}
       </div>

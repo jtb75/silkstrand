@@ -288,10 +288,15 @@ export const updateCredentialSource = (id: string, body: { name?: string; config
 export const deleteCredentialSource = (id: string) =>
   request<void>(`/api/v1/credential-sources/${id}`, { method: 'DELETE' });
 
+export type MappingScopeKind = 'collection' | 'asset_endpoint' | 'asset';
+
 export interface CredentialMapping {
   id: string;
   tenant_id: string;
-  collection_id: string;
+  scope_kind: MappingScopeKind;
+  collection_id?: string;
+  asset_endpoint_id?: string;
+  asset_id?: string;
   credential_source_id: string;
   created_at: string;
 }
@@ -299,17 +304,21 @@ export interface CredentialMapping {
 export const listCredentialMappings = () =>
   request<CredentialMapping[]>('/api/v1/credential-mappings');
 
-export const createCredentialMapping = (collectionId: string, credentialSourceId: string) =>
+export const createCredentialMapping = (req: {
+  scope_kind: MappingScopeKind;
+  credential_source_id: string;
+  collection_id?: string;
+  asset_endpoint_id?: string;
+  asset_id?: string;
+}) =>
   request<CredentialMapping>('/api/v1/credential-mappings', {
     method: 'POST',
-    body: JSON.stringify({
-      collection_id: collectionId,
-      credential_source_id: credentialSourceId,
-    }),
+    body: JSON.stringify(req),
   });
 
 export interface BulkCreateMappingResult {
-  results: Array<{ collection_id: string; mapping_id?: string; error?: string }>;
+  results: Array<{ scope_id: string; collection_id?: string; mapping_id?: string; error?: string }>;
+  mapped: number;
 }
 
 export const bulkCreateCredentialMappings = (
@@ -321,6 +330,30 @@ export const bulkCreateCredentialMappings = (
     body: JSON.stringify({
       credential_source_id: credentialSourceId,
       collection_ids: collectionIds,
+    }),
+  });
+
+export const bulkCreateEndpointMappings = (
+  credentialSourceId: string,
+  endpointIds: string[],
+) =>
+  request<BulkCreateMappingResult>('/api/v1/credential-mappings/bulk', {
+    method: 'POST',
+    body: JSON.stringify({
+      credential_source_id: credentialSourceId,
+      endpoint_ids: endpointIds,
+    }),
+  });
+
+export const bulkCreateAssetMappings = (
+  credentialSourceId: string,
+  assetIds: string[],
+) =>
+  request<BulkCreateMappingResult>('/api/v1/credential-mappings/bulk', {
+    method: 'POST',
+    body: JSON.stringify({
+      credential_source_id: credentialSourceId,
+      asset_ids: assetIds,
     }),
   });
 
