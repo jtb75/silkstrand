@@ -1,0 +1,14 @@
+id: mssql-msdb-public-agent-proxies
+name: Ensure the public role in msdb is not granted access to SQL Agent proxies
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 3.11.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.11"
+    title: "Ensure the public role in msdb is not granted access to SQL Agent proxies"
+tags: ['access-control', 'least-privilege']
+requires_auth: true

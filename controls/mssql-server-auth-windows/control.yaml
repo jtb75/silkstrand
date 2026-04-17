@@ -1,0 +1,14 @@
+id: mssql-server-auth-windows
+name: Ensure Server Authentication is set to Windows Authentication Mode
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 3.1.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.1"
+    title: "Ensure Server Authentication is set to Windows Authentication Mode"
+tags: ['authentication', 'access-control']
+requires_auth: true

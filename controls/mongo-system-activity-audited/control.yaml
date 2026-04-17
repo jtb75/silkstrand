@@ -1,0 +1,14 @@
+id: mongo-system-activity-audited
+name: Ensure that system activity is audited
+description: >
+  CIS MongoDB 8 Benchmark control 5.1.
+severity: medium
+engine:
+  - name: mongodb
+    versions: ["6", "7", "8"]
+frameworks:
+  - id: cis-mongodb-8
+    section: "5.1"
+    title: "Ensure that system activity is audited"
+tags: ['logging', 'audit']
+requires_auth: true

@@ -1,0 +1,14 @@
+id: pg-log-connections
+name: Ensure log_connections is enabled
+description: >
+  Verify that log_connections is enabled to log each attempted connection to the server.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.20"
+    title: "Ensure log_connections is enabled"
+tags: ['logging', 'audit', 'access-control']
+requires_auth: true

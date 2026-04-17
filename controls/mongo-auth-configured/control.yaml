@@ -1,0 +1,14 @@
+id: mongo-auth-configured
+name: Ensure Authentication is configured
+description: >
+  CIS MongoDB 8 Benchmark control 2.1.
+severity: high
+engine:
+  - name: mongodb
+    versions: ["6", "7", "8"]
+frameworks:
+  - id: cis-mongodb-8
+    section: "2.1"
+    title: "Ensure Authentication is configured"
+tags: ['authentication', 'access-control']
+requires_auth: true

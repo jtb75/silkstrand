@@ -1,0 +1,14 @@
+id: pg-debug-print-plan
+name: Ensure debug_print_plan is disabled
+description: >
+  Verify that debug_print_plan is disabled to avoid logging execution plans with sensitive data.
+severity: low
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.18"
+    title: "Ensure debug_print_plan is disabled"
+tags: ['logging', 'hardening']
+requires_auth: true

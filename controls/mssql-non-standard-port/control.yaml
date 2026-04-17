@@ -1,0 +1,14 @@
+id: mssql-non-standard-port
+name: Ensure SQL Server is configured to use non-standard ports
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 2.11.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.11"
+    title: "Ensure SQL Server is configured to use non-standard ports"
+tags: ['hardening', 'network']
+requires_auth: true

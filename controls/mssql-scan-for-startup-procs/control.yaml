@@ -1,0 +1,14 @@
+id: mssql-scan-for-startup-procs
+name: Ensure Scan For Startup Procs is set to 0
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 2.8.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.8"
+    title: "Ensure Scan For Startup Procs is set to 0"
+tags: ['hardening', 'surface-reduction']
+requires_auth: true

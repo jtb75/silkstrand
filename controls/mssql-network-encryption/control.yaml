@@ -1,0 +1,14 @@
+id: mssql-network-encryption
+name: Ensure Network Encryption is Configured and Enabled
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 7.4.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "7.4"
+    title: "Ensure Network Encryption is Configured and Enabled"
+tags: ['encryption', 'network', 'tls']
+requires_auth: true

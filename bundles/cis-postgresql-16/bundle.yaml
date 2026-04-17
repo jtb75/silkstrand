@@ -1,0 +1,39 @@
+id: cis-postgresql-16
+name: CIS PostgreSQL 16 Benchmark
+version: 2.0.4
+framework: cis-postgresql-16
+engine: postgresql
+controls:
+  - pg-log-destinations
+  - pg-logging-collector
+  - pg-log-directory
+  - pg-log-filename
+  - pg-log-file-mode
+  - pg-log-truncate-on-rotation
+  - pg-log-rotation-age
+  - pg-log-rotation-size
+  - pg-syslog-sequence-numbers
+  - pg-syslog-split-messages
+  - pg-syslog-ident
+  - pg-log-min-messages
+  - pg-log-min-error-statement
+  - pg-debug-print-parse
+  - pg-debug-print-rewritten
+  - pg-debug-print-plan
+  - pg-debug-pretty-print
+  - pg-log-connections
+  - pg-log-disconnections
+  - pg-log-error-verbosity
+  - pg-log-hostname
+  - pg-log-line-prefix
+  - pg-log-statement
+  - pg-log-timezone
+  - pg-pgaudit
+  - pg-excessive-function-privileges
+  - pg-set-user-extension
+  - pg-connection-limits
+  - pg-backend-runtime-parameters
+  - pg-tls-enabled
+  - pg-tls-min-protocol
+  - pg-weak-ssl-ciphers
+  - pg-wal-archiving

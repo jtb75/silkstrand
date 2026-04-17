@@ -1,0 +1,14 @@
+id: mssql-sa-renamed
+name: Ensure the sa Login Account has been renamed
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 2.14.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.14"
+    title: "Ensure the sa Login Account has been renamed"
+tags: ['access-control', 'authentication']
+requires_auth: true

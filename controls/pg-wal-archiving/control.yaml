@@ -1,0 +1,14 @@
+id: pg-wal-archiving
+name: Ensure WAL archiving is configured and functional
+description: >
+  Verify that archive_mode is enabled for point-in-time recovery capability.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "7.4"
+    title: "Ensure WAL archiving is configured and functional"
+tags: ['backup', 'disaster-recovery']
+requires_auth: true

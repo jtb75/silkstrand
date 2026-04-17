@@ -1,0 +1,14 @@
+id: mongo-logging-captures-info
+name: Ensure that logging captures as much information as possible
+description: >
+  CIS MongoDB 8 Benchmark control 5.3.
+severity: medium
+engine:
+  - name: mongodb
+    versions: ["6", "7", "8"]
+frameworks:
+  - id: cis-mongodb-8
+    section: "5.3"
+    title: "Ensure that logging captures as much information as possible"
+tags: ['logging', 'audit']
+requires_auth: true

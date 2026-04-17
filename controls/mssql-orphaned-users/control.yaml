@@ -1,0 +1,14 @@
+id: mssql-orphaned-users
+name: Ensure Orphaned Users are Dropped From SQL Server Databases
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 3.3.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.3"
+    title: "Ensure Orphaned Users are Dropped From SQL Server Databases"
+tags: ['access-control', 'hygiene']
+requires_auth: true

@@ -1,0 +1,14 @@
+id: mssql-audit-logins
+name: Ensure SQL Server Audit captures both failed and successful logins
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 5.4.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "5.4"
+    title: "Ensure SQL Server Audit captures both failed and successful logins"
+tags: ['logging', 'audit', 'authentication']
+requires_auth: true

@@ -1,0 +1,14 @@
+id: mssql-no-sa-login-name
+name: Ensure no login exists with the name sa
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 2.16.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.16"
+    title: "Ensure no login exists with the name sa"
+tags: ['access-control', 'authentication']
+requires_auth: true

@@ -1,0 +1,14 @@
+id: pg-debug-pretty-print
+name: Ensure debug_pretty_print is enabled
+description: >
+  Verify that debug_pretty_print is enabled for readable debug output when debug printing is active.
+severity: low
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.19"
+    title: "Ensure debug_pretty_print is enabled"
+tags: ['logging', 'audit']
+requires_auth: true

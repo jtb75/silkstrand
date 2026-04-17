@@ -1,0 +1,14 @@
+id: mongo-non-default-port
+name: Ensure that MongoDB uses a non-default port
+description: >
+  CIS MongoDB 8 Benchmark control 6.1.
+severity: low
+engine:
+  - name: mongodb
+    versions: ["6", "7", "8"]
+frameworks:
+  - id: cis-mongodb-8
+    section: "6.1"
+    title: "Ensure that MongoDB uses a non-default port"
+tags: ['hardening', 'network']
+requires_auth: true

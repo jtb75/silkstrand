@@ -1,0 +1,14 @@
+id: mssql-ad-hoc-distributed-queries
+name: Ensure Ad Hoc Distributed Queries is set to 0
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 2.1.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.1"
+    title: "Ensure Ad Hoc Distributed Queries is set to 0"
+tags: ['hardening', 'surface-reduction']
+requires_auth: true

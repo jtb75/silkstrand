@@ -1,0 +1,14 @@
+id: pg-log-destinations
+name: Ensure the log destinations are set correctly
+description: >
+  Verify that log_destination is set to a valid logging target such as stderr, csvlog, syslog, or jsonlog.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.2"
+    title: "Ensure the log destinations are set correctly"
+tags: ['logging', 'audit']
+requires_auth: true

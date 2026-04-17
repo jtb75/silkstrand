@@ -1,0 +1,14 @@
+id: mssql-no-admin-role-msdb
+name: Ensure no admin role membership in MSDB database
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 3.13.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.13"
+    title: "Ensure no admin role membership in MSDB database"
+tags: ['access-control', 'least-privilege']
+requires_auth: true

@@ -1,0 +1,14 @@
+id: pg-log-disconnections
+name: Ensure log_disconnections is enabled
+description: >
+  Verify that log_disconnections is enabled to log session terminations.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.21"
+    title: "Ensure log_disconnections is enabled"
+tags: ['logging', 'audit', 'access-control']
+requires_auth: true

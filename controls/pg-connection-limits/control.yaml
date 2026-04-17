@@ -1,0 +1,14 @@
+id: pg-connection-limits
+name: Ensure per-account connection limits are used
+description: >
+  Verify that connection limits are set on database roles to prevent resource exhaustion.
+severity: low
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "5.5"
+    title: "Ensure per-account connection limits are used"
+tags: ['access-control', 'resource-management']
+requires_auth: true

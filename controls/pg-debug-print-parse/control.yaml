@@ -1,0 +1,14 @@
+id: pg-debug-print-parse
+name: Ensure debug_print_parse is disabled
+description: >
+  Verify that debug_print_parse is disabled to avoid logging sensitive parse tree data.
+severity: low
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.16"
+    title: "Ensure debug_print_parse is disabled"
+tags: ['logging', 'hardening']
+requires_auth: true

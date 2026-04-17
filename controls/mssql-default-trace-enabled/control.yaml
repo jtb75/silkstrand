@@ -1,0 +1,14 @@
+id: mssql-default-trace-enabled
+name: Ensure Default Trace Enabled is set to 1
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 5.2.
+severity: medium
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "5.2"
+    title: "Ensure Default Trace Enabled is set to 1"
+tags: ['logging', 'audit']
+requires_auth: true

@@ -1,0 +1,14 @@
+id: pg-log-directory
+name: Ensure the log file destination directory is set correctly
+description: >
+  Verify that log_directory is set to a valid directory path.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.4"
+    title: "Ensure the log file destination directory is set correctly"
+tags: ['logging', 'audit']
+requires_auth: true

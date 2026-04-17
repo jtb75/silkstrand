@@ -1,0 +1,14 @@
+id: mongo-localhost-auth-bypass
+name: Ensure MongoDB does not bypass authentication via localhost exception
+description: >
+  CIS MongoDB 8 Benchmark control 2.2.
+severity: high
+engine:
+  - name: mongodb
+    versions: ["6", "7", "8"]
+frameworks:
+  - id: cis-mongodb-8
+    section: "2.2"
+    title: "Ensure MongoDB does not bypass authentication via localhost exception"
+tags: ['authentication', 'access-control']
+requires_auth: true

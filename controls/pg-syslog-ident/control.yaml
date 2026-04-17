@@ -1,0 +1,14 @@
+id: pg-syslog-ident
+name: Ensure the program name for PostgreSQL syslog messages is correct
+description: >
+  Verify that syslog_ident is set to identify PostgreSQL messages in syslog.
+severity: low
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.13"
+    title: "Ensure the program name for PostgreSQL syslog messages is correct"
+tags: ['logging', 'audit']
+requires_auth: true

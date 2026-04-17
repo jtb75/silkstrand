@@ -1,0 +1,14 @@
+id: mongo-legacy-tls-disabled
+name: Ensure legacy TLS protocols are disabled
+description: >
+  CIS MongoDB 8 Benchmark control 4.1.
+severity: medium
+engine:
+  - name: mongodb
+    versions: ["6", "7", "8"]
+frameworks:
+  - id: cis-mongodb-8
+    section: "4.1"
+    title: "Ensure legacy TLS protocols are disabled"
+tags: ['encryption', 'network', 'tls']
+requires_auth: true

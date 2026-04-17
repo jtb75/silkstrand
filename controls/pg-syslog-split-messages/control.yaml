@@ -1,0 +1,14 @@
+id: pg-syslog-split-messages
+name: Ensure syslog messages are not lost due to size
+description: >
+  Verify that syslog_split_messages is enabled so large messages are not truncated.
+severity: low
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.1.12"
+    title: "Ensure syslog messages are not lost due to size"
+tags: ['logging', 'audit']
+requires_auth: true

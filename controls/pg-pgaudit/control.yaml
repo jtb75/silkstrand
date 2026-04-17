@@ -1,0 +1,14 @@
+id: pg-pgaudit
+name: Ensure the PostgreSQL Audit Extension (pgAudit) is enabled
+description: >
+  Verify that pgAudit is loaded via shared_preload_libraries for detailed audit logging.
+severity: medium
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+frameworks:
+  - id: cis-postgresql-16
+    section: "3.2"
+    title: "Ensure the PostgreSQL Audit Extension (pgAudit) is enabled"
+tags: ['logging', 'audit', 'compliance']
+requires_auth: true

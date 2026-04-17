@@ -1,0 +1,14 @@
+id: mssql-asymmetric-key-2048
+name: Ensure Asymmetric Key Size is 2048 or greater
+description: >
+  CIS Microsoft SQL Server 2022 Benchmark control 7.2.
+severity: high
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "7.2"
+    title: "Ensure Asymmetric Key Size is 2048 or greater"
+tags: ['encryption', 'data-protection']
+requires_auth: true
