@@ -525,12 +525,32 @@ function MapToEndpointPanel({
         <strong>Map credential to endpoints</strong>
         <button className="btn btn-sm" onClick={onClose}>Close</button>
       </div>
+      {existingMappings.filter(m => m.scope_kind === 'asset_endpoint').length > 0 && (
+        <>
+          <p style={{ margin: '8px 0 4px', fontWeight: 600, fontSize: 13 }}>Current mappings</p>
+          <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px' }}>
+            {existingMappings.filter(m => m.scope_kind === 'asset_endpoint' && m.asset_endpoint_id).map(m => (
+              <li key={m.id} style={{ padding: '4px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ flex: 1 }}>{m.asset_endpoint_id?.slice(0, 8)}… (mapped)</span>
+                <button
+                  className="btn btn-sm btn-danger"
+                  disabled={unmapMut.isPending}
+                  onClick={() => unmapMut.mutate(m.id)}
+                >
+                  Unmap
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p style={{ margin: '8px 0 4px', fontWeight: 600, fontSize: 13 }}>Add mapping</p>
       <input
         type="search"
         placeholder="Search endpoints by host, IP, service..."
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        style={{ width: '100%', marginTop: 8 }}
+        style={{ width: '100%' }}
       />
       {search.length >= 1 && items.length === 0 && (
         <p className="muted" style={{ marginTop: 8 }}>No endpoints found.</p>
