@@ -756,7 +756,7 @@ func (s *PostgresStore) ListControls(ctx context.Context, tenantID string, filte
 	if filter.Q != "" {
 		where = append(where, fmt.Sprintf("(bc.control_id ILIKE '%%' || $%d || '%%' OR bc.name ILIKE '%%' || $%d || '%%')", idx, idx))
 		args = append(args, filter.Q)
-		idx++
+		_ = idx // last param; suppress ineffassign
 	}
 
 	whereClause := strings.Join(where, " AND ")
