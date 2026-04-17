@@ -1251,6 +1251,73 @@ func (s *PostgresStore) ListAssets(ctx context.Context, filter AssetFilter) ([]m
 	return items, total, nil
 }
 
+func (s *PostgresStore) ListAssetEndpoints(ctx context.Context, filter AssetEndpointFilter) ([]AssetEndpointRow, int, error) {
+	tenantID := TenantID(ctx)
+	if filter.PageSize <= 0 || filter.PageSize > 500 {
+		filter.PageSize = 50
+	}
+	if filter.Page <= 0 {
+		filter.Page = 1
+	}
+	offset := (filter.Page - 1) * filter.PageSize
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ae.id, ae.asset_id,
+		        COALESCE(a.hostname, host(a.primary_ip)::text, ''),
+		        COALESCE(host(a.primary_ip)::text, ''),
+		        ae.port, ae.protocol, ae.service, ae.version, ae.technologies,
+		        (SELECT COUNT(*) FROM findings f WHERE f.asset_endpoint_id = ae.id AND f.status = 'open'),
+		        ae.last_seen
+		   FROM asset_endpoints ae
+		   JOIN assets a ON a.id = ae.asset_id
+		  WHERE a.tenant_id = $1
+		    AND ($2 = '' OR ae.service = $2)
+		    AND ($3 = 0 OR ae.port = $3)
+		    AND ($4 = '' OR a.source = $4)
+		    AND ($5 = '' OR host(a.primary_ip)::text ILIKE '%' || $5 || '%'
+		         OR COALESCE(a.hostname,'') ILIKE '%' || $5 || '%'
+		         OR COALESCE(ae.service,'') ILIKE '%' || $5 || '%'
+		         OR ae.port::text = $5)
+		  ORDER BY a.primary_ip, ae.port
+		  LIMIT $6 OFFSET $7`,
+		tenantID, filter.Service, filter.Port, filter.Source, filter.Q,
+		filter.PageSize, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing asset endpoints: %w", err)
+	}
+	defer rows.Close()
+	var items []AssetEndpointRow
+	for rows.Next() {
+		var r AssetEndpointRow
+		if err := rows.Scan(&r.ID, &r.AssetID, &r.Host, &r.IP, &r.Port, &r.Protocol,
+			&r.Service, &r.Version, &r.Technologies, &r.FindingsCount, &r.LastSeen); err != nil {
+			return nil, 0, fmt.Errorf("scanning asset endpoint: %w", err)
+		}
+		items = append(items, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	var total int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		   FROM asset_endpoints ae
+		   JOIN assets a ON a.id = ae.asset_id
+		  WHERE a.tenant_id = $1
+		    AND ($2 = '' OR ae.service = $2)
+		    AND ($3 = 0 OR ae.port = $3)
+		    AND ($4 = '' OR a.source = $4)
+		    AND ($5 = '' OR host(a.primary_ip)::text ILIKE '%' || $5 || '%'
+		         OR COALESCE(a.hostname,'') ILIKE '%' || $5 || '%'
+		         OR COALESCE(ae.service,'') ILIKE '%' || $5 || '%'
+		         OR ae.port::text = $5)`,
+		tenantID, filter.Service, filter.Port, filter.Source, filter.Q).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting asset endpoints: %w", err)
+	}
+	return items, total, nil
+}
+
 // ======================================================================
 // Collections (ADR 006 D5)
 // ======================================================================

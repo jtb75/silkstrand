@@ -134,6 +134,7 @@ type Store interface {
 	UpsertAssetEndpoint(ctx context.Context, in UpsertAssetEndpointInput) (*model.AssetEndpoint, error)
 	GetAssetByID(ctx context.Context, id string) (*model.Asset, error)
 	ListAssets(ctx context.Context, filter AssetFilter) (items []model.Asset, total int, err error)
+	ListAssetEndpoints(ctx context.Context, filter AssetEndpointFilter) ([]AssetEndpointRow, int, error)
 
 	// --- Collections (ADR 006 D5) -----------------------------------
 
@@ -335,6 +336,32 @@ type AssetFilter struct {
 	Q           string
 	Page        int
 	PageSize    int
+}
+
+// AssetEndpointFilter is the parsed query for ListAssetEndpoints.
+type AssetEndpointFilter struct {
+	Service string
+	Port    int
+	Source  string
+	Q       string
+	Page    int
+	PageSize int
+}
+
+// AssetEndpointRow is the flattened shape returned by ListAssetEndpoints,
+// joining asset_endpoints with the parent asset for the list view.
+type AssetEndpointRow struct {
+	ID             string
+	AssetID        string
+	Host           string // hostname or IP
+	IP             string
+	Port           int
+	Protocol       string
+	Service        *string
+	Version        *string
+	Technologies   json.RawMessage
+	FindingsCount  int
+	LastSeen       time.Time
 }
 
 // --- Context plumbing ------------------------------------------------
