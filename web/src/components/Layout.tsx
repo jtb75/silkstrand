@@ -11,30 +11,23 @@ export default function Layout() {
   const isAdmin = active?.role === 'admin';
   const queryClient = useQueryClient();
 
-  // SSE: subscribe to scan_status + agent_status events for real-time cache
-  // invalidation. When any scan or agent changes state, invalidate the
-  // relevant queries so list views update without manual refresh.
-  const { events: scanEvents } = useEventStream<{ status: string }>(
-    { kinds: ['scan_status'] },
-    { enabled: !!active },
-  );
-  const { events: agentEvents } = useEventStream<{ status: string }>(
-    { kinds: ['agent_status'] },
+  // Single SSE stream for cache invalidation. Subscribes to both
+  // scan_status and agent_status events; one EventSource instead of two.
+  const { events: statusEvents } = useEventStream<{ status: string }>(
+    { kinds: ['scan_status', 'agent_status'] },
     { enabled: !!active },
   );
 
   useEffect(() => {
-    if (scanEvents.length > 0) {
+    if (statusEvents.length === 0) return;
+    const last = statusEvents[statusEvents.length - 1];
+    if (last.kind === 'scan_status') {
       queryClient.invalidateQueries({ queryKey: ['scans'] });
       queryClient.invalidateQueries({ queryKey: ['scan-definitions'] });
-    }
-  }, [scanEvents.length, queryClient]);
-
-  useEffect(() => {
-    if (agentEvents.length > 0) {
+    } else if (last.kind === 'agent_status') {
       queryClient.invalidateQueries({ queryKey: ['agents'] });
     }
-  }, [agentEvents.length, queryClient]);
+  }, [statusEvents.length, queryClient]);
 
   return (
     <div className="layout">
