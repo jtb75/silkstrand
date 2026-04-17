@@ -54,11 +54,17 @@ A control is a single check with metadata:
 
 ```yaml
 # controls/tls-config/control.yaml
-id: tls-config
+id: db-tls-config
 name: Ensure TLS is configured
 description: Verify that TLS is enabled and uses strong ciphers.
 severity: high
-engine: [postgresql, mssql, mongodb]
+engine:
+  - name: postgresql
+    versions: ["14", "15", "16"]
+  - name: mssql
+    versions: ["2019", "2022"]
+  - name: mongodb
+    versions: ["6", "7", "8"]
 frameworks:
   - id: cis-postgresql-16
     section: "3.1"
@@ -299,13 +305,18 @@ without downloading the tarball):
 ```sql
 CREATE TABLE bundle_controls (
   bundle_id UUID NOT NULL REFERENCES bundles(id) ON DELETE CASCADE,
-  control_id TEXT NOT NULL,
+  control_id TEXT NOT NULL,           -- globally unique, engine-prefixed (e.g., db-tls-config, pg-hba-config)
   name TEXT NOT NULL,
   severity TEXT,
-  section TEXT,
+  section TEXT,                       -- framework section reference (e.g., "3.1")
+  engine TEXT NOT NULL,               -- postgresql, mssql, mongodb, mysql, ...
+  engine_versions JSONB NOT NULL DEFAULT '[]'::jsonb,  -- ["14","15","16"] or ["*"] for all
   tags JSONB NOT NULL DEFAULT '[]'::jsonb,
   PRIMARY KEY (bundle_id, control_id)
 );
+
+CREATE INDEX idx_bundle_controls_engine ON bundle_controls(engine);
+CREATE INDEX idx_bundle_controls_control ON bundle_controls(control_id);
 ```
 
 Populated at upload time from the control.yaml files inside the
@@ -354,16 +365,17 @@ tarball.
 5. **PR 5 — UI**: Bundle management page (list bundles, upload,
    view controls per bundle).
 
-## Open questions
+## Resolved questions
 
-- **OQ1.** Should control IDs be globally unique across all of
-  SilkStrand (namespace collision risk with community controls), or
-  scoped per engine (`postgresql/tls-config` vs just `tls-config`)?
-  Lean globally unique with an engine prefix convention.
-- **OQ2.** Control execution order — does it matter? Some controls
-  might depend on others (e.g., "check superuser" before "check
-  superuser privileges"). Lean: manifest order is execution order;
-  no formal dependency graph.
-- **OQ3.** Should the bundle builder live in CI (GitHub Actions step)
-  or be a local `make` target? Lean: both — local for dev, CI for
-  releases. Same script, different triggers.
+- **Q1. Control ID namespacing** — globally unique with engine prefix
+  convention (`db-tls-config`, `pg-hba-config`, `mssql-audit-login`).
+  Engine + version applicability tracked in `control.yaml` and
+  persisted to `bundle_controls.engine` + `engine_versions` so the
+  API can answer "which controls apply to MSSQL 2022?" without
+  downloading tarballs.
+- **Q2. Execution order** — manifest order = execution order. No
+  formal dependency graph. If a future control needs ordering
+  guarantees, the manifest author places it after its prerequisite.
+- **Q3. Builder location** — both `make bundle` (local dev) and a
+  GitHub Actions step (CI releases). Same shell script, different
+  triggers.
