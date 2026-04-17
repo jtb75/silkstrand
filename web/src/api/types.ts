@@ -45,7 +45,7 @@ export interface Scan {
   target_id?: string;
   bundle_id: string;
   scan_type?: 'compliance' | 'discovery';
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'queued' | 'pending' | 'running' | 'completed' | 'failed';
   error_message?: string;
   started_at?: string;
   completed_at?: string;

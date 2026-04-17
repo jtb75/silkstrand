@@ -23,7 +23,7 @@ export default function ScanActivity() {
     queryFn: listScans,
     refetchInterval: (query) => {
       const data = query.state.data as Scan[] | undefined;
-      if (data?.some((s) => s.status === 'pending' || s.status === 'running')) {
+      if (data?.some((s) => s.status === 'pending' || s.status === 'running' || s.status === 'queued')) {
         return 5000;
       }
       return false;
@@ -74,6 +74,7 @@ export default function ScanActivity() {
           <label htmlFor="sa-status" style={{ display: 'block', fontSize: 12 }}>Status</label>
           <select id="sa-status" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
+            <option value="queued">queued</option>
             <option value="pending">pending</option>
             <option value="running">running</option>
             <option value="completed">completed</option>

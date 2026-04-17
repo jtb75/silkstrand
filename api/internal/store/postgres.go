@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -341,10 +342,50 @@ func (s *PostgresStore) DeleteScan(ctx context.Context, id string) error {
 func (s *PostgresStore) FailRunningScansForAgent(ctx context.Context, agentID string) (int, error) {
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE scans SET status = $1, completed_at = NOW()
-		   WHERE agent_id = $2 AND status IN ($3, $4)`,
-		model.ScanStatusFailed, agentID, model.ScanStatusPending, model.ScanStatusRunning)
+		   WHERE agent_id = $2 AND status IN ($3, $4, $5)`,
+		model.ScanStatusFailed, agentID, model.ScanStatusPending, model.ScanStatusRunning, model.ScanStatusQueued)
 	if err != nil {
 		return 0, fmt.Errorf("failing running scans for agent: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	return int(rows), nil
+}
+
+func (s *PostgresStore) AgentHasRunningScan(ctx context.Context, agentID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM scans WHERE agent_id = $1 AND status IN ($2, $3))`,
+		agentID, model.ScanStatusPending, model.ScanStatusRunning).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("checking agent running scan: %w", err)
+	}
+	return exists, nil
+}
+
+func (s *PostgresStore) OldestQueuedScanForAgent(ctx context.Context, agentID string) (*model.Scan, error) {
+	var sc model.Scan
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+scanCols+` FROM scans
+		   WHERE agent_id = $1 AND status = $2
+		   ORDER BY created_at ASC LIMIT 1`,
+		agentID, model.ScanStatusQueued)
+	if err := scanScan(&sc, row); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("loading oldest queued scan: %w", err)
+	}
+	return &sc, nil
+}
+
+func (s *PostgresStore) FailStaleQueuedScans(ctx context.Context, maxAge time.Duration) (int, error) {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE scans
+		   SET status = $1, completed_at = NOW(), error_message = 'queued scan timed out'
+		   WHERE status = $2 AND created_at < NOW() - make_interval(secs => $3)`,
+		model.ScanStatusFailed, model.ScanStatusQueued, int(maxAge.Seconds()))
+	if err != nil {
+		return 0, fmt.Errorf("failing stale queued scans: %w", err)
 	}
 	rows, _ := result.RowsAffected()
 	return int(rows), nil

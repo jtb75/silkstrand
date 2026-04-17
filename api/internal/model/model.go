@@ -348,6 +348,7 @@ type Scan struct {
 }
 
 const (
+	ScanStatusQueued    = "queued"
 	ScanStatusPending   = "pending"
 	ScanStatusRunning   = "running"
 	ScanStatusCompleted = "completed"

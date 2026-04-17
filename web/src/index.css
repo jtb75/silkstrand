@@ -148,6 +148,11 @@ a:hover {
   letter-spacing: 0.3px;
 }
 
+.badge-queued {
+  background-color: #e0e7ff;
+  color: #3730a3;
+}
+
 .badge-pending {
   background-color: #dbeafe;
   color: #1d4ed8;

@@ -301,6 +301,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 
 		case websocket.TypeScanResults:
 			handleScanResults(ctx, s, agentID, msg.Payload)
+			sched.DrainAgentQueue(ctx, agentID)
 
 		case websocket.TypeScanError:
 			var payload websocket.ScanErrorPayload
@@ -312,6 +313,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 				slog.Error("updating scan to failed", "scan_id", payload.ScanID, "error", err)
 			}
 			slog.Warn("scan failed", "agent_id", agentID, "scan_id", payload.ScanID, "error", payload.Error)
+			sched.DrainAgentQueue(ctx, agentID)
 
 		case websocket.TypeProbeResult:
 			var result websocket.ProbeResultPayload
@@ -354,6 +356,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			}
 			slog.Info("discovery completed", "agent_id", agentID, "scan_id", payload.ScanID,
 				"assets_found", payload.AssetsFound, "hosts_scanned", payload.HostsScanned)
+			sched.DrainAgentQueue(ctx, agentID)
 
 		default:
 			slog.Warn("unknown message type from agent", "agent_id", agentID, "type", msg.Type)

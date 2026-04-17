@@ -142,7 +142,7 @@ export default function ScanResults() {
     enabled: !!id,
     refetchInterval: (query) => {
       const data = query.state.data as Scan | undefined;
-      if (data?.status === 'running' || data?.status === 'pending') {
+      if (data?.status === 'running' || data?.status === 'pending' || data?.status === 'queued') {
         return 5000;
       }
       return false;
@@ -252,9 +252,11 @@ function ScanOverview({ scan }: { scan: Scan }) {
         </table>
       ) : (
         <p>
-          {scan.status === 'pending' || scan.status === 'running'
-            ? 'Scan in progress...'
-            : 'No results.'}
+          {scan.status === 'queued'
+            ? 'Scan queued — waiting for agent...'
+            : scan.status === 'pending' || scan.status === 'running'
+              ? 'Scan in progress...'
+              : 'No results.'}
         </p>
       )}
     </div>

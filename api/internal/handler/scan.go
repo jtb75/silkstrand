@@ -74,23 +74,37 @@ func (h *ScanHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if scan.AgentID != nil && h.ps != nil {
 		agentID := *scan.AgentID
-		if !h.hub.IsConnected(agentID) {
-			slog.Warn("agent not connected, scan will wait for agent", "agent_id", agentID, "scan_id", scan.ID)
+		// Check if agent already has a running/pending scan — queue if busy.
+		busy, busyErr := h.store.AgentHasRunningScan(r.Context(), agentID)
+		if busyErr != nil {
+			slog.Error("checking agent busy", "agent_id", agentID, "error", busyErr)
 		}
-		bundleID := ""
-		if scan.BundleID != nil {
-			bundleID = *scan.BundleID
-		}
-		directive := pubsub.Directive{
-			ScanID:   scan.ID,
-			ScanType: scan.ScanType,
-			BundleID: bundleID,
-		}
-		if scan.TargetID != nil {
-			directive.TargetID = *scan.TargetID
-		}
-		if err := h.ps.PublishDirective(r.Context(), agentID, directive); err != nil {
-			slog.Error("publishing directive", "agent_id", agentID, "scan_id", scan.ID, "error", err)
+		if busy {
+			if err := h.store.UpdateScanStatus(r.Context(), scan.ID, model.ScanStatusQueued); err != nil {
+				slog.Error("queueing scan", "scan_id", scan.ID, "error", err)
+			} else {
+				scan.Status = model.ScanStatusQueued
+				slog.Info("scan queued", "scan_id", scan.ID, "agent_id", agentID)
+			}
+		} else {
+			if !h.hub.IsConnected(agentID) {
+				slog.Warn("agent not connected, scan will wait for agent", "agent_id", agentID, "scan_id", scan.ID)
+			}
+			bundleID := ""
+			if scan.BundleID != nil {
+				bundleID = *scan.BundleID
+			}
+			directive := pubsub.Directive{
+				ScanID:   scan.ID,
+				ScanType: scan.ScanType,
+				BundleID: bundleID,
+			}
+			if scan.TargetID != nil {
+				directive.TargetID = *scan.TargetID
+			}
+			if err := h.ps.PublishDirective(r.Context(), agentID, directive); err != nil {
+				slog.Error("publishing directive", "agent_id", agentID, "scan_id", scan.ID, "error", err)
+			}
 		}
 	}
 	writeJSON(w, http.StatusCreated, scan)
