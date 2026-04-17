@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/jtb75/silkstrand/api/internal/model"
@@ -75,6 +76,71 @@ func (h *AssetHandler) List(w http.ResponseWriter, r *http.Request) {
 		"items":     out,
 		"page":      1,
 		"page_size": len(out),
+		"total":     total,
+	})
+}
+
+// GET /api/v1/asset-endpoints — flat list of endpoints with parent asset info.
+func (h *AssetHandler) ListEndpoints(w http.ResponseWriter, r *http.Request) {
+	port := 0
+	if ps := r.URL.Query().Get("port"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil {
+			v := v
+			port = v
+		}
+	}
+	page := 1
+	if ps := r.URL.Query().Get("page"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil {
+			page = v
+		}
+	}
+	pageSize := 50
+	if ps := r.URL.Query().Get("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil {
+			pageSize = v
+		}
+	}
+	f := store.AssetEndpointFilter{
+		Service:  r.URL.Query().Get("service"),
+		Port:     port,
+		Source:   r.URL.Query().Get("source"),
+		Q:        r.URL.Query().Get("q"),
+		Page:     page,
+		PageSize: pageSize,
+	}
+	items, total, err := h.store.ListAssetEndpoints(r.Context(), f)
+	if err != nil {
+		slog.Error("listing asset endpoints", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list endpoints")
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, ep := range items {
+		var techs []string
+		if len(ep.Technologies) > 0 {
+			_ = json.Unmarshal(ep.Technologies, &techs)
+		}
+		row := map[string]any{
+			"id":              ep.ID,
+			"asset_id":        ep.AssetID,
+			"host":            ep.Host,
+			"ip":              ep.IP,
+			"port":            ep.Port,
+			"protocol":        ep.Protocol,
+			"service":         ep.Service,
+			"version":         ep.Version,
+			"technologies":    techs,
+			"findings_count":  ep.FindingsCount,
+			"coverage":        map[string]bool{"has_scan_definition": false, "has_credential_mapping": false},
+			"last_seen":       ep.LastSeen,
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":     out,
+		"page":      f.Page,
+		"page_size": f.PageSize,
 		"total":     total,
 	})
 }

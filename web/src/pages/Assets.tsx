@@ -3,10 +3,12 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   listAssets,
+  listAssetEndpoints,
   listCollections,
   createCollection,
   listScans,
   type AssetFilterParams,
+  type AssetEndpointRow,
 } from '../api/client';
 import type {
   CVE,
@@ -59,12 +61,6 @@ function topSeverity(asset: DiscoveredAsset): string | null {
     if ((asset.cves as CVE[]).some((c) => c.severity === sev)) return sev;
   }
   return null;
-}
-
-function findingsCount(asset: DiscoveredAsset): number {
-  const r = asset.risk;
-  if (r) return r.critical + r.high + r.medium + r.low + r.info;
-  return Array.isArray(asset.cves) ? asset.cves.length : 0;
 }
 
 function severityBadgeClass(sev: string): string {
@@ -174,6 +170,22 @@ export default function Assets() {
     refetchIntervalInBackground: false,
   });
 
+  const endpointFilters = useMemo(
+    () => ({
+      q: search || undefined,
+      source: (chips.has('manual') ? 'manual' : chips.has('discovered') ? 'discovered' : undefined) as string | undefined,
+      page: 1,
+      page_size: 200,
+    }),
+    [chips, search],
+  );
+
+  const { data: endpoints, isLoading: endpointsLoading, error: endpointsError } = useQuery({
+    queryKey: ['asset-endpoints', endpointFilters],
+    queryFn: () => listAssetEndpoints(endpointFilters),
+    enabled: tab === 'endpoints',
+  });
+
   const { data: collections } = useQuery({
     queryKey: ['collections'],
     queryFn: () => listCollections(),
@@ -266,8 +278,12 @@ export default function Assets() {
         <TabBtn id="findings" cur={tab} onClick={selectTab}>Findings</TabBtn>
       </div>
 
-      {error && <p className="error">{(error as Error).message}</p>}
-      {isLoading && <p>Loading…</p>}
+      {tab === 'endpoints'
+        ? (endpointsError && <p className="error">{(endpointsError as Error).message}</p>)
+        : (error && <p className="error">{(error as Error).message}</p>)}
+      {tab === 'endpoints'
+        ? (endpointsLoading && <p>Loading…</p>)
+        : (isLoading && <p>Loading…</p>)}
 
       {!isLoading && !error && tab === 'assets' && (
         <AssetsView
@@ -277,12 +293,12 @@ export default function Assets() {
           onSelect={selectAsset}
         />
       )}
-      {!isLoading && !error && tab === 'endpoints' && (
+      {!endpointsLoading && !endpointsError && tab === 'endpoints' && (
         <EndpointsView
-          items={items}
+          items={endpoints?.items ?? []}
           selected={selected}
           onToggle={toggleRow}
-          onSelect={selectAsset}
+          onSelect={(assetId: string) => selectAsset(assetId)}
         />
       )}
       {!isLoading && !error && tab === 'findings' && <FindingsView items={items} />}
@@ -405,20 +421,17 @@ function AssetsView({
 }
 
 // ── Endpoints tab ────────────────────────────────────────────────────────────
-// Post-refactor assets are host-level; endpoints live under asset_endpoints.
-// Until a dedicated /endpoints API surfaces all endpoints as a flat list,
-// we display one row per asset showing its primary_ip and endpoint count.
-// The detail drawer expands to per-port rows.
+// One row per asset_endpoint (port-level), powered by GET /api/v1/asset-endpoints.
 function EndpointsView({
   items,
   selected,
   onToggle,
   onSelect,
 }: {
-  items: DiscoveredAsset[];
+  items: AssetEndpointRow[];
   selected: Set<string>;
   onToggle: (id: string) => void;
-  onSelect: (id: string) => void;
+  onSelect: (assetId: string) => void;
 }) {
   if (items.length === 0)
     return (
@@ -433,44 +446,47 @@ function EndpointsView({
         <tr>
           <th style={{ width: 32 }}></th>
           <th>Host</th>
-          <th>IP</th>
-          <th>Type</th>
-          <th>#Endpoints</th>
+          <th>IP:Port</th>
+          <th>Service</th>
+          <th>Tech</th>
           <th>Findings</th>
           <th>Coverage</th>
+          <th>Last seen</th>
         </tr>
       </thead>
       <tbody>
-        {items.map((a) => {
-          const cov = deriveCoverage(a);
-          const fc = findingsCount(a);
-          return (
-            <tr
-              key={a.id}
-              className="clickable-row"
-              onClick={() => onSelect(a.id)}
-            >
-              <td onClick={(e) => e.stopPropagation()}>
-                <input
-                  type="checkbox"
-                  checked={selected.has(a.id)}
-                  onChange={() => onToggle(a.id)}
-                  aria-label={`Select ${assetHost(a)}`}
-                />
-              </td>
-              <td>{assetHost(a)}</td>
-              <td>{assetIP(a)}</td>
-              <td>{a.resource_type || '-'}</td>
-              <td>{a.endpoints_count ?? 0}</td>
-              <td>
-                {fc > 0 ? <span className="badge badge-cve-medium">{fc}</span> : '-'}
-              </td>
-              <td>
-                <CoverageIndicator scan={cov.scan} creds={cov.creds} />
-              </td>
-            </tr>
-          );
-        })}
+        {items.map((ep) => (
+          <tr
+            key={ep.id}
+            className="clickable-row"
+            onClick={() => onSelect(ep.asset_id)}
+          >
+            <td onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                checked={selected.has(ep.id)}
+                onChange={() => onToggle(ep.id)}
+                aria-label={`Select ${ep.host || ep.ip}:${ep.port}`}
+              />
+            </td>
+            <td>{ep.host || ep.ip || '-'}</td>
+            <td>{ep.ip}:{ep.port}</td>
+            <td>{ep.service || '-'}</td>
+            <td>{ep.technologies?.join(', ') || '-'}</td>
+            <td>
+              {ep.findings_count > 0
+                ? <span className="badge badge-cve-medium">{ep.findings_count}</span>
+                : '-'}
+            </td>
+            <td>
+              <CoverageIndicator
+                scan={ep.coverage?.has_scan_definition ?? false}
+                creds={ep.coverage?.has_credential_mapping ?? false}
+              />
+            </td>
+            <td title={formatAbsolute(ep.last_seen)}>{formatRelative(ep.last_seen)}</td>
+          </tr>
+        ))}
       </tbody>
     </table>
   );

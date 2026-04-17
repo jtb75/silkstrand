@@ -170,6 +170,37 @@ export const promoteAsset = (id: string, bundleId: string) =>
     body: JSON.stringify({ bundle_id: bundleId }),
   });
 
+// Asset endpoints — flat per-port list for the Endpoints tab.
+export interface AssetEndpointRow {
+  id: string;
+  asset_id: string;
+  host: string;
+  ip: string;
+  port: number;
+  protocol: string;
+  service?: string;
+  version?: string;
+  technologies?: string[];
+  findings_count: number;
+  coverage: { has_scan_definition: boolean; has_credential_mapping: boolean };
+  last_seen: string;
+}
+
+export const listAssetEndpoints = (params?: {
+  q?: string; service?: string; port?: number; source?: string;
+  page?: number; page_size?: number;
+}) => {
+  const u = new URLSearchParams();
+  if (params?.q) u.set('q', params.q);
+  if (params?.service) u.set('service', params.service);
+  if (params?.port) u.set('port', String(params.port));
+  if (params?.source) u.set('source', params.source);
+  if (params?.page) u.set('page', String(params.page));
+  if (params?.page_size) u.set('page_size', String(params.page_size));
+  const qs = u.toString();
+  return request<{ items: AssetEndpointRow[]; total: number }>(`/api/v1/asset-endpoints${qs ? `?${qs}` : ''}`);
+};
+
 // Correlation rules (ADR 003 R1b)
 import type { CorrelationRule, CorrelationRuleBody } from './types';
 export const listCorrelationRules = () =>
