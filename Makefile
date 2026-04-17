@@ -1,4 +1,4 @@
-.PHONY: dev dev-deps build test lint docker run migrate-up migrate-down clean seed seed-mssql seed-mongo jwt hash-password
+.PHONY: dev dev-deps build test lint docker run migrate-up migrate-down clean seed seed-mssql seed-mongo jwt hash-password bundle bundle-all bundle-sign
 
 # Start local dependencies (Postgres + Redis)
 dev-deps:
@@ -74,7 +74,20 @@ hash-password:
 down:
 	docker compose down
 
+# --- Bundles ---
+
+bundle:
+	@scripts/build-bundle.sh $(BUNDLE)
+
+bundle-all:
+	@scripts/build-bundle.sh cis-postgresql-16
+	@scripts/build-bundle.sh cis-mssql-2022
+	@scripts/build-bundle.sh cis-mongodb-8
+
+bundle-sign:
+	@scripts/build-bundle.sh $(BUNDLE) --sign $(SIGN_KEY)
+
 # Clean up
 clean:
 	docker compose down -v
-	rm -rf bin/
+	rm -rf bin/ dist/
