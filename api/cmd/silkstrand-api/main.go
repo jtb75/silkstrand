@@ -904,6 +904,7 @@ func handleScanResults(ctx context.Context, s store.Store, bus events.Bus, agent
 	var wrapper struct {
 		ScanID  string            `json:"scan_id"`
 		Results []json.RawMessage `json:"results"`
+		Partial bool              `json:"partial"` // ADR 010: true = more results coming, don't complete scan
 	}
 	if err := json.Unmarshal(payload, &wrapper); err != nil {
 		slog.Error("parsing scan_results payload", "agent_id", agentID, "error", err)
@@ -967,14 +968,21 @@ func handleScanResults(ctx context.Context, s store.Store, bus events.Bus, agent
 			}
 		}
 	}
-	if err := s.UpdateScanStatus(ctx, wrapper.ScanID, model.ScanStatusCompleted); err != nil {
-		slog.Error("updating scan to completed", "scan_id", wrapper.ScanID, "error", err)
+
+	// ADR 010 D5: if partial=true, write findings but keep the scan
+	// running — more control results are still coming. Only mark
+	// completed when partial is false (the default for legacy agents).
+	if !wrapper.Partial {
+		if err := s.UpdateScanStatus(ctx, wrapper.ScanID, model.ScanStatusCompleted); err != nil {
+			slog.Error("updating scan to completed", "scan_id", wrapper.ScanID, "error", err)
+		}
+		if completedScan, _ := s.GetScanByID(ctx, wrapper.ScanID); completedScan != nil {
+			handler.PublishScanStatusFromScan(ctx, bus, completedScan)
+		}
 	}
-	if completedScan, _ := s.GetScanByID(ctx, wrapper.ScanID); completedScan != nil {
-		handler.PublishScanStatusFromScan(ctx, bus, completedScan)
-	}
+
 	slog.Info("scan_results processed",
-		"agent_id", agentID, "scan_id", wrapper.ScanID, "results", len(wrapper.Results))
+		"agent_id", agentID, "scan_id", wrapper.ScanID, "results", len(wrapper.Results), "partial", wrapper.Partial)
 }
 
 func strPtr(s string) *string { return &s }

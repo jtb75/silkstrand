@@ -1,0 +1,7 @@
+id: test-control-bundle
+name: Test Control Bundle
+version: 1.0.0
+framework: test
+engine: test
+controls:
+  - test-control

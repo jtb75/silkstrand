@@ -117,6 +117,106 @@ func TestLoadManifest_MissingFile(t *testing.T) {
 	}
 }
 
+// --- BundleManifest (ADR 010) tests ---
+
+func TestReadBundleManifest(t *testing.T) {
+	tmpDir := t.TempDir()
+	data := []byte(`id: cis-postgresql-16
+name: CIS PostgreSQL 16
+version: 2.0.4
+framework: cis-postgresql-16
+engine: postgresql
+controls:
+  - pg-tls-enabled
+  - pg-log-connections
+`)
+	if err := writeTestFile(tmpDir, "bundle.yaml", data); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := ReadBundleManifest(tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m == nil {
+		t.Fatal("expected non-nil manifest")
+	}
+	if m.ID != "cis-postgresql-16" {
+		t.Errorf("ID = %q, want %q", m.ID, "cis-postgresql-16")
+	}
+	if m.Engine != "postgresql" {
+		t.Errorf("Engine = %q, want %q", m.Engine, "postgresql")
+	}
+	if len(m.Controls) != 2 {
+		t.Fatalf("Controls len = %d, want 2", len(m.Controls))
+	}
+	if m.Controls[0] != "pg-tls-enabled" {
+		t.Errorf("Controls[0] = %q, want %q", m.Controls[0], "pg-tls-enabled")
+	}
+}
+
+func TestReadBundleManifest_Missing(t *testing.T) {
+	m, err := ReadBundleManifest(t.TempDir())
+	if err != nil {
+		t.Fatalf("expected nil error for missing bundle.yaml, got: %v", err)
+	}
+	if m != nil {
+		t.Fatal("expected nil manifest for missing bundle.yaml")
+	}
+}
+
+func TestReadBundleManifest_NoControls(t *testing.T) {
+	tmpDir := t.TempDir()
+	data := []byte(`id: empty
+name: Empty
+version: 1.0.0
+framework: test
+engine: test
+controls: []
+`)
+	if err := writeTestFile(tmpDir, "bundle.yaml", data); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ReadBundleManifest(tmpDir)
+	if err == nil {
+		t.Fatal("expected error for empty controls list")
+	}
+}
+
+func TestRunControl(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+
+	_, thisFile, _, _ := runtime.Caller(0)
+	testdataDir := filepath.Join(filepath.Dir(thisFile), "testdata", "control-bundle")
+
+	r := NewPythonRunner()
+	targetConfig := json.RawMessage(`{"type": "database", "identifier": "localhost:5432"}`)
+
+	result, err := r.RunControl(context.Background(), ControlRunRequest{
+		BundlePath:   testdataDir,
+		ControlID:    "test-control",
+		Entrypoint:   "controls/test-control/check.py",
+		TargetConfig: targetConfig,
+	})
+	if err != nil {
+		t.Fatalf("RunControl error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result not valid JSON: %v", err)
+	}
+	if parsed["control_id"] != "test-control" {
+		t.Errorf("control_id = %v, want %q", parsed["control_id"], "test-control")
+	}
+	if parsed["status"] != "pass" {
+		t.Errorf("status = %v, want %q", parsed["status"], "pass")
+	}
+}
+
 func writeTestFile(dir, name string, data []byte) error {
 	return os.WriteFile(filepath.Join(dir, name), data, 0o644)
 }

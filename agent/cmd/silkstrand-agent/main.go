@@ -9,10 +9,12 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -201,7 +203,22 @@ func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunn
 		return
 	}
 
-	// Load manifest
+	// ADR 010 D5: try the new bundle.yaml manifest first for per-control execution.
+	bundleManifest, err := runner.ReadBundleManifest(bundlePath)
+	if err != nil {
+		slog.ErrorContext(ctx, "reading bundle manifest", "error", err)
+		sendError(tun, d.ScanID, "bundle manifest error: "+err.Error())
+		return
+	}
+
+	if bundleManifest != nil {
+		// Manifest-aware path: execute each control individually and
+		// stream results back as they complete.
+		handleManifestScan(ctx, tun, r, d, bundlePath, bundleManifest)
+		return
+	}
+
+	// Legacy path: no bundle.yaml — run the monolithic entrypoint.
 	manifest, err := runner.LoadManifest(bundlePath)
 	if err != nil {
 		slog.ErrorContext(ctx, "loading manifest", "error", err)
@@ -209,7 +226,6 @@ func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunn
 		return
 	}
 
-	// Execute the bundle
 	results, err := r.Run(ctx, runner.RunRequest{
 		BundlePath:   bundlePath,
 		Manifest:     manifest,
@@ -222,9 +238,74 @@ func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunn
 		return
 	}
 
-	// Send results back
 	sendResults(tun, d.ScanID, results)
 	slog.InfoContext(ctx, "scan completed", "scan_id", d.ScanID)
+}
+
+// handleManifestScan implements ADR 010 D5: iterate controls from bundle.yaml,
+// execute each one individually, and stream partial results over WSS so the
+// operator sees real-time per-control progress.
+func handleManifestScan(ctx context.Context, tun *tunnel.Tunnel, r runner.Runner, d tunnel.DirectivePayload, bundlePath string, manifest *runner.BundleManifest) {
+	total := len(manifest.Controls)
+	slog.InfoContext(ctx, "manifest-aware scan starting",
+		"scan_id", d.ScanID,
+		"bundle", manifest.Name,
+		"controls", total,
+	)
+
+	var failedControls int
+	for i, controlID := range manifest.Controls {
+		slog.InfoContext(ctx, "executing control",
+			"control", controlID,
+			"progress", fmt.Sprintf("%d/%d", i+1, total),
+		)
+
+		entrypoint := filepath.Join("controls", controlID, "check.py")
+		result, err := r.RunControl(ctx, runner.ControlRunRequest{
+			BundlePath:   bundlePath,
+			ControlID:    controlID,
+			Entrypoint:   entrypoint,
+			TargetConfig: d.TargetConfig,
+			Credentials:  d.Credentials,
+		})
+		if err != nil {
+			slog.WarnContext(ctx, "control execution failed",
+				"control", controlID,
+				"error", err,
+			)
+			failedControls++
+			// Emit an error result so the server records the failure.
+			errResult := map[string]any{
+				"control_id": controlID,
+				"status":     "error",
+				"title":      controlID,
+				"evidence":   map[string]string{"detail": err.Error()},
+			}
+			raw, _ := json.Marshal(errResult)
+			result = json.RawMessage(raw)
+		}
+
+		// Stream the single control result as a partial message.
+		sendPartialResult(tun, d.ScanID, result)
+
+		// Log the control outcome.
+		var parsed map[string]any
+		if json.Unmarshal(result, &parsed) == nil {
+			slog.InfoContext(ctx, "control completed",
+				"control", controlID,
+				"status", parsed["status"],
+			)
+		}
+	}
+
+	// Send the terminal (non-partial) message to mark the scan completed.
+	sendScanComplete(tun, d.ScanID)
+
+	slog.InfoContext(ctx, "manifest-aware scan completed",
+		"scan_id", d.ScanID,
+		"controls_total", total,
+		"controls_failed", failedControls,
+	)
 }
 
 func sendStarted(tun *tunnel.Tunnel, scanID string) {
@@ -234,6 +315,31 @@ func sendStarted(tun *tunnel.Tunnel, scanID string) {
 
 func sendResults(tun *tunnel.Tunnel, scanID string, results json.RawMessage) {
 	payload, _ := json.Marshal(tunnel.ScanResultsPayload{ScanID: scanID, Results: results})
+	tun.Send(tunnel.Message{Type: tunnel.TypeScanResults, Payload: payload})
+}
+
+// sendPartialResult streams a single control's result while keeping the
+// scan status as running on the server (partial=true).
+func sendPartialResult(tun *tunnel.Tunnel, scanID string, result json.RawMessage) {
+	// Wrap the single result in an array to match the server's expected
+	// `results: []json.RawMessage` shape.
+	wrapped, _ := json.Marshal([]json.RawMessage{result})
+	payload, _ := json.Marshal(tunnel.ScanResultsPayload{
+		ScanID:  scanID,
+		Results: wrapped,
+		Partial: true,
+	})
+	tun.Send(tunnel.Message{Type: tunnel.TypeScanResults, Payload: payload})
+}
+
+// sendScanComplete sends a terminal scan_results message with partial=false
+// and no results, signaling the server to mark the scan as completed.
+func sendScanComplete(tun *tunnel.Tunnel, scanID string) {
+	payload, _ := json.Marshal(tunnel.ScanResultsPayload{
+		ScanID:  scanID,
+		Results: json.RawMessage(`[]`),
+		Partial: false,
+	})
 	tun.Send(tunnel.Message{Type: tunnel.TypeScanResults, Payload: payload})
 }
 
