@@ -1,13 +1,25 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { useToast } from '../lib/toast';
-import { listBundles, getBundleControls, uploadBundle } from '../api/client';
-import type { Bundle, BundleControl } from '../api/types';
+import { listBundles, getBundleControls, uploadBundle, listControls } from '../api/client';
+import type { Bundle, BundleControl, ControlEntry } from '../api/types';
+import ControlDetailDrawer from '../components/ControlDetailDrawer';
+import FrameworkChip from '../components/FrameworkChip';
 
 type Tab = 'frameworks' | 'controls' | 'profiles';
 
 export default function Compliance() {
-  const [tab, setTab] = useState<Tab>('frameworks');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = (searchParams.get('tab') as Tab) || 'frameworks';
+
+  function setTab(t: Tab) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', t);
+      return next;
+    });
+  }
 
   return (
     <div>
@@ -21,7 +33,7 @@ export default function Compliance() {
 
       <div style={{ marginTop: 24 }}>
         {tab === 'frameworks' && <FrameworksTab />}
-        {tab === 'controls' && <ControlsPlaceholder />}
+        {tab === 'controls' && <ControlsTab />}
         {tab === 'profiles' && <ProfilesPlaceholder />}
       </div>
     </div>
@@ -303,16 +315,212 @@ function UploadModal({
   );
 }
 
-function ControlsPlaceholder() {
+// ---------------------------------------------------------------------------
+// Controls tab — cross-framework control browser (Level 2B)
+// ---------------------------------------------------------------------------
+
+const SEVERITY_OPTIONS = ['critical', 'high', 'medium', 'low', 'info'] as const;
+
+const ENGINE_OPTIONS = [
+  'postgresql',
+  'mssql',
+  'mongodb',
+  'mysql',
+  'host',
+  'cidr',
+  'cloud',
+] as const;
+
+function ControlsTab() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Read filter state from URL search params.
+  const framework = searchParams.get('framework') || '';
+  const engine = searchParams.get('engine') || '';
+  const severity = searchParams.get('severity') || '';
+  const tagFilter = searchParams.get('tag') || '';
+  const searchText = searchParams.get('q') || '';
+
+  const [selectedControl, setSelectedControl] = useState<ControlEntry | null>(null);
+
+  function setFilter(key: string, value: string) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set(key, value);
+      else next.delete(key);
+      // Ensure tab stays
+      if (!next.has('tab')) next.set('tab', 'controls');
+      return next;
+    });
+  }
+
+  // Fetch bundles to populate the framework dropdown options.
+  const { data: bundles } = useQuery<Bundle[]>({
+    queryKey: ['bundles'],
+    queryFn: listBundles,
+  });
+
+  const frameworkOptions = useMemo(() => {
+    if (!bundles) return [];
+    const names = new Set<string>();
+    for (const b of bundles) {
+      if (b.id !== '11111111-1111-1111-1111-111111111111' && b.framework) {
+        names.add(b.framework);
+      }
+    }
+    return Array.from(names).sort();
+  }, [bundles]);
+
+  // Fetch controls with applied filters.
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['controls', { framework, engine, severity, tag: tagFilter, q: searchText }],
+    queryFn: () =>
+      listControls({
+        framework: framework || undefined,
+        engine: engine || undefined,
+        severity: severity || undefined,
+        tag: tagFilter || undefined,
+        q: searchText || undefined,
+      }),
+  });
+
+  const controls = data?.items ?? [];
+
   return (
-    <section>
-      <h2>Controls</h2>
-      <p className="muted">
-        Cross-framework control browser coming in Level 2. This tab will show a
-        searchable, filterable catalog of all controls across all registered
-        frameworks.
-      </p>
-    </section>
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Controls</h2>
+        {data && <span className="muted">{data.total} control{data.total !== 1 ? 's' : ''}</span>}
+      </div>
+
+      {/* Filter bar */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+        <select
+          value={framework}
+          onChange={(e) => setFilter('framework', e.target.value)}
+          style={{ minWidth: 140 }}
+        >
+          <option value="">All frameworks</option>
+          {frameworkOptions.map((f) => (
+            <option key={f} value={f}>{f}</option>
+          ))}
+        </select>
+
+        <select
+          value={engine}
+          onChange={(e) => setFilter('engine', e.target.value)}
+          style={{ minWidth: 120 }}
+        >
+          <option value="">All engines</option>
+          {ENGINE_OPTIONS.map((e) => (
+            <option key={e} value={e}>{e}</option>
+          ))}
+        </select>
+
+        <select
+          value={severity}
+          onChange={(e) => setFilter('severity', e.target.value)}
+          style={{ minWidth: 110 }}
+        >
+          <option value="">All severities</option>
+          {SEVERITY_OPTIONS.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+
+        <input
+          type="text"
+          placeholder="Tag..."
+          value={tagFilter}
+          onChange={(e) => setFilter('tag', e.target.value)}
+          style={{ width: 120 }}
+        />
+
+        <input
+          type="text"
+          placeholder="Search control ID or name..."
+          value={searchText}
+          onChange={(e) => setFilter('q', e.target.value)}
+          style={{ flex: 1, minWidth: 180 }}
+        />
+      </div>
+
+      {isLoading && <p>Loading controls...</p>}
+      {error && <p className="error">Failed to load controls: {(error as Error).message}</p>}
+      {!isLoading && controls.length === 0 && (
+        <p className="muted">No controls match the current filters.</p>
+      )}
+
+      {controls.length > 0 && (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Control ID</th>
+              <th>Name</th>
+              <th>Severity</th>
+              <th>Engine</th>
+              <th>Frameworks</th>
+              <th>Tags</th>
+            </tr>
+          </thead>
+          <tbody>
+            {controls.map((c) => {
+              const versions = Array.isArray(c.engine_versions) ? c.engine_versions : [];
+              const tags = Array.isArray(c.tags) ? c.tags : [];
+              return (
+                <tr
+                  key={c.control_id}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setSelectedControl(c)}
+                >
+                  <td style={{ fontFamily: 'monospace', fontSize: 13 }}>{c.control_id}</td>
+                  <td>{c.name}</td>
+                  <td>
+                    {c.severity
+                      ? <SeverityBadge severity={c.severity} />
+                      : <span className="muted">{'\u2014'}</span>}
+                  </td>
+                  <td>
+                    <span title={versions.length > 0 ? `Versions: ${versions.join(', ')}` : ''}>
+                      {c.engine}
+                    </span>
+                  </td>
+                  <td>
+                    {c.frameworks.map((fw) => (
+                      <FrameworkChip
+                        key={`${fw.bundle_id}-${fw.section}`}
+                        bundleName={fw.bundle_name}
+                        section={fw.section}
+                      />
+                    ))}
+                  </td>
+                  <td>
+                    {tags.length > 0
+                      ? tags.map((t) => (
+                          <span
+                            key={t}
+                            className="badge"
+                            style={{ fontSize: 11, padding: '1px 6px', marginRight: 4, opacity: 0.7 }}
+                          >
+                            {t}
+                          </span>
+                        ))
+                      : <span className="muted">{'\u2014'}</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {selectedControl && (
+        <ControlDetailDrawer
+          control={selectedControl}
+          onClose={() => setSelectedControl(null)}
+        />
+      )}
+    </div>
   );
 }
 
