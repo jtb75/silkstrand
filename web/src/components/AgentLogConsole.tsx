@@ -1,27 +1,25 @@
 /**
- * AgentLogConsole — live-tail of `agent_log` events from the SSE stream.
+ * AgentLogConsole — loads persisted log history on mount, then live-tails
+ * via SSE for new events.
  *
- * Two filter modes per ADR 008 D4:
+ * Two filter modes:
+ *   { agentId }  -> all logs from a specific agent (Agents -> Console drawer)
+ *   { scanId  }  -> logs tagged with that scan_id (Scan Results -> Console tab)
  *
- *   { agentId }  → all logs from a specific agent (Agents → Console drawer)
- *   { scanId  }  → logs tagged with that scan_id (Scan Results → Console tab)
- *
- * Exactly one of the two should be set. The hook filter is built from
- * whichever is present: agentId becomes {resource_type, resource_id};
- * scanId becomes {scan_id}. Both flavors bake `kind: "agent_log"` into
- * the stream token.
+ * agentId is always required (it's the REST endpoint path param). scanId
+ * is optional and additionally scopes the history fetch + SSE filter.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useEventStream, type StreamEvent, type EventFilter } from '../lib/events';
+import { getAgentLogs, type AgentLogEntry } from '../api/client';
 import { formatAbsolute, formatRelative } from '../lib/time';
 
 export interface AgentLogConsoleProps {
   filter: { agentId?: string; scanId?: string };
 }
 
-// Payload shape the agent's slog → tunnel handler emits. See
-// `agent/internal/logstream/tunnel_handler.go` — the Handle method builds
-// {level, msg, scan_id?, attrs?}.
+// Payload shape the agent's slog -> tunnel handler emits.
 interface AgentLogPayload {
   level?: string;
   msg?: string;
@@ -29,7 +27,16 @@ interface AgentLogPayload {
   attrs?: Record<string, unknown>;
 }
 
-type LogEvent = StreamEvent<AgentLogPayload>;
+// Unified line type used for rendering. History lines come from the REST
+// response; live lines come from SSE events. We normalize both into this.
+interface LogLine {
+  key: string;
+  level: string;
+  msg: string;
+  scan_id?: string;
+  attrs?: Record<string, unknown>;
+  occurred_at: string;
+}
 
 const LEVEL_CLASS: Record<string, string> = {
   INFO: 'log-level-info',
@@ -53,7 +60,51 @@ function statusLabel(status: string) {
   }
 }
 
+function historyToLine(e: AgentLogEntry): LogLine {
+  return {
+    key: e.id,
+    level: (e.level ?? 'INFO').toUpperCase(),
+    msg: e.msg ?? '',
+    scan_id: e.scan_id,
+    attrs: e.attrs,
+    occurred_at: e.occurred_at,
+  };
+}
+
+function sseToLine(e: StreamEvent<AgentLogPayload>, idx: number): LogLine {
+  return {
+    key: `sse-${idx}-${e.occurred_at}`,
+    level: (e.payload?.level ?? 'INFO').toUpperCase(),
+    msg: e.payload?.msg ?? '',
+    scan_id: e.payload?.scan_id,
+    attrs: e.payload?.attrs,
+    occurred_at: e.occurred_at,
+  };
+}
+
 export default function AgentLogConsole({ filter }: AgentLogConsoleProps) {
+  // Load history via react-query.
+  const { data: historyData, isLoading: historyLoading } = useQuery({
+    queryKey: ['agent-logs', filter.agentId, filter.scanId],
+    queryFn: () =>
+      getAgentLogs(filter.agentId!, {
+        limit: 200,
+        order: 'asc',
+        ...(filter.scanId ? { scan_id: filter.scanId } : {}),
+      }),
+    enabled: Boolean(filter.agentId),
+    staleTime: Infinity, // history is a snapshot; SSE handles new lines
+  });
+
+  const historyLines = useMemo(
+    () => (historyData?.items ?? []).map(historyToLine),
+    [historyData],
+  );
+
+  const [sseCounter, setSseCounter] = useState(0);
+  const [historyCleared, setHistoryCleared] = useState(false);
+
+  // SSE live tail.
   const streamFilter: EventFilter = useMemo(() => {
     const f: EventFilter = { kinds: ['agent_log'] };
     if (filter.agentId) {
@@ -66,21 +117,33 @@ export default function AgentLogConsole({ filter }: AgentLogConsoleProps) {
     return f;
   }, [filter.agentId, filter.scanId]);
 
-  const { events, status, pause, resume, clear } = useEventStream<AgentLogPayload>(
+  const { events: sseEvents, status, pause, resume, clear: clearSse } = useEventStream<AgentLogPayload>(
     streamFilter,
     { enabled: Boolean(filter.agentId || filter.scanId) },
   );
 
-  // Local paused flag mirrors the hook's internal flag so we can render
-  // the button label correctly. The hook exposes pause/resume as setters;
-  // we track "what we asked for" here.
+  // Convert SSE events to LogLines.
+  const liveLines = useMemo(() => {
+    return sseEvents.map((e, i) => sseToLine(e, sseCounter + i));
+  }, [sseEvents, sseCounter]);
+
+  // Merged: history + live.
+  const allLines = useMemo(() => {
+    const base = historyCleared ? [] : historyLines;
+    return [...base, ...liveLines];
+  }, [historyCleared, historyLines, liveLines]);
+
+  // Pause / resume state.
   const [paused, setPaused] = useState(false);
   const onPause = () => { pause(); setPaused(true); };
   const onResume = () => { resume(); setPaused(false); };
+  const onClear = useCallback(() => {
+    setHistoryCleared(true);
+    clearSse();
+    setSseCounter((c) => c + sseEvents.length);
+  }, [clearSse, sseEvents.length]);
 
-  // Auto-scroll: pin to bottom unless the user has scrolled up. The
-  // "sticky" threshold is 24px — anything within that of the bottom is
-  // still considered at-bottom.
+  // Auto-scroll.
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const stickyRef = useRef(true);
 
@@ -101,11 +164,11 @@ export default function AgentLogConsole({ filter }: AgentLogConsoleProps) {
     if (stickyRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [events]);
+  }, [allLines]);
 
   const pill = statusLabel(status);
-  const showScanTag = Boolean(filter.agentId); // agent-level console flags scan-scoped lines
-  const isThrottled = (e: LogEvent) => e.payload?.msg === 'agent_log.throttled';
+  const showScanTag = Boolean(filter.agentId);
+  const isThrottled = (line: LogLine) => line.msg === 'agent_log.throttled';
 
   return (
     <div className="log-console">
@@ -113,7 +176,7 @@ export default function AgentLogConsole({ filter }: AgentLogConsoleProps) {
         <div className="log-toolbar-left">
           <span className={`log-pill ${pill.klass}`}>{pill.label}</span>
           <span className="log-meta muted">
-            {events.length} line{events.length === 1 ? '' : 's'}
+            {allLines.length} line{allLines.length === 1 ? '' : 's'}
             {paused ? ' · paused' : ''}
           </span>
         </div>
@@ -123,46 +186,46 @@ export default function AgentLogConsole({ filter }: AgentLogConsoleProps) {
           ) : (
             <button className="btn btn-sm" onClick={onPause}>Pause</button>
           )}
-          <button className="btn btn-sm" onClick={clear}>Clear</button>
+          <button className="btn btn-sm" onClick={onClear}>Clear</button>
         </div>
       </div>
 
       <div className="log-body" ref={bodyRef}>
-        {events.length === 0 ? (
-          <div className="log-empty muted">Waiting for log lines…</div>
+        {historyLoading && allLines.length === 0 ? (
+          <div className="log-empty muted">Loading log history...</div>
+        ) : allLines.length === 0 ? (
+          <div className="log-empty muted">No log lines yet.</div>
         ) : (
-          events.map((e, i) => {
-            if (isThrottled(e)) {
-              const dropped = (e.payload?.attrs?.['dropped'] ?? '?') as number | string;
-              const window = (e.payload?.attrs?.['window'] ?? '') as string;
+          allLines.map((line) => {
+            if (isThrottled(line)) {
+              const dropped = (line.attrs?.['dropped'] ?? '?') as number | string;
+              const window = (line.attrs?.['window'] ?? '') as string;
               return (
-                <div key={i} className="log-line log-line-throttled muted">
+                <div key={line.key} className="log-line log-line-throttled muted">
                   <span
                     className="log-time"
-                    title={formatAbsolute(e.occurred_at)}
+                    title={formatAbsolute(line.occurred_at)}
                   >
-                    {formatRelative(e.occurred_at)}
+                    {formatRelative(line.occurred_at)}
                   </span>{' '}
-                  <span aria-hidden="true">🕒</span>{' '}
                   <span>[throttled] dropped {dropped} line{dropped === 1 ? '' : 's'}{window ? ` over ${window}` : ''}</span>
                 </div>
               );
             }
-            const lvl = (e.payload?.level ?? 'INFO').toUpperCase();
-            const scanTag = showScanTag && e.payload?.scan_id ? e.payload.scan_id : null;
+            const scanTag = showScanTag && line.scan_id ? line.scan_id : null;
             return (
-              <div key={i} className="log-line">
+              <div key={line.key} className="log-line">
                 <span
                   className="log-time"
-                  title={formatAbsolute(e.occurred_at)}
+                  title={formatAbsolute(line.occurred_at)}
                 >
-                  {formatRelative(e.occurred_at)}
+                  {formatRelative(line.occurred_at)}
                 </span>{' '}
-                <span className={`log-badge ${levelClass(lvl)}`}>{lvl}</span>{' '}
-                <span className="log-msg">{e.payload?.msg ?? ''}</span>
+                <span className={`log-badge ${levelClass(line.level)}`}>{line.level}</span>{' '}
+                <span className="log-msg">{line.msg}</span>
                 {scanTag ? (
                   <span className="log-scan-tag" title="scan id">
-                    {' '}scan_id={scanTag.slice(0, 8)}…
+                    {' '}scan_id={scanTag.slice(0, 8)}...
                   </span>
                 ) : null}
               </div>

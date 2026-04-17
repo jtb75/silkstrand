@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS agent_log_events CASCADE;

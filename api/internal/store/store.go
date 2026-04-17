@@ -189,6 +189,12 @@ type Store interface {
 	// Notification deliveries (ADR 006 P6 — channel_source_id → credential_sources).
 	InsertNotificationDelivery(ctx context.Context, d model.NotificationDelivery) error
 
+	// --- Agent log events (persisted console lines) --------------------
+
+	InsertAgentLogEvent(ctx context.Context, in AgentLogEventInput) error
+	ListAgentLogEvents(ctx context.Context, agentID string, f AgentLogFilter) ([]model.AgentLogEvent, int, error)
+	DeleteOldAgentLogs(ctx context.Context, maxAge time.Duration) (int, error)
+
 	// --- Findings (ADR 007 D1/D2/D7) --------------------------------
 
 	UpsertFinding(ctx context.Context, in UpsertFindingInput) (*model.Finding, error)
@@ -374,6 +380,26 @@ type AssetEndpointRow struct {
 	Technologies   json.RawMessage
 	FindingsCount  int
 	LastSeen       time.Time
+}
+
+// AgentLogEventInput is what handleAgentLog passes to InsertAgentLogEvent.
+type AgentLogEventInput struct {
+	TenantID string
+	AgentID  string
+	ScanID   string // "" → NULL
+	Level    string
+	Msg      string
+	Attrs    json.RawMessage
+}
+
+// AgentLogFilter controls the query for ListAgentLogEvents.
+type AgentLogFilter struct {
+	Since  *time.Time
+	Until  *time.Time
+	Level  string
+	ScanID string
+	Limit  int
+	Order  string // "asc" or "desc"
 }
 
 // --- Context plumbing ------------------------------------------------

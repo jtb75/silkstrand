@@ -68,6 +68,17 @@ type CreateAgentRequest struct {
 	Version  string `json:"version,omitempty"`
 }
 
+// AgentLogEvent is a persisted agent log line. Partition key is occurred_at.
+type AgentLogEvent struct {
+	ID         string          `json:"id"`
+	AgentID    string          `json:"agent_id"`
+	ScanID     *string         `json:"scan_id,omitempty"`
+	Level      string          `json:"level"`
+	Msg        string          `json:"msg"`
+	Attrs      json.RawMessage `json:"attrs"`
+	OccurredAt time.Time       `json:"occurred_at"`
+}
+
 type Bundle struct {
 	ID         string    `json:"id"`
 	TenantID   *string   `json:"tenant_id,omitempty"`

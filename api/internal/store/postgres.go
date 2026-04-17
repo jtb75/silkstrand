@@ -2610,3 +2610,114 @@ func strOrEmpty(p *string) string {
 	}
 	return *p
 }
+
+// ======================================================================
+// Agent log events
+// ======================================================================
+
+func (s *PostgresStore) InsertAgentLogEvent(ctx context.Context, in AgentLogEventInput) error {
+	var scanID *string
+	if in.ScanID != "" {
+		scanID = &in.ScanID
+	}
+	attrs := in.Attrs
+	if len(attrs) == 0 {
+		attrs = json.RawMessage("{}")
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO agent_log_events (tenant_id, agent_id, scan_id, level, msg, attrs)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		in.TenantID, in.AgentID, scanID, in.Level, in.Msg, attrs)
+	if err != nil {
+		return fmt.Errorf("inserting agent log event: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListAgentLogEvents(ctx context.Context, agentID string, f AgentLogFilter) ([]model.AgentLogEvent, int, error) {
+	tenantID := TenantID(ctx)
+
+	// Build WHERE clause
+	where := "WHERE tenant_id = $1 AND agent_id = $2"
+	args := []any{tenantID, agentID}
+	idx := 3
+
+	if f.Since != nil {
+		where += fmt.Sprintf(" AND occurred_at >= $%d", idx)
+		args = append(args, *f.Since)
+		idx++
+	}
+	if f.Until != nil {
+		where += fmt.Sprintf(" AND occurred_at <= $%d", idx)
+		args = append(args, *f.Until)
+		idx++
+	}
+	if f.Level != "" {
+		where += fmt.Sprintf(" AND UPPER(level) = UPPER($%d)", idx)
+		args = append(args, f.Level)
+		idx++
+	}
+	if f.ScanID != "" {
+		where += fmt.Sprintf(" AND scan_id = $%d", idx)
+		args = append(args, f.ScanID)
+		idx++
+	}
+
+	// Count
+	var total int
+	countQ := "SELECT COUNT(*) FROM agent_log_events " + where
+	if err := s.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting agent log events: %w", err)
+	}
+
+	// Order
+	order := "DESC"
+	if f.Order == "asc" {
+		order = "ASC"
+	}
+
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	q := fmt.Sprintf(
+		`SELECT id, agent_id, scan_id, level, msg, attrs, occurred_at
+		 FROM agent_log_events %s
+		 ORDER BY occurred_at %s
+		 LIMIT $%d`, where, order, idx)
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing agent log events: %w", err)
+	}
+	defer rows.Close()
+
+	var items []model.AgentLogEvent
+	for rows.Next() {
+		var e model.AgentLogEvent
+		if err := rows.Scan(&e.ID, &e.AgentID, &e.ScanID, &e.Level, &e.Msg, &e.Attrs, &e.OccurredAt); err != nil {
+			return nil, 0, fmt.Errorf("scanning agent log event: %w", err)
+		}
+		items = append(items, e)
+	}
+	if items == nil {
+		items = []model.AgentLogEvent{}
+	}
+	return items, total, rows.Err()
+}
+
+func (s *PostgresStore) DeleteOldAgentLogs(ctx context.Context, maxAge time.Duration) (int, error) {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM agent_log_events WHERE occurred_at < NOW() - make_interval(secs => $1)`,
+		int(maxAge.Seconds()))
+	if err != nil {
+		return 0, fmt.Errorf("deleting old agent logs: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	return int(rows), nil
+}
