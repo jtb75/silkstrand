@@ -224,6 +224,7 @@ export type CredentialSourceType =
 export interface CredentialSource {
   id: string;
   tenant_id: string;
+  name: string;
   type: CredentialSourceType;
   config: Record<string, unknown>;
   created_at: string;
@@ -231,6 +232,7 @@ export interface CredentialSource {
 }
 
 export interface UpsertCredentialSourceRequest {
+  name?: string;
   type: CredentialSourceType;
   config: Record<string, unknown>;
 }
@@ -246,10 +248,10 @@ export const createCredentialSource = (req: UpsertCredentialSourceRequest) =>
     body: JSON.stringify(req),
   });
 
-export const updateCredentialSource = (id: string, config: Record<string, unknown>) =>
+export const updateCredentialSource = (id: string, body: { name?: string; config: Record<string, unknown> }) =>
   request<CredentialSource>(`/api/v1/credential-sources/${id}`, {
     method: 'PUT',
-    body: JSON.stringify({ config }),
+    body: JSON.stringify(body),
   });
 
 export const deleteCredentialSource = (id: string) =>

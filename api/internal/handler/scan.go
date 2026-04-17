@@ -102,9 +102,13 @@ func (h *ScanHandler) Create(w http.ResponseWriter, r *http.Request) {
 				ScanID:   scan.ID,
 				ScanType: scan.ScanType,
 				BundleID: bundleID,
+				TenantID: scan.TenantID,
 			}
 			if scan.TargetID != nil {
 				directive.TargetID = *scan.TargetID
+			}
+			if scan.AssetEndpointID != nil {
+				directive.AssetEndpointID = *scan.AssetEndpointID
 			}
 			if err := h.ps.PublishDirective(r.Context(), agentID, directive); err != nil {
 				slog.Error("publishing directive", "agent_id", agentID, "scan_id", scan.ID, "error", err)

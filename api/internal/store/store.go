@@ -78,12 +78,18 @@ type Store interface {
 
 	// --- Credential sources (ADR 004 C0) ----------------------------
 
-	CreateCredentialSource(ctx context.Context, tenantID, srcType string, config json.RawMessage) (string, error)
+	CreateCredentialSource(ctx context.Context, tenantID, name, srcType string, config json.RawMessage) (string, error)
 	GetCredentialSource(ctx context.Context, id string) (*model.CredentialSource, error)
 	GetCredentialSourceByTarget(ctx context.Context, targetID string) (*model.CredentialSource, error)
 	ListCredentialSources(ctx context.Context, tenantID string) ([]model.CredentialSource, error)
-	UpdateCredentialSourceConfig(ctx context.Context, id string, config json.RawMessage) error
+	UpdateCredentialSource(ctx context.Context, id, name string, config json.RawMessage) error
 	DeleteCredentialSource(ctx context.Context, id string) error
+
+	// ResolveCredentialForEndpoint finds a credential_source mapped to any
+	// collection that contains the given endpoint. Used by the scheduler
+	// and forwardDirective to attach credentials to compliance scans
+	// dispatched via collection fan-out (no per-target binding required).
+	ResolveCredentialForEndpoint(ctx context.Context, tenantID, endpointID string) (*model.CredentialSource, error)
 
 	// Credential mappings (ADR 006 P6 — collection ↔ credential_source).
 	ListCredentialMappings(ctx context.Context, tenantID string) ([]model.CredentialMapping, error)

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -776,11 +777,11 @@ func (s *PostgresStore) GetDCStats(ctx context.Context) (*model.DCStats, error) 
 // Credential sources (ADR 004 C0)
 // ======================================================================
 
-func (s *PostgresStore) CreateCredentialSource(ctx context.Context, tenantID, srcType string, config json.RawMessage) (string, error) {
+func (s *PostgresStore) CreateCredentialSource(ctx context.Context, tenantID, name, srcType string, config json.RawMessage) (string, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO credential_sources (tenant_id, type, config) VALUES ($1, $2, $3) RETURNING id`,
-		tenantID, srcType, config).Scan(&id)
+		`INSERT INTO credential_sources (tenant_id, name, type, config) VALUES ($1, $2, $3, $4) RETURNING id`,
+		tenantID, name, srcType, config).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("creating credential source: %w", err)
 	}
@@ -790,8 +791,8 @@ func (s *PostgresStore) CreateCredentialSource(ctx context.Context, tenantID, sr
 func (s *PostgresStore) GetCredentialSource(ctx context.Context, id string) (*model.CredentialSource, error) {
 	var cs model.CredentialSource
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, type, config, created_at, updated_at FROM credential_sources WHERE id = $1`, id).
-		Scan(&cs.ID, &cs.TenantID, &cs.Type, &cs.Config, &cs.CreatedAt, &cs.UpdatedAt)
+		`SELECT id, tenant_id, name, type, config, created_at, updated_at FROM credential_sources WHERE id = $1`, id).
+		Scan(&cs.ID, &cs.TenantID, &cs.Name, &cs.Type, &cs.Config, &cs.CreatedAt, &cs.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -804,10 +805,10 @@ func (s *PostgresStore) GetCredentialSource(ctx context.Context, id string) (*mo
 func (s *PostgresStore) GetCredentialSourceByTarget(ctx context.Context, targetID string) (*model.CredentialSource, error) {
 	var cs model.CredentialSource
 	err := s.db.QueryRowContext(ctx,
-		`SELECT cs.id, cs.tenant_id, cs.type, cs.config, cs.created_at, cs.updated_at
+		`SELECT cs.id, cs.tenant_id, cs.name, cs.type, cs.config, cs.created_at, cs.updated_at
 		   FROM credential_sources cs JOIN targets t ON t.credential_source_id = cs.id
 		  WHERE t.id = $1`, targetID).
-		Scan(&cs.ID, &cs.TenantID, &cs.Type, &cs.Config, &cs.CreatedAt, &cs.UpdatedAt)
+		Scan(&cs.ID, &cs.TenantID, &cs.Name, &cs.Type, &cs.Config, &cs.CreatedAt, &cs.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -817,9 +818,9 @@ func (s *PostgresStore) GetCredentialSourceByTarget(ctx context.Context, targetI
 	return &cs, nil
 }
 
-func (s *PostgresStore) UpdateCredentialSourceConfig(ctx context.Context, id string, config json.RawMessage) error {
+func (s *PostgresStore) UpdateCredentialSource(ctx context.Context, id, name string, config json.RawMessage) error {
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE credential_sources SET config = $1, updated_at = NOW() WHERE id = $2`, config, id)
+		`UPDATE credential_sources SET name = $1, config = $2, updated_at = NOW() WHERE id = $3`, name, config, id)
 	if err != nil {
 		return fmt.Errorf("updating credential source: %w", err)
 	}
@@ -828,6 +829,36 @@ func (s *PostgresStore) UpdateCredentialSourceConfig(ctx context.Context, id str
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// ResolveCredentialForEndpoint finds a static credential_source mapped
+// (via credential_mappings → collections) to any collection containing
+// the given endpoint. Returns the first match or nil.
+func (s *PostgresStore) ResolveCredentialForEndpoint(ctx context.Context, tenantID, endpointID string) (*model.CredentialSource, error) {
+	mappings, err := s.ListCredentialMappings(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing credential mappings: %w", err)
+	}
+	for _, m := range mappings {
+		members, err := s.CollectionEndpointIDs(ctx, m.CollectionID)
+		if err != nil {
+			slog.Warn("resolveCredentialForEndpoint: collection lookup failed",
+				"collection_id", m.CollectionID, "error", err)
+			continue
+		}
+		for _, id := range members {
+			if id == endpointID {
+				cs, err := s.GetCredentialSource(ctx, m.CredentialSourceID)
+				if err != nil {
+					return nil, fmt.Errorf("loading credential source %s: %w", m.CredentialSourceID, err)
+				}
+				if cs != nil && cs.Type == model.CredentialSourceTypeStatic {
+					return cs, nil
+				}
+			}
+		}
+	}
+	return nil, nil
 }
 
 func (s *PostgresStore) DeleteCredentialSource(ctx context.Context, id string) error {
@@ -983,7 +1014,7 @@ func (s *PostgresStore) DeleteCredentialForTarget(ctx context.Context, tenantID,
 
 func (s *PostgresStore) ListCredentialSources(ctx context.Context, tenantID string) ([]model.CredentialSource, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, tenant_id, type, config, created_at, updated_at
+		`SELECT id, tenant_id, name, type, config, created_at, updated_at
 		   FROM credential_sources WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("listing credential sources: %w", err)
@@ -992,7 +1023,7 @@ func (s *PostgresStore) ListCredentialSources(ctx context.Context, tenantID stri
 	out := []model.CredentialSource{}
 	for rows.Next() {
 		var cs model.CredentialSource
-		if err := rows.Scan(&cs.ID, &cs.TenantID, &cs.Type, &cs.Config, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
+		if err := rows.Scan(&cs.ID, &cs.TenantID, &cs.Name, &cs.Type, &cs.Config, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning credential source: %w", err)
 		}
 		out = append(out, cs)
