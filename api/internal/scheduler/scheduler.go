@@ -174,13 +174,21 @@ func (d Dispatcher) dispatchOne(ctx context.Context, def model.ScanDefinition, e
 	if def.Kind == model.ScanDefinitionKindDiscovery {
 		scanType = model.ScanTypeDiscovery
 	}
+	// Discovery definitions often have bundle_id=NULL (the UI doesn't
+	// require one). The scan row and the WSS forwarder both need a valid
+	// bundle FK, so default to the global discovery bundle.
+	bundleID := def.BundleID
+	if bundleID == nil && scanType == model.ScanTypeDiscovery {
+		id := model.DiscoveryBundleID
+		bundleID = &id
+	}
 	sc, err := d.Store.CreateScanForDefinition(ctx, store.CreateScanForDefinitionInput{
 		TenantID:         def.TenantID,
 		ScanDefinitionID: def.ID,
 		AgentID:          def.AgentID,
 		TargetID:         targetID,
 		AssetEndpointID:  endpointID,
-		BundleID:         def.BundleID,
+		BundleID:         bundleID,
 		ScanType:         scanType,
 	})
 	if err != nil {
