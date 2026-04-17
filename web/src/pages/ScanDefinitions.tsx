@@ -124,6 +124,8 @@ export default function ScanDefinitions() {
         map[d.id] = { status: 'running', queuedCount: 0 };
       } else if (queued.length > 0) {
         map[d.id] = { status: 'queued', queuedCount: queued.length };
+      } else if (matching.some((s) => s.status === 'pending')) {
+        map[d.id] = { status: 'pending', queuedCount: 0 };
       } else if (latest && latest.status === 'failed') {
         map[d.id] = { status: 'failed', queuedCount: 0 };
       } else {
@@ -573,6 +575,12 @@ function ScanStatusChip({ status, enabled, latestScan }: {
       return (
         <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           Queued{status.queuedCount > 1 ? ` (${status.queuedCount})` : ''}
+        </span>
+      );
+    case 'pending':
+      return (
+        <span className="badge" style={{ background: 'var(--ss-info-bg, #cffafe)', color: 'var(--ss-info, #06b6d4)' }}>
+          Dispatched
         </span>
       );
     case 'failed':
