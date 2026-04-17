@@ -10,6 +10,7 @@ import type {
   BundleControl,
   AssetListResponse,
   AssetDetailResponse,
+  ControlEntry,
 } from './types';
 
 // DC API base URL is resolved at call time from the active tenant context.
@@ -147,6 +148,23 @@ export const uploadBundle = (tarball: File, signature?: File) => {
     }
     return res.json();
   });
+};
+
+// Cross-framework control catalog (Level 2A)
+export const listControls = (params?: {
+  framework?: string; engine?: string; severity?: string;
+  tag?: string; q?: string; page?: number; page_size?: number;
+}) => {
+  const u = new URLSearchParams();
+  if (params?.framework) u.set('framework', params.framework);
+  if (params?.engine) u.set('engine', params.engine);
+  if (params?.severity) u.set('severity', params.severity);
+  if (params?.tag) u.set('tag', params.tag);
+  if (params?.q) u.set('q', params.q);
+  if (params?.page) u.set('page', String(params.page));
+  if (params?.page_size) u.set('page_size', String(params.page_size));
+  const qs = u.toString();
+  return request<{ items: ControlEntry[]; total: number }>(`/api/v1/controls${qs ? `?${qs}` : ''}`);
 };
 
 // Assets (ADR 003 R1a)

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -724,6 +725,80 @@ func (s *PostgresStore) ListBundleControls(ctx context.Context, bundleID string)
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListControls(ctx context.Context, tenantID string, filter ControlFilter) ([]ControlRow, int, error) {
+	// Build WHERE clauses dynamically.
+	where := []string{"(b.tenant_id IS NULL OR b.tenant_id = $1)"}
+	args := []interface{}{tenantID}
+	idx := 2
+
+	if filter.Framework != "" {
+		where = append(where, fmt.Sprintf("b.framework = $%d", idx))
+		args = append(args, filter.Framework)
+		idx++
+	}
+	if filter.Engine != "" {
+		where = append(where, fmt.Sprintf("bc.engine = $%d", idx))
+		args = append(args, filter.Engine)
+		idx++
+	}
+	if filter.Severity != "" {
+		where = append(where, fmt.Sprintf("bc.severity = $%d", idx))
+		args = append(args, filter.Severity)
+		idx++
+	}
+	if filter.Tag != "" {
+		where = append(where, fmt.Sprintf("bc.tags @> $%d::jsonb", idx))
+		args = append(args, fmt.Sprintf(`[%q]`, filter.Tag))
+		idx++
+	}
+	if filter.Q != "" {
+		where = append(where, fmt.Sprintf("(bc.control_id ILIKE '%%' || $%d || '%%' OR bc.name ILIKE '%%' || $%d || '%%')", idx, idx))
+		args = append(args, filter.Q)
+		idx++
+	}
+
+	whereClause := strings.Join(where, " AND ")
+
+	// Count query (distinct control_ids).
+	countQ := fmt.Sprintf(
+		`SELECT COUNT(DISTINCT bc.control_id) FROM bundle_controls bc JOIN bundles b ON b.id = bc.bundle_id WHERE %s`,
+		whereClause,
+	)
+	var total int
+	if err := s.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting controls: %w", err)
+	}
+
+	// Data query — fetch all matching rows ordered for grouping.
+	dataQ := fmt.Sprintf(
+		`SELECT bc.control_id, bc.name, bc.severity, bc.engine, bc.engine_versions, bc.tags,
+		        bc.section, b.id, b.name
+		   FROM bundle_controls bc
+		   JOIN bundles b ON b.id = bc.bundle_id
+		  WHERE %s
+		  ORDER BY bc.control_id, b.name`,
+		whereClause,
+	)
+
+	rows, err := s.db.QueryContext(ctx, dataQ, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing controls: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ControlRow
+	for rows.Next() {
+		var r ControlRow
+		if err := rows.Scan(&r.ControlID, &r.Name, &r.Severity, &r.Engine,
+			&r.EngineVersions, &r.Tags, &r.Section,
+			&r.BundleID, &r.BundleName); err != nil {
+			return nil, 0, fmt.Errorf("scanning control row: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, total, rows.Err()
 }
 
 // ======================================================================

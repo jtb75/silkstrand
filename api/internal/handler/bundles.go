@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jtb75/silkstrand/api/internal/middleware"
@@ -91,6 +92,118 @@ func (h *BundlesHandler) ListControls(w http.ResponseWriter, r *http.Request) {
 		controls = []model.BundleControl{}
 	}
 	writeJSON(w, http.StatusOK, controls)
+}
+
+// --- Cross-framework control catalog (Level 2A) ---
+
+// controlFrameworkMapping is one bundle that includes a control.
+type controlFrameworkMapping struct {
+	BundleID   string `json:"bundle_id"`
+	BundleName string `json:"bundle_name"`
+	Section    string `json:"section"`
+}
+
+// controlEntry is one control grouped across all frameworks.
+type controlEntry struct {
+	ControlID      string                    `json:"control_id"`
+	Name           string                    `json:"name"`
+	Severity       string                    `json:"severity"`
+	Engine         string                    `json:"engine"`
+	EngineVersions json.RawMessage           `json:"engine_versions"`
+	Tags           json.RawMessage           `json:"tags"`
+	Frameworks     []controlFrameworkMapping  `json:"frameworks"`
+}
+
+// ListAllControls handles GET /api/v1/controls — cross-framework control catalog.
+func (h *BundlesHandler) ListAllControls(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.TenantID == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	pageSize, _ := strconv.Atoi(q.Get("page_size"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 50
+	}
+
+	filter := store.ControlFilter{
+		Framework: q.Get("framework"),
+		Engine:    q.Get("engine"),
+		Severity:  q.Get("severity"),
+		Tag:       q.Get("tag"),
+		Q:         q.Get("q"),
+		Page:      page,
+		PageSize:  pageSize,
+	}
+
+	rows, total, err := h.store.ListControls(r.Context(), claims.TenantID, filter)
+	if err != nil {
+		slog.Error("listing controls", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list controls")
+		return
+	}
+
+	// Group rows by control_id.
+	type entryIdx struct {
+		index int
+	}
+	indexMap := make(map[string]entryIdx)
+	var entries []controlEntry
+
+	for _, row := range rows {
+		sev := ""
+		if row.Severity != nil {
+			sev = *row.Severity
+		}
+		section := ""
+		if row.Section != nil {
+			section = *row.Section
+		}
+		fm := controlFrameworkMapping{
+			BundleID:   row.BundleID,
+			BundleName: row.BundleName,
+			Section:    section,
+		}
+		if idx, ok := indexMap[row.ControlID]; ok {
+			entries[idx.index].Frameworks = append(entries[idx.index].Frameworks, fm)
+		} else {
+			entries = append(entries, controlEntry{
+				ControlID:      row.ControlID,
+				Name:           row.Name,
+				Severity:       sev,
+				Engine:         row.Engine,
+				EngineVersions: row.EngineVersions,
+				Tags:           row.Tags,
+				Frameworks:     []controlFrameworkMapping{fm},
+			})
+			indexMap[row.ControlID] = entryIdx{index: len(entries) - 1}
+		}
+	}
+
+	// Apply pagination on the grouped result.
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > len(entries) {
+		start = len(entries)
+	}
+	if end > len(entries) {
+		end = len(entries)
+	}
+	paged := entries[start:end]
+	if paged == nil {
+		paged = []controlEntry{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items": paged,
+		"total": total,
+	})
 }
 
 // bundleManifest is the parsed bundle.yaml from inside a tarball.

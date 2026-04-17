@@ -157,10 +157,11 @@ func run() error {
 	apiMux.HandleFunc("DELETE /api/v1/targets/{id}/credential", credsH.Delete)
 	apiMux.HandleFunc("POST /api/v1/targets/{id}/probe", probeH.Probe)
 
-	// Bundles
+	// Bundles + controls
 	apiMux.HandleFunc("GET /api/v1/bundles", bundlesH.List)
 	apiMux.HandleFunc("POST /api/v1/bundles/upload", bundlesH.Upload)
 	apiMux.HandleFunc("GET /api/v1/bundles/{id}/controls", bundlesH.ListControls)
+	apiMux.HandleFunc("GET /api/v1/controls", bundlesH.ListAllControls)
 
 	// Agents
 	apiMux.HandleFunc("GET /api/v1/agents/downloads", agentsH.Downloads)
