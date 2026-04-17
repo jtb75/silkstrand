@@ -270,7 +270,7 @@ func (h *BundlesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	// Build the bundle model.
 	engine := manifest.Engine
 	b := model.Bundle{
-		ID:           manifest.ID,
+		ID:           "", // let DB generate UUID; upsert by name+version
 		Name:         manifest.Name,
 		Version:      manifest.Version,
 		Framework:    manifest.Framework,
