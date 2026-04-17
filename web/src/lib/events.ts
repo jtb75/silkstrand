@@ -131,16 +131,18 @@ export function useEventStream<T = unknown>(
       }
     }
 
-    function appendEvent(raw: MessageEvent<string>) {
+    function appendEvent(raw: MessageEvent<string> | Event) {
       if (pausedRef.current) return;
+      const data = 'data' in raw ? (raw as MessageEvent).data : null;
+      if (!data) return;
       let parsed: StreamEvent<T>;
       try {
-        parsed = JSON.parse(raw.data) as StreamEvent<T>;
+        parsed = JSON.parse(data) as StreamEvent<T>;
       } catch {
-        // Malformed event — skip rather than crash. The server controls
-        // the payload shape, so this shouldn't happen in practice.
         return;
       }
+      // eslint-disable-next-line no-console
+      console.debug('[sse]', parsed.kind, parsed);
       setEvents((prev) => {
         const next = prev.length >= bufferSize
           ? prev.slice(prev.length - bufferSize + 1)
