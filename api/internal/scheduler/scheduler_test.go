@@ -71,6 +71,22 @@ func (f *fakeStore) CollectionEndpointIDs(ctx context.Context, id string) ([]str
 	return []string{"ep-1"}, nil
 }
 
+func (f *fakeStore) AgentHasRunningScan(ctx context.Context, agentID string) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeStore) UpdateScanStatus(ctx context.Context, scanID, status string) error {
+	return nil
+}
+
+func (f *fakeStore) FailStaleQueuedScans(ctx context.Context, maxAge time.Duration) (int, error) {
+	return 0, nil
+}
+
+func (f *fakeStore) OldestQueuedScanForAgent(ctx context.Context, agentID string) (*model.Scan, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) SetScanDefinitionLastRun(ctx context.Context, id string, at time.Time, status string) error {
 	if f.lastRun == nil {
 		f.lastRun = map[string]string{}
