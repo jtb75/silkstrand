@@ -105,7 +105,7 @@ func run() error {
 	scanDefsH := handler.NewScanDefinitionsHandler(pgStore, sched.D)
 	credMapH := handler.NewCredentialMappingsHandler(pgStore)
 	dashH := handler.NewDashboardHandler(pgStore)
-	profilesH := handler.NewProfilesHandler(pgStore)
+	profilesH := handler.NewProfilesHandler(pgStore, cfg.BundleControlsDir, cfg.BundleStoragePath)
 	rulesH := handler.NewCorrelationRulesHandler(pgStore)
 	eventsH := handler.NewEventsHandler(eventBus, cfg.JWTSecret)
 

@@ -17,6 +17,7 @@ type Config struct {
 	AllowedOrigins         []string // Allowed WebSocket origins (empty = allow all in dev)
 	AgentReleasesURL       string   // Public GCS base URL for agent binaries + install.sh
 	BundleStoragePath      string   // Local filesystem path for uploaded bundle tarballs (v1)
+	BundleControlsDir      string   // Path to individual controls/ directory for server-side bundle assembly
 }
 
 func Load() (*Config, error) {
@@ -42,6 +43,7 @@ func Load() (*Config, error) {
 		AllowedOrigins:         parseOrigins(getEnv("ALLOWED_ORIGINS", "")),
 		AgentReleasesURL:       getEnv("AGENT_RELEASES_URL", "https://storage.googleapis.com/silkstrand-agent-releases"),
 		BundleStoragePath:      getEnv("BUNDLE_STORAGE_PATH", ""),
+		BundleControlsDir:     getEnv("BUNDLE_CONTROLS_DIR", "./controls"),
 	}
 
 	if getEnv("ENV", "dev") == "production" {

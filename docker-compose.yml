@@ -81,7 +81,8 @@ services:
 
   api:
     build:
-      context: ./api
+      context: .
+      dockerfile: api/Dockerfile
     ports:
       - "8080:8080"
     environment:
@@ -89,6 +90,7 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: dev-secret-change-in-production
       INTERNAL_API_KEY: dev-internal-key
+      BUNDLE_CONTROLS_DIR: /app/controls
     depends_on:
       postgres:
         condition: service_healthy
