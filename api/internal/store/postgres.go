@@ -1034,7 +1034,7 @@ func (s *PostgresStore) ResolveCredentialForEndpoint(ctx context.Context, tenant
 				if err != nil {
 					return nil, fmt.Errorf("loading credential source %s: %w", m.CredentialSourceID, err)
 				}
-				if cs != nil && cs.Type == model.CredentialSourceTypeStatic {
+				if cs != nil && resolvableSourceTypes[cs.Type] {
 					return cs, nil
 				}
 			}
@@ -1043,8 +1043,17 @@ func (s *PostgresStore) ResolveCredentialForEndpoint(ctx context.Context, tenant
 	return nil, nil
 }
 
+// resolvableSourceTypes lists credential source types that can be resolved
+// at scan time. Static sources are decrypted server-side; aws_secrets_manager
+// sources are fetched from AWS server-side. Future resolvers (vault, cyberark)
+// will be added here as they ship.
+var resolvableSourceTypes = map[string]bool{
+	model.CredentialSourceTypeStatic:            true,
+	model.CredentialSourceTypeAWSSecretsManager: true,
+}
+
 // resolveBySQL executes the given query (must return credential_source columns)
-// and returns the first static credential_source or nil.
+// and returns the first resolvable credential_source or nil.
 func (s *PostgresStore) resolveBySQL(ctx context.Context, query string, args ...any) (*model.CredentialSource, error) {
 	var cs model.CredentialSource
 	var cfgRaw []byte
@@ -1056,7 +1065,7 @@ func (s *PostgresStore) resolveBySQL(ctx context.Context, query string, args ...
 	if err != nil {
 		return nil, err
 	}
-	if cs.Type != model.CredentialSourceTypeStatic {
+	if !resolvableSourceTypes[cs.Type] {
 		return nil, nil
 	}
 	if len(cfgRaw) > 0 {

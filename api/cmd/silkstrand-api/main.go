@@ -241,6 +241,7 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/credential-sources/{id}", credsH.GetSource)
 	apiMux.HandleFunc("PUT /api/v1/credential-sources/{id}", credsH.UpdateSource)
 	apiMux.HandleFunc("DELETE /api/v1/credential-sources/{id}", credsH.DeleteSource)
+	apiMux.HandleFunc("POST /api/v1/credential-sources/{id}/test", credsH.TestSource)
 
 	// Credential mappings (ADR 006 P6).
 	apiMux.HandleFunc("GET /api/v1/credential-mappings", credMapH.List)

@@ -12,6 +12,7 @@ import {
   listCollections,
   listCredentialMappings,
   listCredentialSources,
+  testCredentialSource,
   updateCredentialSource,
   type CredentialMapping,
   type CredentialSource,
@@ -73,10 +74,10 @@ export default function Credentials() {
 
       <Section
         title="Vaults"
-        description="External secret resolvers. Plumbing only -- actual secret fetch returns 501 until the resolvers ship."
+        description="External secret resolvers. AWS Secrets Manager is live; HashiCorp Vault and CyberArk are coming soon."
         sources={vaultSources}
         allowedTypes={VAULT_TYPES}
-        banner="Not yet activated -- ADR 004 C1+."
+        testableTypes={['aws_secrets_manager']}
       />
     </div>
   );
@@ -88,10 +89,10 @@ interface SectionProps {
   sources: CredentialSource[];
   allowedTypes: CredentialSourceType[];
   supportsMappings?: boolean;
-  banner?: string;
+  testableTypes?: string[];
 }
 
-function Section({ title, description, sources, allowedTypes, supportsMappings, banner }: SectionProps) {
+function Section({ title, description, sources, allowedTypes, supportsMappings, testableTypes }: SectionProps) {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
 
@@ -109,11 +110,6 @@ function Section({ title, description, sources, allowedTypes, supportsMappings, 
         </button>
       </div>
       <p className="muted" style={{ marginTop: 4 }}>{description}</p>
-      {banner && (
-        <div className="form-card" style={{ background: '#fff7ed', borderColor: '#fdba74' }}>
-          <strong>{banner}</strong>
-        </div>
-      )}
 
       {showForm && (
         <CredentialSourceForm
@@ -142,6 +138,7 @@ function Section({ title, description, sources, allowedTypes, supportsMappings, 
                 key={s.id}
                 source={s}
                 supportsMappings={!!supportsMappings}
+                testable={testableTypes?.includes(s.type) ?? false}
                 onDelete={() => {
                   if (!window.confirm(`Delete ${s.name || s.type} credential source?`)) return;
                   deleteMut.mutate(s.id);
@@ -158,10 +155,12 @@ function Section({ title, description, sources, allowedTypes, supportsMappings, 
 function SourceRow({
   source,
   supportsMappings,
+  testable,
   onDelete,
 }: {
   source: CredentialSource;
   supportsMappings: boolean;
+  testable: boolean;
   onDelete: () => void;
 }) {
   const { data: mappings } = useQuery({
@@ -171,7 +170,14 @@ function SourceRow({
   });
   const [mapScope, setMapScope] = useState<'collection' | 'asset_endpoint' | 'asset' | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; username?: string; error?: string } | null>(null);
   const mapped = (mappings ?? []).filter((m) => m.credential_source_id === source.id);
+
+  const testMut = useMutation({
+    mutationFn: () => testCredentialSource(source.id),
+    onSuccess: (data) => setTestResult(data),
+    onError: (e) => setTestResult({ success: false, error: (e as Error).message }),
+  });
 
   return (
     <>
@@ -198,12 +204,37 @@ function SourceRow({
           </td>
         )}
         <td style={{ display: 'flex', gap: 6 }}>
+          {testable && (
+            <button
+              className="btn btn-sm"
+              disabled={testMut.isPending}
+              onClick={() => { setTestResult(null); testMut.mutate(); }}
+            >
+              {testMut.isPending ? 'Testing...' : 'Test'}
+            </button>
+          )}
           <button className="btn btn-sm" onClick={() => setShowEditForm((v) => !v)}>
             {showEditForm ? 'Cancel' : 'Edit'}
           </button>
           <button className="btn btn-sm btn-danger" onClick={onDelete}>Delete</button>
         </td>
       </tr>
+      {testResult && (
+        <tr>
+          <td colSpan={supportsMappings ? 6 : 5}>
+            <div style={{
+              padding: '8px 12px',
+              fontSize: 13,
+              background: testResult.success ? '#f0fdf4' : '#fef2f2',
+              borderLeft: `3px solid ${testResult.success ? '#22c55e' : '#ef4444'}`,
+            }}>
+              {testResult.success
+                ? <>Connection successful{testResult.username ? ` (user: ${testResult.username})` : ''}</>
+                : <>Connection failed: {testResult.error}</>}
+            </div>
+          </td>
+        </tr>
+      )}
       {showEditForm && (
         <tr>
           <td colSpan={supportsMappings ? 7 : 6}>
@@ -260,6 +291,12 @@ function renderConfigSummary(s: CredentialSource): string {
   }
   if (s.type === 'slack') {
     return cfg.webhook_url === '(set)' ? 'webhook configured' : '--';
+  }
+  if (s.type === 'aws_secrets_manager') {
+    const region = typeof cfg.region === 'string' ? cfg.region : '-';
+    const arn = typeof cfg.secret_arn === 'string' ? cfg.secret_arn : '-';
+    const truncatedArn = arn.length > 40 ? arn.slice(0, 37) + '...' : arn;
+    return `region=${region}, arn=${truncatedArn}`;
   }
   return Object.entries(cfg)
     .map(([k, v]) => `${k}=${v === '(set)' ? '(set)' : JSON.stringify(v)}`)
@@ -336,6 +373,15 @@ function EditSourceForm({
         config.routing_key = (fd.get('pd_routing_key') as string).trim();
         break;
       }
+      case 'aws_secrets_manager': {
+        config.region = (fd.get('aws_region') as string).trim();
+        config.secret_arn = (fd.get('aws_secret_arn') as string).trim();
+        const roleArn = (fd.get('aws_role_arn') as string).trim();
+        if (roleArn) config.role_arn = roleArn;
+        config.secret_key_username = (fd.get('aws_key_username') as string).trim() || 'username';
+        config.secret_key_password = (fd.get('aws_key_password') as string).trim() || 'password';
+        break;
+      }
       default:
         break;
     }
@@ -383,6 +429,15 @@ function EditSourceForm({
       )}
       {source.type === 'pagerduty' && (
         <Field name="pd_routing_key" label="Routing key (blank = keep)" type="password" />
+      )}
+      {source.type === 'aws_secrets_manager' && (
+        <>
+          <Field name="aws_region" label="AWS region" defaultValue={cfg.region as string} required />
+          <Field name="aws_secret_arn" label="Secret ARN" defaultValue={cfg.secret_arn as string} required />
+          <Field name="aws_role_arn" label="Role ARN (optional)" defaultValue={cfg.role_arn as string} />
+          <Field name="aws_key_username" label="Username key" defaultValue={(cfg.secret_key_username as string | undefined) ?? 'username'} />
+          <Field name="aws_key_password" label="Password key" defaultValue={(cfg.secret_key_password as string | undefined) ?? 'password'} />
+        </>
       )}
 
       {err && <p className="error">{err}</p>}
@@ -794,9 +849,15 @@ function CredentialSourceForm({
       }
       case 'aws_secrets_manager': {
         config.region = (fd.get('aws_region') as string).trim();
-        config.aws_access_key_id = (fd.get('aws_access_key_id') as string).trim();
-        const sk = (fd.get('aws_secret_access_key') as string).trim();
-        if (sk) config.aws_secret_access_key = sk;
+        config.secret_arn = (fd.get('aws_secret_arn') as string).trim();
+        const roleArn = (fd.get('aws_role_arn') as string).trim();
+        if (roleArn) config.role_arn = roleArn;
+        config.secret_key_username = (fd.get('aws_key_username') as string).trim() || 'username';
+        config.secret_key_password = (fd.get('aws_key_password') as string).trim() || 'password';
+        if (!config.region || !config.secret_arn) {
+          setErr('Region and Secret ARN are required.');
+          return;
+        }
         break;
       }
       case 'hashicorp_vault': {
@@ -857,9 +918,11 @@ function CredentialSourceForm({
       )}
       {type === 'aws_secrets_manager' && (
         <>
-          <Field name="aws_region" label="AWS region" required />
-          <Field name="aws_access_key_id" label="Access key ID" required />
-          <Field name="aws_secret_access_key" label="Secret access key" type="password" required />
+          <Field name="aws_region" label="AWS region" required defaultValue="us-east-1" />
+          <Field name="aws_secret_arn" label="Secret ARN" required />
+          <Field name="aws_role_arn" label="Role ARN (optional, for cross-account)" />
+          <Field name="aws_key_username" label="Username key in secret JSON" defaultValue="username" />
+          <Field name="aws_key_password" label="Password key in secret JSON" defaultValue="password" />
         </>
       )}
       {type === 'hashicorp_vault' && (
