@@ -6,9 +6,10 @@ import {
   listBundles, getBundleControls, uploadBundle, listControls,
   listComplianceProfiles, createComplianceProfile, deleteComplianceProfile,
   getProfileControls, setProfileControls, publishProfile,
+  listTenantPolicies,
 } from '../api/client';
 import type { Bundle, BundleControl, ControlEntry } from '../api/types';
-import type { ComplianceProfile } from '../api/client';
+import type { ComplianceProfile, TenantPolicy } from '../api/client';
 import ControlDetailDrawer from '../components/ControlDetailDrawer';
 import FrameworkChip from '../components/FrameworkChip';
 
@@ -242,6 +243,36 @@ function SeverityBadge({ severity }: { severity: string }) {
   return <span className={cls}>{severity}</span>;
 }
 
+function PolicyProvenanceBadge({
+  controlId,
+  policyMap,
+}: {
+  controlId: string;
+  policyMap: Map<string, TenantPolicy>;
+}) {
+  const policy = policyMap.get(controlId);
+  if (!policy) return null; // builtin — no badge needed
+  if (policy.provenance === 'custom') {
+    return (
+      <span
+        className="badge"
+        style={{ background: '#dbeafe', color: '#1e40af', fontSize: 11, padding: '1px 6px' }}
+      >
+        Custom
+      </span>
+    );
+  }
+  // derived (copy-and-edit)
+  return (
+    <span
+      className="badge"
+      style={{ background: '#ede9fe', color: '#6d28d9', fontSize: 11, padding: '1px 6px' }}
+    >
+      Customized
+    </span>
+  );
+}
+
 function UploadModal({
   onSuccess,
   onCancel,
@@ -365,6 +396,24 @@ function ControlsTab() {
     queryFn: listBundles,
   });
 
+  // Tenant policy overrides — used for provenance badges.
+  // The API may not exist yet (PR 6), so we treat errors as empty.
+  const { data: tenantPolicies } = useQuery<TenantPolicy[]>({
+    queryKey: ['tenant-policies'],
+    queryFn: listTenantPolicies,
+    retry: false,
+  });
+
+  const policyMap = useMemo(() => {
+    const m = new Map<string, TenantPolicy>();
+    if (tenantPolicies) {
+      for (const p of tenantPolicies) {
+        m.set(p.control_id, p);
+      }
+    }
+    return m;
+  }, [tenantPolicies]);
+
   const frameworkOptions = useMemo(() => {
     if (!bundles) return [];
     const names = new Set<string>();
@@ -462,6 +511,7 @@ function ControlsTab() {
             <tr>
               <th>Control ID</th>
               <th>Name</th>
+              <th>Policy</th>
               <th>Severity</th>
               <th>Engine</th>
               <th>Frameworks</th>
@@ -480,6 +530,9 @@ function ControlsTab() {
                 >
                   <td style={{ fontFamily: 'monospace', fontSize: 13 }}>{c.control_id}</td>
                   <td>{c.name}</td>
+                  <td>
+                    <PolicyProvenanceBadge controlId={c.control_id} policyMap={policyMap} />
+                  </td>
                   <td>
                     {c.severity
                       ? <SeverityBadge severity={c.severity} />

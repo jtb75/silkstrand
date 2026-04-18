@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getScan, listFindings } from '../api/client';
+import { getScan, listFindings, getScanFacts } from '../api/client';
+import type { CollectedFactsEntry } from '../api/client';
 import type { Scan, ScanResult, Finding } from '../api/types';
 import AgentLogConsole from '../components/AgentLogConsole';
 
-type ResultsTab = 'overview' | 'findings' | 'console';
+type ResultsTab = 'overview' | 'findings' | 'facts' | 'console';
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{status}</span>;
@@ -162,7 +163,7 @@ export default function ScanResults() {
       <h1>Scan Results</h1>
 
       <div className="tabbar" style={{ display: 'flex', gap: 16, borderBottom: '1px solid #e5e7eb', marginBottom: 16 }}>
-        {(['overview', 'findings', 'console'] as ResultsTab[]).map((t) => (
+        {(['overview', 'findings', 'facts', 'console'] as ResultsTab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -184,10 +185,81 @@ export default function ScanResults() {
 
       {tab === 'findings' && id && <FindingsTab scanId={id} />}
       {tab === 'overview' && <ScanOverview scan={scan} /> }
+      {tab === 'facts' && id && <FactsTab scanId={id} />}
       {tab === 'console' && id && (
         <div className="scan-console-wrap">
           <AgentLogConsole filter={{ scanId: id }} />
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Facts tab — collected facts from ADR 011 collector pipeline
+// ---------------------------------------------------------------------------
+
+function FactsTab({ scanId }: { scanId: string }) {
+  const { data, isLoading, error } = useQuery<{ items: CollectedFactsEntry[] }>({
+    queryKey: ['scan-facts', scanId],
+    queryFn: () => getScanFacts(scanId),
+  });
+
+  if (isLoading) return <p>Loading facts...</p>;
+  if (error) return <p className="error">Failed to load facts: {(error as Error).message}</p>;
+
+  const items = data?.items ?? [];
+
+  if (items.length === 0) {
+    return (
+      <div className="detail-card" style={{ marginTop: 12 }}>
+        <p className="muted">
+          No facts collected — this scan used the legacy bundle runner.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {items.map((entry) => (
+        <CollectorFactsSection key={entry.collector_id} entry={entry} />
+      ))}
+    </div>
+  );
+}
+
+function CollectorFactsSection({ entry }: { entry: CollectedFactsEntry }) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <div className="detail-card" style={{ marginBottom: 16 }}>
+      <div
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+        onClick={() => setCollapsed(!collapsed)}
+      >
+        <div>
+          <strong style={{ fontFamily: 'monospace', fontSize: 14 }}>{entry.collector_id}</strong>
+          <span className="muted" style={{ marginLeft: 12, fontSize: 12 }}>
+            {new Date(entry.collected_at).toLocaleString()}
+          </span>
+        </div>
+        <span style={{ fontWeight: 600, fontSize: 16 }}>{collapsed ? '+' : '\u2212'}</span>
+      </div>
+      {!collapsed && (
+        <pre style={{
+          background: '#1e293b',
+          color: '#e2e8f0',
+          padding: 16,
+          borderRadius: 6,
+          marginTop: 12,
+          marginBottom: 0,
+          overflow: 'auto',
+          maxHeight: 500,
+          fontSize: 13,
+          lineHeight: 1.5,
+        }}>
+          {JSON.stringify(entry.facts, null, 2)}
+        </pre>
       )}
     </div>
   );
