@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jtb75/silkstrand/api/internal/audit"
 	"github.com/jtb75/silkstrand/api/internal/awssm"
 	"github.com/jtb75/silkstrand/api/internal/crypto"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
@@ -41,10 +42,11 @@ var credentialSourceTypeAllowed = map[string]bool{
 type CredentialsHandler struct {
 	store  store.Store
 	encKey []byte // optional in dev; required in prod via CREDENTIAL_ENCRYPTION_KEY
+	audit  audit.Writer
 }
 
-func NewCredentialsHandler(s store.Store, encKey []byte) *CredentialsHandler {
-	return &CredentialsHandler{store: s, encKey: encKey}
+func NewCredentialsHandler(s store.Store, encKey []byte, aw audit.Writer) *CredentialsHandler {
+	return &CredentialsHandler{store: s, encKey: encKey, audit: aw}
 }
 
 // GET /api/v1/targets/{id}/credential
@@ -304,6 +306,12 @@ func (h *CredentialsHandler) CreateSource(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to create credential source")
 		return
 	}
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventCredentialCreated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "credential_source", ResourceID: id,
+		Payload: map[string]any{"type": req.Type, "name": req.Name},
+	})
 	cs, err := h.store.GetCredentialSource(r.Context(), id)
 	if err != nil || cs == nil {
 		writeError(w, http.StatusInternalServerError, "created but read-back failed")
@@ -446,6 +454,11 @@ func (h *CredentialsHandler) UpdateSource(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to update credential source")
 		return
 	}
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventCredentialUpdated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "credential_source", ResourceID: id,
+	})
 	cs, _ := h.store.GetCredentialSource(r.Context(), id)
 	if cs == nil {
 		writeError(w, http.StatusNotFound, "credential source not found")
@@ -477,6 +490,11 @@ func (h *CredentialsHandler) DeleteSource(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to delete credential source")
 		return
 	}
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventCredentialDeleted,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "credential_source", ResourceID: id,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -530,6 +548,12 @@ func (h *CredentialsHandler) TestSource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "credential source not found")
 		return
 	}
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventCredentialTest,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "credential_source", ResourceID: id,
+		Payload: map[string]any{"type": cs.Type},
+	})
 
 	switch cs.Type {
 	case model.CredentialSourceTypeAWSSecretsManager:

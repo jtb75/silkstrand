@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jtb75/silkstrand/api/internal/audit"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -18,10 +19,11 @@ import (
 // endpoint > asset > collection.
 type CredentialMappingsHandler struct {
 	store store.Store
+	audit audit.Writer
 }
 
-func NewCredentialMappingsHandler(s store.Store) *CredentialMappingsHandler {
-	return &CredentialMappingsHandler{store: s}
+func NewCredentialMappingsHandler(s store.Store, aw audit.Writer) *CredentialMappingsHandler {
+	return &CredentialMappingsHandler{store: s, audit: aw}
 }
 
 type createMappingRequest struct {
@@ -119,6 +121,12 @@ func (h *CredentialMappingsHandler) Create(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to create credential mapping")
 		return
 	}
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventCredentialMapped,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "credential_mapping", ResourceID: m.ID,
+		Payload: map[string]any{"scope_kind": req.ScopeKind, "credential_source_id": req.CredentialSourceID},
+	})
 	writeJSON(w, http.StatusCreated, m)
 }
 
@@ -237,6 +245,11 @@ func (h *CredentialMappingsHandler) Delete(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to delete credential mapping")
 		return
 	}
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventCredentialUnmapped,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "credential_mapping", ResourceID: id,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

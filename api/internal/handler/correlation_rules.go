@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jtb75/silkstrand/api/internal/audit"
+	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	rulesengine "github.com/jtb75/silkstrand/api/internal/rules"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -19,10 +21,11 @@ import (
 // the collections table.
 type CorrelationRulesHandler struct {
 	store store.Store
+	audit audit.Writer
 }
 
-func NewCorrelationRulesHandler(s store.Store) *CorrelationRulesHandler {
-	return &CorrelationRulesHandler{store: s}
+func NewCorrelationRulesHandler(s store.Store, aw audit.Writer) *CorrelationRulesHandler {
+	return &CorrelationRulesHandler{store: s, audit: aw}
 }
 
 // CreateRuleRequest — ADR 006 D6 body shape:
@@ -105,6 +108,13 @@ func (h *CorrelationRulesHandler) Create(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to create rule")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: out.TenantID, EventType: audit.EventRuleCreated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "rule", ResourceID: out.ID,
+		Payload: map[string]any{"name": out.Name, "trigger": out.Trigger},
+	})
 	writeJSON(w, http.StatusCreated, out)
 }
 
@@ -147,6 +157,13 @@ func (h *CorrelationRulesHandler) Update(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "rule not found")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: out.TenantID, EventType: audit.EventRuleUpdated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "rule", ResourceID: out.ID,
+		Payload: map[string]any{"name": out.Name},
+	})
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -161,6 +178,12 @@ func (h *CorrelationRulesHandler) Delete(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to delete rule")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventRuleDeleted,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "rule", ResourceID: id,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
