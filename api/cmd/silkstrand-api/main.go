@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -205,6 +206,7 @@ func run() error {
 	apiMux.HandleFunc("POST /api/v1/scans", scanH.Create)
 	apiMux.HandleFunc("GET /api/v1/scans", scanH.List)
 	apiMux.HandleFunc("GET /api/v1/scans/{id}", scanH.Get)
+	apiMux.HandleFunc("GET /api/v1/scans/{id}/facts", scanH.Facts)
 	apiMux.HandleFunc("DELETE /api/v1/scans/{id}", scanH.Delete)
 
 	// Assets (ADR 006 D2) — list works against empty `assets`, detail
@@ -418,6 +420,9 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			slog.Info("discovery completed", "agent_id", agentID, "scan_id", payload.ScanID,
 				"assets_found", payload.AssetsFound, "hosts_scanned", payload.HostsScanned)
 			sched.DrainAgentQueue(ctx, agentID)
+
+		case websocket.TypeFactsCollected:
+			handleFactsCollected(ctx, s, auditW, agentID, msg.Payload)
 
 		default:
 			slog.Warn("unknown message type from agent", "agent_id", agentID, "type", msg.Type)
@@ -1051,6 +1056,66 @@ func handleScanResults(ctx context.Context, s store.Store, bus events.Bus, audit
 		"agent_id", agentID, "scan_id", wrapper.ScanID, "results", len(wrapper.Results), "partial", wrapper.Partial)
 }
 
+// handleFactsCollected stores raw collector facts (ADR 011 D5). Policy
+// evaluation is deferred to PR 2 — this handler only persists and audits.
+func handleFactsCollected(ctx context.Context, s store.Store, auditW audit.Writer, agentID string, payload json.RawMessage) {
+	var p websocket.FactsCollectedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		slog.Error("parsing facts_collected payload", "agent_id", agentID, "error", err)
+		return
+	}
+	if p.ScanID == "" || p.CollectorID == "" {
+		slog.Warn("facts_collected missing scan_id or collector_id", "agent_id", agentID)
+		return
+	}
+
+	scan, err := s.GetScanByID(ctx, p.ScanID)
+	if err != nil || scan == nil {
+		slog.Error("facts_collected scan lookup failed", "scan_id", p.ScanID, "error", err)
+		return
+	}
+
+	endpointID := ""
+	if scan.AssetEndpointID != nil {
+		endpointID = *scan.AssetEndpointID
+	}
+	if endpointID == "" {
+		slog.Warn("facts_collected scan has no asset_endpoint_id, skipping", "scan_id", p.ScanID)
+		return
+	}
+
+	id := generateUUID()
+	now := time.Now().UTC()
+	f := model.CollectedFacts{
+		ID:              id,
+		TenantID:        scan.TenantID,
+		AssetEndpointID: endpointID,
+		ScanID:          p.ScanID,
+		CollectorID:     p.CollectorID,
+		Facts:           p.Facts,
+		CollectedAt:     now,
+	}
+	if err := s.InsertCollectedFacts(ctx, f); err != nil {
+		slog.Error("inserting collected facts", "scan_id", p.ScanID, "error", err)
+		return
+	}
+
+	slog.Info("facts collected", "scan_id", p.ScanID, "collector_id", p.CollectorID)
+
+	auditW.Emit(ctx, audit.Event{
+		TenantID:     scan.TenantID,
+		EventType:    audit.EventFactsCollected,
+		ActorType:    audit.ActorAgent,
+		ActorID:      agentID,
+		ResourceType: "scan",
+		ResourceID:   p.ScanID,
+		Payload: map[string]any{
+			"collector_id":      p.CollectorID,
+			"asset_endpoint_id": endpointID,
+		},
+	})
+}
+
 func strPtr(s string) *string { return &s }
 func derefStr(p *string) string {
 	if p == nil {
@@ -1059,3 +1124,13 @@ func derefStr(p *string) string {
 	return *p
 }
 func derefStrAsset(p *string) string { return derefStr(p) }
+
+// generateUUID produces a random v4 UUID string.
+func generateUUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 1
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}

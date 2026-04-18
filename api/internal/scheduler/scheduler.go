@@ -86,6 +86,13 @@ func (s *Scheduler) Tick(ctx context.Context) {
 		slog.Info("scheduler.agent_log_purge", "deleted", n)
 	}
 
+	// Purge collected facts older than 30 days (ADR 011 D4).
+	if n, err := s.D.Store.DeleteOldCollectedFacts(ctx, 30*24*time.Hour); err != nil {
+		slog.Error("scheduler.facts_purge", "error", err)
+	} else if n > 0 {
+		slog.Info("scheduler.facts_purge", "deleted", n)
+	}
+
 	now := time.Now().UTC()
 	claimed, err := s.D.Store.ClaimDueScanDefinitions(ctx, now, nextRun, 32)
 	if err != nil {

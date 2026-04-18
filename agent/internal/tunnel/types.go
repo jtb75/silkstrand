@@ -23,6 +23,7 @@ const (
 	TypeAllowlistSnapshot      = "allowlist_snapshot"      // ADR 003 D11 — agent → server informational
 	TypeCredentialTest         = "credential_test"         // server → agent: test a credential source
 	TypeCredentialTestResult   = "credential_test_result"  // agent → server: result of credential test
+	TypeFactsCollected         = "facts_collected"         // ADR 011 — agent → server: raw collector facts
 )
 
 // AllowlistSnapshotPayload is the agent's most recently reported

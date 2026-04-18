@@ -502,6 +502,20 @@ const (
 	ProfileStatusPublished = "published"
 )
 
+// ----- Collected facts (ADR 011 D4) ------------------------------
+
+// CollectedFacts stores raw facts collected by an agent-side collector
+// before policy evaluation. 30-day retention, partitioned by collected_at.
+type CollectedFacts struct {
+	ID              string          `json:"id"`
+	TenantID        string          `json:"tenant_id"`
+	AssetEndpointID string          `json:"asset_endpoint_id"`
+	ScanID          string          `json:"scan_id"`
+	CollectorID     string          `json:"collector_id"`
+	Facts           json.RawMessage `json:"facts"`
+	CollectedAt     time.Time       `json:"collected_at"`
+}
+
 // ----- Agent statuses (unchanged) --------------------------------
 
 const (

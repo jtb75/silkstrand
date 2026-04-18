@@ -148,6 +148,41 @@ func (h *ScanHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Facts returns the collected facts for a scan (ADR 011 PR 1).
+func (h *ScanHandler) Facts(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	scan, err := h.store.GetScan(r.Context(), id)
+	if err != nil {
+		slog.Error("getting scan for facts", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to get scan")
+		return
+	}
+	if scan == nil {
+		writeError(w, http.StatusNotFound, "scan not found")
+		return
+	}
+	facts, err := h.store.GetCollectedFactsByScan(r.Context(), id)
+	if err != nil {
+		slog.Error("listing collected facts", "error", err, "scan_id", id)
+		writeError(w, http.StatusInternalServerError, "failed to list facts")
+		return
+	}
+	type factsEntry struct {
+		CollectorID string          `json:"collector_id"`
+		Facts       json.RawMessage `json:"facts"`
+		CollectedAt string          `json:"collected_at"`
+	}
+	items := make([]factsEntry, 0, len(facts))
+	for _, f := range facts {
+		items = append(items, factsEntry{
+			CollectorID: f.CollectorID,
+			Facts:       f.Facts,
+			CollectedAt: f.CollectedAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 // publishScanStatus emits a scan_status event on the bus so SSE
 // subscribers (toast notifications, cache invalidation) get real-time
 // scan state changes. Non-blocking; failures are logged and swallowed.

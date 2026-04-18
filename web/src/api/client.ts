@@ -583,6 +583,17 @@ export const probeTarget = (targetId: string) =>
     { method: 'POST' },
   );
 
+// ─── ADR 011 — Collected facts ────────────────────────────────────────────
+
+export interface CollectedFactsEntry {
+  collector_id: string;
+  facts: Record<string, unknown>;
+  collected_at: string;
+}
+
+export const getScanFacts = (scanId: string) =>
+  request<{ items: CollectedFactsEntry[] }>(`/api/v1/scans/${scanId}/facts`);
+
 // ─── ADR 007 — Scan definitions + Findings ───────────────────────────────
 import type {
   ScanDefinition,
