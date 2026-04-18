@@ -52,19 +52,28 @@ type ProbeResultPayload struct {
 	Detail  string `json:"detail,omitempty"`
 }
 
+// CredentialResolverConfig tells the agent to resolve credentials
+// locally (e.g. from an on-prem Vault) instead of receiving
+// pre-resolved plaintext from the server.
+type CredentialResolverConfig struct {
+	Type   string          `json:"type"`   // "hashicorp_vault"
+	Config json.RawMessage `json:"config"` // resolver-specific config
+}
+
 // DirectivePayload is sent from server to agent with scan instructions.
 type DirectivePayload struct {
-	ScanID           string          `json:"scan_id"`
-	ScanType         string          `json:"scan_type,omitempty"` // "compliance" (default) | "discovery"
-	BundleID         string          `json:"bundle_id"`
-	BundleName       string          `json:"bundle_name"`
-	BundleVersion    string          `json:"bundle_version"`
-	BundleURL        string          `json:"bundle_url,omitempty"`
-	TargetID         string          `json:"target_id"`
-	TargetType       string          `json:"target_type"`
-	TargetIdentifier string          `json:"target_identifier"`
-	TargetConfig     json.RawMessage `json:"target_config"`
-	Credentials      json.RawMessage `json:"credentials,omitempty"` // empty for discovery
+	ScanID             string                    `json:"scan_id"`
+	ScanType           string                    `json:"scan_type,omitempty"` // "compliance" (default) | "discovery"
+	BundleID           string                    `json:"bundle_id"`
+	BundleName         string                    `json:"bundle_name"`
+	BundleVersion      string                    `json:"bundle_version"`
+	BundleURL          string                    `json:"bundle_url,omitempty"`
+	TargetID           string                    `json:"target_id"`
+	TargetType         string                    `json:"target_type"`
+	TargetIdentifier   string                    `json:"target_identifier"`
+	TargetConfig       json.RawMessage           `json:"target_config"`
+	Credentials        json.RawMessage           `json:"credentials,omitempty"`          // empty for discovery; set when server resolves
+	CredentialResolver *CredentialResolverConfig  `json:"credential_resolver,omitempty"`  // set for agent-side resolution (on-prem vault)
 }
 
 // AssetDiscoveredPayload is sent from agent to server during a discovery
@@ -117,19 +126,20 @@ type HeartbeatPayload struct {
 }
 
 // NewDirectiveMessage creates a Message containing an enriched scan directive.
-func NewDirectiveMessage(scanID, scanType, bundleID, bundleName, bundleVersion, bundleURL, targetID, targetType, targetIdentifier string, targetConfig, credentials json.RawMessage) Message {
+func NewDirectiveMessage(scanID, scanType, bundleID, bundleName, bundleVersion, bundleURL, targetID, targetType, targetIdentifier string, targetConfig, credentials json.RawMessage, resolver *CredentialResolverConfig) Message {
 	payload := DirectivePayload{
-		ScanID:           scanID,
-		ScanType:         scanType,
-		BundleID:         bundleID,
-		BundleName:       bundleName,
-		BundleVersion:    bundleVersion,
-		BundleURL:        bundleURL,
-		TargetID:         targetID,
-		TargetType:       targetType,
-		TargetIdentifier: targetIdentifier,
-		TargetConfig:     targetConfig,
-		Credentials:      credentials,
+		ScanID:             scanID,
+		ScanType:           scanType,
+		BundleID:           bundleID,
+		BundleName:         bundleName,
+		BundleVersion:      bundleVersion,
+		BundleURL:          bundleURL,
+		TargetID:           targetID,
+		TargetType:         targetType,
+		TargetIdentifier:   targetIdentifier,
+		TargetConfig:       targetConfig,
+		Credentials:        credentials,
+		CredentialResolver: resolver,
 	}
 	data, _ := json.Marshal(payload)
 	return Message{Type: TypeDirective, Payload: data}

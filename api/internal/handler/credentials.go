@@ -601,9 +601,12 @@ func (h *CredentialsHandler) TestSource(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			slog.Warn("credential_source.test",
 				"source_id", cs.ID, "type", cs.Type, "error", err)
+			// On-prem vaults are typically unreachable from Cloud Run.
+			// Return a helpful message explaining agent-side resolution.
 			writeJSON(w, http.StatusOK, map[string]any{
 				"success": false,
 				"error":   err.Error(),
+				"hint":    "If this Vault is on-prem, the agent will resolve this credential at scan time using its local network. Server-side test connectivity is expected to fail for on-prem Vault instances.",
 			})
 			return
 		}

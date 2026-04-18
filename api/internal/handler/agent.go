@@ -16,7 +16,6 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/audit"
 	"github.com/jtb75/silkstrand/api/internal/awssm"
 	"github.com/jtb75/silkstrand/api/internal/crypto"
-	"github.com/jtb75/silkstrand/api/internal/vault"
 	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
@@ -263,8 +262,12 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 		scanType = "compliance"
 	}
 	var creds json.RawMessage
+	var resolver *websocket.CredentialResolverConfig
 	if scanType == "compliance" {
-		creds = h.fetchCredentialForDirective(ctx, d)
+		if res := h.fetchCredentialForDirective(ctx, d); res != nil {
+			creds = res.Credentials
+			resolver = res.Resolver
+		}
 	}
 
 	var bundleURL string
@@ -273,7 +276,7 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 	}
 	msg := websocket.NewDirectiveMessage(
 		d.ScanID, scanType, d.BundleID, bundle.Name, bundle.Version, bundleURL,
-		targetID, targetType, targetIdentifier, targetConfig, creds,
+		targetID, targetType, targetIdentifier, targetConfig, creds, resolver,
 	)
 
 	if err := h.hub.Send(agentID, msg); err != nil {
@@ -283,7 +286,7 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 	}
 }
 
-func (h *AgentHandler) fetchCredentialForDirective(ctx context.Context, d pubsub.Directive) json.RawMessage {
+func (h *AgentHandler) fetchCredentialForDirective(ctx context.Context, d pubsub.Directive) *credentialResolution {
 	// 1. Try the target-level credential_source (direct binding).
 	if d.TargetID != "" {
 		cs, err := h.store.GetCredentialSourceByTarget(ctx, d.TargetID)
@@ -319,13 +322,25 @@ func (h *AgentHandler) fetchCredentialForDirective(ctx context.Context, d pubsub
 	return nil
 }
 
-// resolveCredentialSource dispatches on the source type and returns
-// the plaintext credential JSON to embed in the directive. Returns
-// nil on failure (errors are logged).
-func (h *AgentHandler) resolveCredentialSource(ctx context.Context, cs *model.CredentialSource, scanID, ref, via string) json.RawMessage {
+// credentialResolution holds the result of resolving a credential source.
+// Exactly one of Credentials or Resolver is non-nil on success.
+type credentialResolution struct {
+	Credentials json.RawMessage
+	Resolver    *websocket.CredentialResolverConfig
+}
+
+// resolveCredentialSource dispatches on the source type. For cloud
+// resolvers (static, aws_secrets_manager) it returns plaintext
+// credentials. For on-prem resolvers (hashicorp_vault) it returns
+// the resolver config so the agent can resolve locally.
+func (h *AgentHandler) resolveCredentialSource(ctx context.Context, cs *model.CredentialSource, scanID, ref, via string) *credentialResolution {
 	switch cs.Type {
 	case model.CredentialSourceTypeStatic:
-		return h.decryptStaticSource(cs, scanID, ref)
+		creds := h.decryptStaticSource(cs, scanID, ref)
+		if creds == nil {
+			return nil
+		}
+		return &credentialResolution{Credentials: creds}
 
 	case model.CredentialSourceTypeAWSSecretsManager:
 		var cfg awssm.ResolveConfig
@@ -353,35 +368,25 @@ func (h *AgentHandler) resolveCredentialSource(ctx context.Context, cs *model.Cr
 			ActorType: audit.ActorSystem, ResourceType: "credential_source", ResourceID: cs.ID,
 			Payload: map[string]any{"source_type": "aws_secrets_manager", "scan_id": scanID, "via": via},
 		})
-		return credJSON
+		return &credentialResolution{Credentials: credJSON}
 
 	case model.CredentialSourceTypeHashiCorpVault:
-		var cfg vault.ResolveConfig
-		if err := json.Unmarshal(cs.Config, &cfg); err != nil {
-			slog.Error("credential.fetch.vault_parse_config",
-				"source_id", cs.ID, "scan_id", scanID, "error", err)
-			return nil
-		}
-		cred, err := vault.Resolve(ctx, cfg)
-		if err != nil {
-			slog.Error("credential.fetch.vault_resolve",
-				"source_id", cs.ID, "scan_id", scanID, "via", via,
-				"outcome", "error", "error", err)
-			return nil
-		}
-		credJSON, _ := json.Marshal(map[string]string{
-			"username": cred.Username,
-			"password": cred.Password,
-		})
+		// On-prem vault — agent resolves at scan time. Pass the
+		// resolver config through so the directive carries it.
 		slog.Info("credential.fetch",
 			"source_type", "hashicorp_vault", "source_id", cs.ID,
-			"scan_id", scanID, "via", via, "outcome", "ok")
+			"scan_id", scanID, "via", via, "outcome", "agent_side")
 		h.audit.Emit(ctx, audit.Event{
 			TenantID: cs.TenantID, EventType: audit.EventCredentialFetch,
 			ActorType: audit.ActorSystem, ResourceType: "credential_source", ResourceID: cs.ID,
-			Payload: map[string]any{"source_type": "hashicorp_vault", "scan_id": scanID, "via": via},
+			Payload: map[string]any{"source_type": "hashicorp_vault", "scan_id": scanID, "via": via, "resolution": "agent_side"},
 		})
-		return credJSON
+		return &credentialResolution{
+			Resolver: &websocket.CredentialResolverConfig{
+				Type:   "hashicorp_vault",
+				Config: cs.Config,
+			},
+		}
 
 	default:
 		slog.Warn("credential.fetch.unsupported_type",
