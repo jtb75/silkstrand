@@ -26,6 +26,8 @@ resource "google_storage_bucket" "bundles" {
   name     = "silkstrand-${var.environment}-bundles"
   location = var.region
 
+  force_destroy = true
+
   versioning {
     enabled = true
   }
@@ -53,6 +55,8 @@ resource "google_storage_bucket" "agent_releases" {
   project  = var.project_id
   name     = "silkstrand-agent-releases"
   location = var.region
+
+  force_destroy = true
 
   uniform_bucket_level_access = true
 
@@ -111,6 +115,8 @@ resource "google_storage_bucket" "runtimes" {
   project  = var.project_id
   name     = "silkstrand-runtimes"
   location = var.region
+
+  force_destroy = true
 
   uniform_bucket_level_access = true
 
