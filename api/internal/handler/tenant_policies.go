@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/open-policy-agent/opa/rego"
+	"github.com/open-policy-agent/opa/v1/rego"
 	"gopkg.in/yaml.v3"
 
 	"github.com/jtb75/silkstrand/api/internal/model"
@@ -334,7 +334,7 @@ func (h *TenantPoliciesHandler) CopyFromBuiltin(w http.ResponseWriter, r *http.R
 
 // defaultJSONArray returns the input if non-nil, otherwise []byte("[]").
 func defaultJSONArray(v json.RawMessage) json.RawMessage {
-	if v == nil || len(v) == 0 {
+	if len(v) == 0 {
 		return json.RawMessage("[]")
 	}
 	return v

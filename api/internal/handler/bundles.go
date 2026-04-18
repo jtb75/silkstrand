@@ -632,7 +632,7 @@ func (h *BundlesHandler) GetControlRego(w http.ResponseWriter, r *http.Request) 
 	}
 	// Sanitise: control IDs are alphanumeric + dots/dashes/underscores.
 	for _, c := range controlID {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '.' && c != '-' && c != '_' {
 			writeError(w, http.StatusBadRequest, "invalid control_id")
 			return
 		}
