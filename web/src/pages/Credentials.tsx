@@ -7,6 +7,7 @@ import {
   createCredentialSource,
   deleteCredentialMapping,
   deleteCredentialSource,
+  listAgents,
   listAssetEndpoints,
   listAssets,
   listCollections,
@@ -18,6 +19,7 @@ import {
   type CredentialSource,
   type CredentialSourceType,
 } from '../api/client';
+import type { Agent } from '../api/types';
 
 // Consolidated Credentials surface (P5-b). Three sections, one page:
 //
@@ -170,14 +172,8 @@ function SourceRow({
   });
   const [mapScope, setMapScope] = useState<'collection' | 'asset_endpoint' | 'asset' | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; username?: string; error?: string } | null>(null);
+  const [showTestModal, setShowTestModal] = useState(false);
   const mapped = (mappings ?? []).filter((m) => m.credential_source_id === source.id);
-
-  const testMut = useMutation({
-    mutationFn: () => testCredentialSource(source.id),
-    onSuccess: (data) => setTestResult(data),
-    onError: (e) => setTestResult({ success: false, error: (e as Error).message }),
-  });
 
   return (
     <>
@@ -207,10 +203,9 @@ function SourceRow({
           {testable && (
             <button
               className="btn btn-sm"
-              disabled={testMut.isPending}
-              onClick={() => { setTestResult(null); testMut.mutate(); }}
+              onClick={() => setShowTestModal(true)}
             >
-              {testMut.isPending ? 'Testing...' : 'Test'}
+              Test
             </button>
           )}
           <button className="btn btn-sm" onClick={() => setShowEditForm((v) => !v)}>
@@ -219,19 +214,13 @@ function SourceRow({
           <button className="btn btn-sm btn-danger" onClick={onDelete}>Delete</button>
         </td>
       </tr>
-      {testResult && (
+      {showTestModal && (
         <tr>
           <td colSpan={supportsMappings ? 6 : 5}>
-            <div style={{
-              padding: '8px 12px',
-              fontSize: 13,
-              background: testResult.success ? '#f0fdf4' : '#fef2f2',
-              borderLeft: `3px solid ${testResult.success ? '#22c55e' : '#ef4444'}`,
-            }}>
-              {testResult.success
-                ? <>Connection successful{testResult.username ? ` (user: ${testResult.username})` : ''}</>
-                : <>Connection failed: {testResult.error}</>}
-            </div>
+            <TestCredentialModal
+              source={source}
+              onClose={() => setShowTestModal(false)}
+            />
           </td>
         </tr>
       )}
@@ -276,6 +265,145 @@ function SourceRow({
         </tr>
       )}
     </>
+  );
+}
+
+// Types that should default to agent-side testing (on-prem resolvers).
+const AGENT_DEFAULT_TYPES: string[] = ['hashicorp_vault', 'cyberark'];
+// Types that should default to server-side testing.
+const SERVER_DEFAULT_TYPES: string[] = ['aws_secrets_manager', 'static'];
+
+function TestCredentialModal({
+  source,
+  onClose,
+}: {
+  source: CredentialSource;
+  onClose: () => void;
+}) {
+  const defaultMode = AGENT_DEFAULT_TYPES.includes(source.type) ? 'agent' : 'server';
+  const [mode, setMode] = useState<'server' | 'agent'>(defaultMode);
+  const [selectedAgent, setSelectedAgent] = useState<string>('');
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    username?: string;
+    error?: string;
+    hint?: string;
+    duration_ms?: number;
+  } | null>(null);
+
+  const { data: agents } = useQuery({
+    queryKey: ['agents'],
+    queryFn: listAgents,
+    enabled: mode === 'agent',
+  });
+
+  const connectedAgents = (agents ?? []).filter(
+    (a: Agent) => a.status === 'connected' || a.status === 'online',
+  );
+
+  const testMut = useMutation({
+    mutationFn: () =>
+      testCredentialSource(source.id, mode === 'agent' ? selectedAgent : undefined),
+    onSuccess: (data) => setTestResult(data),
+    onError: (e) => setTestResult({ success: false, error: (e as Error).message }),
+  });
+
+  const canRun = mode === 'server' || (mode === 'agent' && selectedAgent !== '');
+
+  return (
+    <div style={{
+      border: '1px solid var(--border-color, #e2e8f0)',
+      borderRadius: 6,
+      padding: 16,
+      background: 'var(--surface-color, #fff)',
+      marginTop: 4,
+      marginBottom: 4,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <strong>Test Credential</strong>
+        <button className="btn btn-sm" onClick={onClose} style={{ fontSize: 12 }}>Close</button>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 13, marginBottom: 6, fontWeight: 500 }}>Test from:</div>
+        <label style={{ display: 'block', cursor: 'pointer', marginBottom: 4 }}>
+          <input
+            type="radio"
+            name={`test-mode-${source.id}`}
+            checked={mode === 'server'}
+            onChange={() => { setMode('server'); setTestResult(null); }}
+            style={{ marginRight: 6 }}
+          />
+          Server
+          {SERVER_DEFAULT_TYPES.includes(source.type) && <span className="muted" style={{ fontSize: 11, marginLeft: 4 }}>(recommended)</span>}
+        </label>
+        <label style={{ display: 'block', cursor: 'pointer' }}>
+          <input
+            type="radio"
+            name={`test-mode-${source.id}`}
+            checked={mode === 'agent'}
+            onChange={() => { setMode('agent'); setTestResult(null); }}
+            style={{ marginRight: 6 }}
+          />
+          Agent
+          {AGENT_DEFAULT_TYPES.includes(source.type) && <span className="muted" style={{ fontSize: 11, marginLeft: 4 }}>(recommended for on-prem)</span>}
+        </label>
+      </div>
+
+      {mode === 'agent' && (
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 13, fontWeight: 500 }}>Agent:</label>
+          <select
+            value={selectedAgent}
+            onChange={(e) => setSelectedAgent(e.target.value)}
+            style={{ display: 'block', marginTop: 4, width: '100%', maxWidth: 300 }}
+          >
+            <option value="">Select an agent...</option>
+            {connectedAgents.map((a: Agent) => (
+              <option key={a.id} value={a.id}>
+                {a.name || a.id.slice(0, 8)} (connected)
+              </option>
+            ))}
+          </select>
+          {connectedAgents.length === 0 && agents && (
+            <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              No connected agents available.
+            </p>
+          )}
+        </div>
+      )}
+
+      <button
+        className="btn btn-primary btn-sm"
+        disabled={testMut.isPending || !canRun}
+        onClick={() => { setTestResult(null); testMut.mutate(); }}
+      >
+        {testMut.isPending ? 'Testing...' : 'Run Test'}
+      </button>
+
+      {testResult && (
+        <div style={{
+          marginTop: 12,
+          padding: '8px 12px',
+          fontSize: 13,
+          background: testResult.success ? '#f0fdf4' : '#fef2f2',
+          borderLeft: `3px solid ${testResult.success ? '#22c55e' : '#ef4444'}`,
+          borderRadius: 4,
+        }}>
+          {testResult.success
+            ? <>Success{testResult.username ? ` -- username: ${testResult.username}` : ''}</>
+            : <>Failed: {testResult.error}</>}
+          {testResult.duration_ms != null && (
+            <span className="muted" style={{ marginLeft: 8, fontSize: 11 }}>
+              ({testResult.duration_ms}ms)
+            </span>
+          )}
+          {testResult.hint && (
+            <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>{testResult.hint}</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

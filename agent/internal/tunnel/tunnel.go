@@ -36,6 +36,9 @@ type Tunnel struct {
 	OnUpgrade func(UpgradePayload)
 	// OnProbe is called when the server asks for a target connectivity test.
 	OnProbe func(ProbePayload)
+	// OnCredentialTest is called when the server asks to test a credential
+	// source using the agent's local network (e.g. on-prem Vault).
+	OnCredentialTest func(CredentialTestPayload)
 
 	conn   *websocket.Conn
 	sendCh chan Message
@@ -209,6 +212,15 @@ func (t *Tunnel) readLoop(ctx context.Context, conn *websocket.Conn) error {
 			}
 			if t.OnProbe != nil {
 				t.OnProbe(p)
+			}
+		case TypeCredentialTest:
+			var ct CredentialTestPayload
+			if err := json.Unmarshal(msg.Payload, &ct); err != nil {
+				slog.Error("invalid credential_test payload", "error", err)
+				continue
+			}
+			if t.OnCredentialTest != nil {
+				t.OnCredentialTest(ct)
 			}
 		default:
 			slog.Debug("unhandled message type", "type", msg.Type)

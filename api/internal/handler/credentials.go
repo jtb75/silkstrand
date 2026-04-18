@@ -1,20 +1,25 @@
 package handler
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/jtb75/silkstrand/api/internal/audit"
 	"github.com/jtb75/silkstrand/api/internal/awssm"
 	"github.com/jtb75/silkstrand/api/internal/crypto"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
+	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/store"
 	"github.com/jtb75/silkstrand/api/internal/vault"
+	"github.com/jtb75/silkstrand/api/internal/websocket"
 )
 
 var base64Enc = base64.StdEncoding
@@ -44,10 +49,11 @@ type CredentialsHandler struct {
 	store  store.Store
 	encKey []byte // optional in dev; required in prod via CREDENTIAL_ENCRYPTION_KEY
 	audit  audit.Writer
+	ps     *pubsub.PubSub // for agent-side credential tests
 }
 
-func NewCredentialsHandler(s store.Store, encKey []byte, aw audit.Writer) *CredentialsHandler {
-	return &CredentialsHandler{store: s, encKey: encKey, audit: aw}
+func NewCredentialsHandler(s store.Store, encKey []byte, aw audit.Writer, ps *pubsub.PubSub) *CredentialsHandler {
+	return &CredentialsHandler{store: s, encKey: encKey, audit: aw, ps: ps}
 }
 
 // GET /api/v1/targets/{id}/credential
@@ -535,10 +541,16 @@ func validateAWSSecretsManagerConfig(raw json.RawMessage) error {
 	return nil
 }
 
+const credentialTestTimeout = 15 * time.Second
+
 // TestSource — POST /api/v1/credential-sources/{id}/test
 // Attempts to resolve the credential source and returns success/failure.
 // For aws_secrets_manager: calls AWS to fetch the secret and extract
 // username + password. Returns the username (never the password) on success.
+//
+// When ?agent_id=xxx is provided, the test is forwarded to the agent via
+// Redis pub/sub (same pattern as probes). This is required for on-prem
+// vaults that are unreachable from Cloud Run.
 func (h *CredentialsHandler) TestSource(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil || claims.TenantID == "" {
@@ -562,6 +574,13 @@ func (h *CredentialsHandler) TestSource(w http.ResponseWriter, r *http.Request) 
 		ResourceType: "credential_source", ResourceID: id,
 		Payload: map[string]any{"type": cs.Type},
 	})
+
+	// Agent-side test: forward to agent via Redis pub/sub.
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID != "" {
+		h.testViaAgent(w, r, cs, agentID)
+		return
+	}
 
 	switch cs.Type {
 	case model.CredentialSourceTypeAWSSecretsManager:
@@ -661,6 +680,77 @@ func (h *CredentialsHandler) TestSource(w http.ResponseWriter, r *http.Request) 
 			"error":   "test not supported for type: " + cs.Type,
 		})
 	}
+}
+
+// testViaAgent forwards a credential test to a connected agent via Redis
+// pub/sub, following the same subscribe-before-publish pattern as probes.
+func (h *CredentialsHandler) testViaAgent(w http.ResponseWriter, r *http.Request, cs *model.CredentialSource, agentID string) {
+	if h.ps == nil {
+		writeError(w, http.StatusServiceUnavailable, "pub/sub not available")
+		return
+	}
+
+	// Verify the agent belongs to this tenant.
+	agent, err := h.store.GetAgentByID(r.Context(), agentID)
+	if err != nil {
+		slog.Error("credential test: looking up agent", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to look up agent")
+		return
+	}
+	claims := middleware.GetClaims(r.Context())
+	if agent == nil || agent.TenantID != claims.TenantID {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+
+	buf := make([]byte, 16)
+	_, _ = rand.Read(buf)
+	testID := hex.EncodeToString(buf)
+
+	testPayload, _ := json.Marshal(websocket.CredentialTestPayload{
+		TestID:       testID,
+		ResolverType: cs.Type,
+		Config:       cs.Config,
+	})
+
+	resultBytes, err := h.ps.AwaitCredentialTestResult(r.Context(), testID, credentialTestTimeout, func() error {
+		return h.ps.PublishCredentialTest(r.Context(), agentID, testPayload)
+	})
+	if err != nil {
+		if errors.Is(err, r.Context().Err()) {
+			writeError(w, http.StatusServiceUnavailable, "request cancelled")
+			return
+		}
+		if err.Error() == "agent did not reply in time" {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   "agent did not reply in time",
+			})
+			return
+		}
+		slog.Error("credential test: pub/sub failure", "error", err, "test_id", testID)
+		writeError(w, http.StatusInternalServerError, "credential test failed: "+err.Error())
+		return
+	}
+
+	var result websocket.CredentialTestResultPayload
+	if err := json.Unmarshal(resultBytes, &result); err != nil {
+		slog.Error("credential test: invalid result payload", "error", err, "test_id", testID)
+		writeError(w, http.StatusInternalServerError, "invalid agent reply")
+		return
+	}
+
+	resp := map[string]any{
+		"success":     result.Success,
+		"duration_ms": result.DurationMs,
+	}
+	if result.Username != "" {
+		resp["username"] = result.Username
+	}
+	if result.Error != "" {
+		resp["error"] = result.Error
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // DELETE /api/v1/targets/{id}/credential

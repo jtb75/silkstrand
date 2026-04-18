@@ -15,7 +15,9 @@ const (
 	TypeAssetDiscovered    = "asset_discovered"    // ADR 003 R1a
 	TypeDiscoveryCompleted = "discovery_completed" // ADR 003 R1a
 	TypeAllowlistSnapshot  = "allowlist_snapshot"  // ADR 003 D11
-	TypeAgentLog           = "agent_log"           // ADR 008 — slog records streamed from agent
+	TypeAgentLog               = "agent_log"               // ADR 008 — slog records streamed from agent
+	TypeCredentialTest         = "credential_test"         // server → agent: test a credential source via agent
+	TypeCredentialTestResult   = "credential_test_result"  // agent → server: result of credential test
 )
 
 // AllowlistSnapshotPayload is the agent's most recently loaded scan
@@ -123,6 +125,23 @@ type ScanErrorPayload struct {
 type HeartbeatPayload struct {
 	Version       string `json:"version"`
 	UptimeSeconds int64  `json:"uptime_seconds"`
+}
+
+// CredentialTestPayload is sent from server to agent to test a credential
+// source (e.g. HashiCorp Vault) using the agent's local network.
+type CredentialTestPayload struct {
+	TestID       string          `json:"test_id"`
+	ResolverType string          `json:"resolver_type"` // "hashicorp_vault"
+	Config       json.RawMessage `json:"config"`        // resolver-specific config
+}
+
+// CredentialTestResultPayload is the agent's reply to a credential_test.
+type CredentialTestResultPayload struct {
+	TestID     string `json:"test_id"`
+	Success    bool   `json:"success"`
+	Username   string `json:"username,omitempty"`
+	Error      string `json:"error,omitempty"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 // NewDirectiveMessage creates a Message containing an enriched scan directive.

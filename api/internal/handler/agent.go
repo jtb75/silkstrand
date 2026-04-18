@@ -96,6 +96,7 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		go h.subscribeDirectives(ctx, agentID)
 		go h.subscribeProbes(ctx, agentID)
 		go h.subscribeUpgrades(ctx, agentID)
+		go h.subscribeCredentialTests(ctx, agentID)
 	}
 
 	// Update agent status to connected
@@ -189,6 +190,20 @@ func (h *AgentHandler) subscribeUpgrades(ctx context.Context, agentID string) {
 	})
 	if err != nil && ctx.Err() == nil {
 		slog.Error("upgrade subscription error", "agent_id", agentID, "error", err)
+	}
+}
+
+// subscribeCredentialTests forwards credential test requests originating on
+// any API instance to the agent's WebSocket. Mirrors subscribeProbes.
+func (h *AgentHandler) subscribeCredentialTests(ctx context.Context, agentID string) {
+	err := h.ps.SubscribeCredentialTests(ctx, agentID, func(payload []byte) {
+		msg := websocket.Message{Type: websocket.TypeCredentialTest, Payload: payload}
+		if err := h.hub.Send(agentID, msg); err != nil {
+			slog.Warn("forwarding credential test to agent", "agent_id", agentID, "error", err)
+		}
+	})
+	if err != nil && ctx.Err() == nil {
+		slog.Error("credential test subscription error", "agent_id", agentID, "error", err)
 	}
 }
 
