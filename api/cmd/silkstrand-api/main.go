@@ -109,7 +109,7 @@ func run() error {
 	agentsH := handler.NewAgentsHandler(pgStore, hub, ps, eventBus, auditW, cfg.AgentReleasesURL)
 	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey, auditW, ps)
 	probeH := handler.NewProbeHandler(pgStore, ps, cfg.CredentialEncryptionKey)
-	bundlesH := handler.NewBundlesHandler(pgStore, cfg.BundleStoragePath, cfg.BundleGCSBucket)
+	bundlesH := handler.NewBundlesHandler(pgStore, cfg.BundleStoragePath, cfg.BundleGCSBucket, cfg.BundleControlsDir)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 	assetH := handler.NewAssetHandler(pgStore)
 
@@ -179,6 +179,7 @@ func run() error {
 	apiMux.HandleFunc("POST /api/v1/bundles/upload", bundlesH.Upload)
 	apiMux.HandleFunc("GET /api/v1/bundles/{id}/controls", bundlesH.ListControls)
 	apiMux.HandleFunc("GET /api/v1/controls", bundlesH.ListAllControls)
+	apiMux.HandleFunc("GET /api/v1/controls/{control_id}/rego", bundlesH.GetControlRego)
 
 	// Compliance profiles (ADR 010 D9 — Level 3A)
 	apiMux.HandleFunc("GET /api/v1/compliance-profiles", profilesH.List)

@@ -31,10 +31,11 @@ type BundlesHandler struct {
 	store       store.Store
 	storagePath string // local filesystem path for bundle tarballs (v1)
 	gcsBucket   string // GCS bucket name for bundle tarballs (empty = local-only)
+	policyDir   string // path to controls/ directory with per-control Rego policies
 }
 
-func NewBundlesHandler(s store.Store, storagePath, gcsBucket string) *BundlesHandler {
-	return &BundlesHandler{store: s, storagePath: storagePath, gcsBucket: gcsBucket}
+func NewBundlesHandler(s store.Store, storagePath, gcsBucket, policyDir string) *BundlesHandler {
+	return &BundlesHandler{store: s, storagePath: storagePath, gcsBucket: gcsBucket, policyDir: policyDir}
 }
 
 // GET /api/v1/bundles (tenant-authed)
@@ -619,6 +620,30 @@ func uploadToGCS(bucket, objectName string, data []byte, sha256Hash string) (str
 
 	publicURL := fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, objectName)
 	return publicURL, nil
+}
+
+// GetControlRego serves GET /api/v1/controls/{control_id}/rego — returns the
+// builtin Rego policy source for a control read from disk.
+func (h *BundlesHandler) GetControlRego(w http.ResponseWriter, r *http.Request) {
+	controlID := r.PathValue("control_id")
+	if controlID == "" {
+		writeError(w, http.StatusBadRequest, "missing control_id")
+		return
+	}
+	// Sanitise: control IDs are alphanumeric + dots/dashes/underscores.
+	for _, c := range controlID {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_') {
+			writeError(w, http.StatusBadRequest, "invalid control_id")
+			return
+		}
+	}
+	regoPath := filepath.Join(h.policyDir, controlID, "policy.rego")
+	data, err := os.ReadFile(regoPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "policy not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"rego_source": string(data)})
 }
 
 // UpsertBundle — internal (backoffice-authed). Used to seed global bundles

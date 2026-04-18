@@ -1,7 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
-import { listFindings } from '../api/client';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { listFindings, getControlRego, copyTenantPolicy } from '../api/client';
 import type { ControlEntry, Finding } from '../api/types';
 import { formatAbsolute } from '../lib/time';
+import { useToast } from '../lib/toast';
 
 interface Props {
   control: ControlEntry;
@@ -33,6 +34,7 @@ function assetLabel(f: Finding): string {
 }
 
 export default function ControlDetailDrawer({ control, onClose }: Props) {
+  const { toast } = useToast();
   const versions = Array.isArray(control.engine_versions) ? control.engine_versions : [];
   const tags = Array.isArray(control.tags) ? control.tags : [];
 
@@ -40,6 +42,18 @@ export default function ControlDetailDrawer({ control, onClose }: Props) {
   const { data: findings, isLoading: findingsLoading } = useQuery<Finding[]>({
     queryKey: ['control-findings', control.control_id],
     queryFn: () => listFindings({ source: control.control_id, page_size: 100 }),
+  });
+
+  // Rego policy source (builtin).
+  const { data: regoData, isLoading: regoLoading } = useQuery({
+    queryKey: ['control-rego', control.control_id],
+    queryFn: () => getControlRego(control.control_id),
+  });
+
+  const copyMut = useMutation({
+    mutationFn: () => copyTenantPolicy(control.control_id),
+    onSuccess: () => toast('Policy copied — edit in Compliance > Controls', 'success'),
+    onError: (err: Error) => toast(err.message, 'error'),
   });
 
   return (
@@ -107,6 +121,40 @@ export default function ControlDetailDrawer({ control, onClose }: Props) {
                   ))}
                 </tbody>
               </table>
+            )}
+          </section>
+
+          {/* Policy (Rego source) */}
+          <section>
+            <h3>Policy</h3>
+            {regoLoading && <p>Loading policy...</p>}
+            {!regoLoading && !regoData && (
+              <p className="muted">No Rego policy on disk for this control.</p>
+            )}
+            {!regoLoading && regoData && (
+              <>
+                <pre style={{
+                  background: '#1e293b',
+                  color: '#e2e8f0',
+                  padding: 16,
+                  borderRadius: 6,
+                  overflow: 'auto',
+                  maxHeight: 400,
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                  fontFamily: 'monospace',
+                }}>
+                  {regoData.rego_source}
+                </pre>
+                <button
+                  className="btn btn-sm"
+                  style={{ marginTop: 8 }}
+                  onClick={() => copyMut.mutate()}
+                  disabled={copyMut.isPending}
+                >
+                  {copyMut.isPending ? 'Copying...' : 'Copy and Edit'}
+                </button>
+              </>
             )}
           </section>
 

@@ -583,7 +583,7 @@ export const probeTarget = (targetId: string) =>
     { method: 'POST' },
   );
 
-// ─── ADR 011 — Collected facts ────────────────────────────────────────────
+// ─── ADR 011 — Collected facts + policy source ───────────────────────────
 
 export interface CollectedFactsEntry {
   collector_id: string;
@@ -593,6 +593,24 @@ export interface CollectedFactsEntry {
 
 export const getScanFacts = (scanId: string) =>
   request<{ items: CollectedFactsEntry[] }>(`/api/v1/scans/${scanId}/facts`);
+
+export const getControlRego = (controlId: string) =>
+  request<{ rego_source: string }>(`/api/v1/controls/${controlId}/rego`);
+
+export const copyTenantPolicy = (controlId: string) =>
+  request<{ id: string }>(`/api/v1/tenant-policies/copy-from/${controlId}`, { method: 'POST' });
+
+export interface TenantPolicy {
+  id: string;
+  control_id: string;
+  provenance: 'derived' | 'custom';
+  rego_source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export const listTenantPolicies = () =>
+  request<TenantPolicy[]>('/api/v1/tenant-policies');
 
 // ─── ADR 007 — Scan definitions + Findings ───────────────────────────────
 import type {
