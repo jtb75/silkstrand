@@ -1,0 +1,13 @@
+id: mssql-guest-connect-revoked
+name: Ensure CONNECT permissions on guest user is Revoked
+severity: medium
+collector: mssql-config
+fact_keys: [guest_connect_databases]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.2"
+    title: "Ensure CONNECT permissions on guest user is Revoked"
+tags: [access-control, authentication]

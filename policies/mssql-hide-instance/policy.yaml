@@ -1,0 +1,13 @@
+id: mssql-hide-instance
+name: Ensure Hide Instance option is set to Yes
+severity: medium
+collector: mssql-config
+fact_keys: [hide_instance]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.12"
+    title: "Ensure Hide Instance option is set to Yes"
+tags: [hardening, surface-reduction]

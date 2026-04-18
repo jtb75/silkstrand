@@ -1,0 +1,13 @@
+id: mssql-sql-auth-contained-dbs
+name: Ensure SQL Authentication is not used in contained databases
+severity: medium
+collector: mssql-config
+fact_keys: [sql_auth_contained_databases]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.4"
+    title: "Ensure SQL Authentication is not used in contained databases"
+tags: [authentication, access-control]

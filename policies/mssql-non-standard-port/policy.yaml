@@ -1,0 +1,13 @@
+id: mssql-non-standard-port
+name: Ensure SQL Server is configured to use non-standard ports
+severity: medium
+collector: mssql-config
+fact_keys: [listen_on_default_port]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.11"
+    title: "Ensure SQL Server is configured to use non-standard ports"
+tags: [hardening, network]
