@@ -1,4 +1,4 @@
-.PHONY: dev dev-deps build test lint docker run migrate-up migrate-down clean seed seed-mssql seed-mongo jwt hash-password bundle bundle-all bundle-sign
+.PHONY: dev dev-deps build test lint docker run migrate-up migrate-down clean seed seed-mssql seed-mongo jwt hash-password bundle bundle-all bundle-sign collector-mssql collector-mssql-all
 
 # Start local dependencies (Postgres + Redis)
 dev-deps:
@@ -86,6 +86,20 @@ bundle-all:
 
 bundle-sign:
 	@scripts/build-bundle.sh $(BUNDLE) --sign $(SIGN_KEY)
+
+# --- Collectors ---
+
+GOOS ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
+
+collector-mssql:
+	cd collectors/mssql && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../../dist/mssql-collector-$(GOOS)-$(GOARCH) .
+
+collector-mssql-all:
+	cd collectors/mssql && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../dist/mssql-collector-linux-amd64 .
+	cd collectors/mssql && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../../dist/mssql-collector-linux-arm64 .
+	cd collectors/mssql && CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o ../../dist/mssql-collector-darwin-amd64 .
+	cd collectors/mssql && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o ../../dist/mssql-collector-darwin-arm64 .
 
 # Clean up
 clean:
