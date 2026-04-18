@@ -869,6 +869,60 @@ export const listAuditEvents = (params?: {
 
 // ─── end Audit events ───────────────────────────────────────────────────────
 
+// ─── ADR 011 D9 — Tenant policies ──────────────────────────────────────────
+
+export interface TenantPolicy {
+  id: string;
+  tenant_id: string;
+  control_id: string;
+  origin: 'derived' | 'custom';
+  based_on?: string;
+  name: string;
+  severity: string;
+  rego_source: string;
+  collector_id: string;
+  fact_keys: string[];
+  frameworks: Array<{ id: string; section: string; title: string }>;
+  tags: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const listTenantPolicies = () =>
+  request<TenantPolicy[]>('/api/v1/tenant-policies');
+
+export const getTenantPolicy = (id: string) =>
+  request<TenantPolicy>(`/api/v1/tenant-policies/${id}`);
+
+export const createTenantPolicy = (req: Partial<TenantPolicy>) =>
+  request<TenantPolicy>('/api/v1/tenant-policies', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+
+export const updateTenantPolicy = (id: string, req: Partial<TenantPolicy>) =>
+  request<TenantPolicy>(`/api/v1/tenant-policies/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+
+export const deleteTenantPolicy = (id: string) =>
+  request<void>(`/api/v1/tenant-policies/${id}`, { method: 'DELETE' });
+
+export const copyBuiltinPolicy = (controlId: string) =>
+  request<TenantPolicy>(`/api/v1/tenant-policies/copy-from/${controlId}`, {
+    method: 'POST',
+  });
+
+export const validateRego = (rego_source: string) =>
+  request<{ valid: boolean; error?: string }>('/api/v1/tenant-policies/validate', {
+    method: 'POST',
+    body: JSON.stringify({ rego_source }),
+  });
+
+// ─── end Tenant policies ────────────────────────────────────────────────────
+
 // Absolute SSE URL builder — combines the active DC base URL with the
 // /api/v1/events/stream path and the minted token. Exposed so
 // `useEventStream` can construct a URL without duplicating the

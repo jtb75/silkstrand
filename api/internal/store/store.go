@@ -244,6 +244,15 @@ type Store interface {
 	GetCollectedFactsByScan(ctx context.Context, scanID string) ([]model.CollectedFacts, error)
 	GetLatestFactsForEndpoint(ctx context.Context, endpointID string) (*model.CollectedFacts, error)
 	DeleteOldCollectedFacts(ctx context.Context, maxAge time.Duration) (int, error)
+
+	// --- Tenant policies (ADR 011 D9) --------------------------------
+
+	ListTenantPolicies(ctx context.Context) ([]model.TenantPolicy, error)
+	GetTenantPolicy(ctx context.Context, id string) (*model.TenantPolicy, error)
+	CreateTenantPolicy(ctx context.Context, p model.TenantPolicy) (*model.TenantPolicy, error)
+	UpdateTenantPolicy(ctx context.Context, id string, p model.TenantPolicy) (*model.TenantPolicy, error)
+	DeleteTenantPolicy(ctx context.Context, id string) error
+	ListTenantPoliciesForTenant(ctx context.Context, tenantID string) ([]model.TenantPolicy, error)
 }
 
 // --- Helper types passed through the store boundary ------------------
