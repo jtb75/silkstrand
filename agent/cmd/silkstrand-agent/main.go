@@ -239,6 +239,11 @@ func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunn
 		d.Credentials = resolved
 	}
 
+	// ADR 011 PR 4: try Go collector path before falling back to Python bundle.
+	if done := tryCollectorPath(ctx, tun, d); done {
+		return
+	}
+
 	// Resolve bundle from cache
 	bundlePath, err := c.GetOrFetch(d.BundleName, d.BundleVersion, d.BundleURL)
 	if err != nil {
@@ -355,6 +360,69 @@ func handleManifestScan(ctx context.Context, tun *tunnel.Tunnel, r runner.Runner
 		"controls_total", total,
 		"controls_failed", failedControls,
 	)
+}
+
+// tryCollectorPath checks if a Go collector binary is available for the
+// directive's target type. If found, it runs the collector, streams facts
+// to the server via WSS, and returns true (scan handled). On any failure
+// it logs a warning and returns false so the caller falls through to the
+// legacy Python bundle path.
+func tryCollectorPath(ctx context.Context, tun *tunnel.Tunnel, d tunnel.DirectivePayload) bool {
+	collectorID := runner.DetermineCollector(d.TargetType)
+	if collectorID == "" {
+		return false
+	}
+
+	slog.InfoContext(ctx, "using Go collector",
+		"scan_id", d.ScanID,
+		"collector", collectorID,
+	)
+
+	binPath, err := runner.EnsureCollector(collectorID)
+	if err != nil {
+		slog.WarnContext(ctx, "collector not available, falling back to bundle",
+			"collector", collectorID, "error", err)
+		return false
+	}
+
+	result, err := runner.RunCollector(ctx, binPath, d.TargetConfig, d.Credentials)
+	if err != nil {
+		slog.WarnContext(ctx, "collector failed, falling back to bundle",
+			"collector", collectorID, "error", err)
+		return false
+	}
+
+	factsCount := len(result.Facts)
+	slog.InfoContext(ctx, "collector completed",
+		"scan_id", d.ScanID,
+		"collector", collectorID,
+		"facts_count", factsCount,
+	)
+
+	// Stream facts to server for policy evaluation (ADR 011 D5).
+	factsPayload, _ := json.Marshal(map[string]any{
+		"scan_id":      d.ScanID,
+		"collector_id": result.CollectorID,
+		"facts":        result.Facts,
+	})
+	tun.Send(tunnel.Message{
+		Type:    tunnel.TypeFactsCollected,
+		Payload: factsPayload,
+	})
+
+	slog.InfoContext(ctx, "facts sent to server for policy evaluation",
+		"scan_id", d.ScanID,
+	)
+
+	// Send a terminal scan_results with no results — the server handles
+	// policy evaluation and produces findings from the facts.
+	sendScanComplete(tun, d.ScanID)
+
+	slog.InfoContext(ctx, "scan completed via collector",
+		"scan_id", d.ScanID,
+		"collector", collectorID,
+	)
+	return true
 }
 
 func sendStarted(tun *tunnel.Tunnel, scanID string) {
