@@ -57,6 +57,31 @@ jobs:
       - name: Terraform Init
         run: terraform -chdir=${{ env.TF_WORKING_DIR }} init
 
+      # Phase 1: Apply force_destroy on GCS buckets so they can be deleted
+      # with objects inside them, then remove Cloud SQL DB/user from state
+      # (they cascade when the instance is destroyed).
+      - name: Prepare state for clean destroy
+        run: |
+          cd ${{ env.TF_WORKING_DIR }}
+
+          # Apply force_destroy attribute to buckets (needed before destroy)
+          terraform apply -auto-approve -lock-timeout=5m \
+            -target=module.storage.google_storage_bucket.bundles \
+            -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
+            -var="redis_url=placeholder" \
+            -var="jwt_secret=placeholder" \
+            -var="internal_api_key=placeholder" \
+            -var="credential_encryption_key=00000000000000000000000000000000000000000000000000000000000000ff" \
+            -var="image=placeholder" \
+            -var="tenant_web_url=placeholder" \
+            || true
+
+          # Remove DB/user from state — instance deletion cascades them.
+          # This prevents the "role cannot be dropped" / "database in use" errors.
+          terraform state rm module.database.google_sql_database.main 2>/dev/null || true
+          terraform state rm module.database.google_sql_user.main 2>/dev/null || true
+
       - name: Terraform Destroy
         run: |
           terraform -chdir=${{ env.TF_WORKING_DIR }} destroy -auto-approve -lock-timeout=5m \
@@ -91,6 +116,42 @@ jobs:
 
       - name: Terraform Init
         run: terraform -chdir=${{ env.TF_WORKING_DIR }} init
+
+      # Phase 1: Apply force_destroy on GCS buckets, remove DB/user from state.
+      - name: Prepare state for clean destroy
+        run: |
+          cd ${{ env.TF_WORKING_DIR }}
+
+          # Apply force_destroy to buckets
+          terraform apply -auto-approve -lock-timeout=5m \
+            -target=module.storage.google_storage_bucket.bundles \
+            -target='module.storage.google_storage_bucket.agent_releases[0]' \
+            -target='module.storage.google_storage_bucket.runtimes[0]' \
+            -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}" \
+            -var="redis_url=placeholder" \
+            -var="jwt_secret=placeholder" \
+            -var="internal_api_key=placeholder" \
+            -var="credential_encryption_key=00000000000000000000000000000000000000000000000000000000000000ff" \
+            -var="backoffice_jwt_secret=placeholder" \
+            -var="backoffice_encryption_key=00000000000000000000000000000000000000000000000000000000000000ff" \
+            -var="image=placeholder" \
+            -var="backoffice_api_image=placeholder" \
+            -var="web_image=placeholder" \
+            -var="backoffice_web_image=placeholder" \
+            -var="tenant_jwt_secret=placeholder" \
+            -var="resend_api_key=placeholder" \
+            -var="tenant_web_url=placeholder" \
+            -var="github_actions_sa_email=placeholder@placeholder.iam.gserviceaccount.com" \
+            -var="bootstrap_admin_email=placeholder@placeholder.com" \
+            -var="bootstrap_admin_password=placeholder" \
+            || true
+
+          # Remove DB/user from state — instance deletion cascades them
+          terraform state rm module.database.google_sql_database.main 2>/dev/null || true
+          terraform state rm module.database.google_sql_user.main 2>/dev/null || true
+          # Prod also has backoffice DB (standalone resource, not a module)
+          terraform state rm google_sql_database.backoffice 2>/dev/null || true
 
       - name: Terraform Destroy
         run: |
