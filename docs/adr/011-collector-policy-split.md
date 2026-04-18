@@ -1,6 +1,6 @@
 # ADR 011: Collector + policy split — facts on the agent, evaluation on the server
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-18
 **Related:** [ADR 010](./010-hybrid-bundles.md) (hybrid bundles — controls become
 collectors), [ADR 004](./004-credential-resolver.md) (credential resolution —

@@ -1,6 +1,6 @@
 # ADR 005: Audit events surface
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-14
 **Related:** [ADR 003](./003-recon-pipeline.md) (rule engine — fires audit events),
 [ADR 004](./004-credential-resolver.md) (credential reads — audited today via slog only)

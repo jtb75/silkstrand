@@ -208,10 +208,6 @@ func (h *AgentHandler) subscribeCredentialTests(ctx context.Context, agentID str
 }
 
 func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d pubsub.Directive) {
-	slog.Info("forwardDirective received",
-		"scan_id", d.ScanID, "target_id", d.TargetID,
-		"asset_endpoint_id", d.AssetEndpointID, "bundle_id", d.BundleID,
-		"tenant_id", d.TenantID)
 	// Resolve connection details. Endpoint-scoped compliance scans
 	// don't have a target — derive host:port from the endpoint + parent asset.
 	var targetID, targetType, targetIdentifier string
