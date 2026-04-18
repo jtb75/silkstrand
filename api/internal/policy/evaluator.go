@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/open-policy-agent/opa/rego"
+	"github.com/open-policy-agent/opa/v1/rego"
 )
 
 // Result is one policy evaluation outcome — pass, fail, or error.

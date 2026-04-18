@@ -20,6 +20,7 @@ type Config struct {
 	BundleControlsDir      string   // Path to individual controls/ directory for server-side bundle assembly
 	BundleGCSBucket        string   // GCS bucket for bundle tarballs (empty = local-only dev mode)
 	PoliciesDir            string   // Path to builtin policies/ directory for copy-from-builtin
+	PolicyDir              string   // Directory containing Rego policy files (ADR 011 D10)
 	AuditEventsEnabled     bool     // ADR 005: enable audit event persistence (default true)
 }
 
@@ -51,6 +52,7 @@ func Load() (*Config, error) {
 		BundleControlsDir:     getEnv("BUNDLE_CONTROLS_DIR", "./controls"),
 		BundleGCSBucket:       getEnv("BUNDLE_GCS_BUCKET", ""),
 		PoliciesDir:          getEnv("POLICIES_DIR", "./policies"),
+		PolicyDir:             getEnv("POLICY_DIR", "./policies"),
 		AuditEventsEnabled:    auditEnabled,
 	}
 

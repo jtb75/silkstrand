@@ -31,6 +31,7 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/notify"
+	"github.com/jtb75/silkstrand/api/internal/policy"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
 	"github.com/jtb75/silkstrand/api/internal/rules"
 	"github.com/jtb75/silkstrand/api/internal/scheduler"
@@ -125,6 +126,14 @@ func run() error {
 	tenantPoliciesH := handler.NewTenantPoliciesHandler(pgStore, cfg.PoliciesDir)
 	auditH := handler.NewAuditHandler(pgStore.DB())
 	eventsH := handler.NewEventsHandler(eventBus, cfg.JWTSecret)
+
+	// Policy evaluator (ADR 011 D10) — loaded once at startup, used for
+	// retroactive evaluation replay.
+	policyEvaluator := policy.NewEvaluator()
+	if err := policyEvaluator.LoadFromDir(cfg.PolicyDir); err != nil {
+		slog.Warn("failed to load policies", "error", err, "dir", cfg.PolicyDir)
+	}
+	evalH := handler.NewEvaluationHandler(pgStore, policyEvaluator, auditW)
 
 	mux := http.NewServeMux()
 
@@ -251,6 +260,9 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/findings/{id}", findingsH.Get)
 	apiMux.HandleFunc("POST /api/v1/findings/{id}/suppress", findingsH.Suppress)
 	apiMux.HandleFunc("POST /api/v1/findings/{id}/reopen", findingsH.Reopen)
+
+	// Retroactive policy evaluation (ADR 011 D10).
+	apiMux.HandleFunc("POST /api/v1/evaluations/replay", evalH.Replay)
 
 	// Scan definitions (ADR 007 D3) — 501 stubs (P3).
 	apiMux.HandleFunc("GET /api/v1/scan-definitions", scanDefsH.List)

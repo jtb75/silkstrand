@@ -442,3 +442,28 @@ export interface ActiveTenant {
   dc_api_url?: string; // Base URL for the DC API serving this tenant
   role: 'admin' | 'member';
 }
+
+// Retroactive policy evaluation (ADR 011 D10)
+
+export interface PolicyResult {
+  control_id: string;
+  status: string;
+  severity?: string;
+  title?: string;
+  evidence?: Record<string, unknown>;
+  remediation?: string;
+}
+
+export interface ReplayRequest {
+  scan_id?: string;
+  endpoint_id?: string;
+  policy_ids?: string[];
+  dry_run?: boolean;
+}
+
+export interface ReplayResponse {
+  results: PolicyResult[];
+  dry_run: boolean;
+  findings_created: number;
+  findings_updated: number;
+}

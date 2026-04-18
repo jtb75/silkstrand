@@ -252,7 +252,7 @@ function PolicyProvenanceBadge({
 }) {
   const policy = policyMap.get(controlId);
   if (!policy) return null; // builtin — no badge needed
-  if (policy.provenance === 'custom') {
+  if (policy.origin === 'custom') {
     return (
       <span
         className="badge"
