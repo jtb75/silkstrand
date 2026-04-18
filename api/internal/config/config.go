@@ -18,6 +18,7 @@ type Config struct {
 	AgentReleasesURL       string   // Public GCS base URL for agent binaries + install.sh
 	BundleStoragePath      string   // Local filesystem path for uploaded bundle tarballs (v1)
 	BundleControlsDir      string   // Path to individual controls/ directory for server-side bundle assembly
+	BundleGCSBucket        string   // GCS bucket for bundle tarballs (empty = local-only dev mode)
 }
 
 func Load() (*Config, error) {
@@ -44,6 +45,7 @@ func Load() (*Config, error) {
 		AgentReleasesURL:       getEnv("AGENT_RELEASES_URL", "https://storage.googleapis.com/silkstrand-agent-releases"),
 		BundleStoragePath:      getEnv("BUNDLE_STORAGE_PATH", ""),
 		BundleControlsDir:     getEnv("BUNDLE_CONTROLS_DIR", "./controls"),
+		BundleGCSBucket:       getEnv("BUNDLE_GCS_BUCKET", ""),
 	}
 
 	if getEnv("ENV", "dev") == "production" {
