@@ -32,28 +32,71 @@ func New(bundleDir string, publicKey ed25519.PublicKey) *Cache {
 	return &Cache{bundleDir: bundleDir, publicKey: publicKey}
 }
 
+// manifestFiles lists the manifest file names checked when looking for a
+// cached bundle. bundle.yaml is the current format; manifest.yaml is the
+// legacy name kept for backward compatibility.
+var manifestFiles = []string{"manifest.yaml", "bundle.yaml"}
+
+// sanitizeBundleName normalises a display name (e.g. "CIS Microsoft SQL
+// Server 2022 Benchmark") into a filesystem-safe directory name
+// ("cis-microsoft-sql-server-2022-benchmark").
+func sanitizeBundleName(name string) string {
+	s := strings.ToLower(name)
+	s = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '.' {
+			return r
+		}
+		return '-'
+	}, s)
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	return strings.Trim(s, "-")
+}
+
+// hasManifest returns true if dir contains any recognised manifest file.
+func hasManifest(dir string) bool {
+	for _, m := range manifestFiles {
+		if _, err := os.Stat(filepath.Join(dir, m)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // Get returns the path to a cached bundle directory. It checks two layouts:
-//  1. Versioned: {bundleDir}/{bundleName}/{version}/manifest.yaml
-//  2. Flat (local dev): {bundleDir}/{bundleName}/manifest.yaml
+//  1. Versioned: {bundleDir}/{bundleName}/{version}/(manifest.yaml|bundle.yaml)
+//  2. Flat (local dev): {bundleDir}/{bundleName}/(manifest.yaml|bundle.yaml)
+//
+// The lookup tries both the raw bundleName and its sanitized form so that
+// display names ("CIS Microsoft SQL Server 2022 Benchmark") resolve to
+// on-disk directories like "cis-microsoft-sql-server-2022-benchmark".
 //
 // Returns ErrNotCached if neither layout has the bundle.
 func (c *Cache) Get(bundleName, version string) (string, error) {
-	// Check versioned layout first
-	versionedPath := filepath.Join(c.bundleDir, bundleName, version)
-	if _, err := os.Stat(filepath.Join(versionedPath, "manifest.yaml")); err == nil {
-		if err := c.verify(versionedPath); err != nil {
-			return "", err
-		}
-		return versionedPath, nil
+	candidates := []string{bundleName}
+	if san := sanitizeBundleName(bundleName); san != bundleName {
+		candidates = append(candidates, san)
 	}
 
-	// Check flat layout (local dev convenience)
-	flatPath := filepath.Join(c.bundleDir, bundleName)
-	if _, err := os.Stat(filepath.Join(flatPath, "manifest.yaml")); err == nil {
-		if err := c.verify(flatPath); err != nil {
-			return "", err
+	for _, name := range candidates {
+		// Check versioned layout first
+		versionedPath := filepath.Join(c.bundleDir, name, version)
+		if hasManifest(versionedPath) {
+			if err := c.verify(versionedPath); err != nil {
+				return "", err
+			}
+			return versionedPath, nil
 		}
-		return flatPath, nil
+
+		// Check flat layout (local dev convenience)
+		flatPath := filepath.Join(c.bundleDir, name)
+		if hasManifest(flatPath) {
+			if err := c.verify(flatPath); err != nil {
+				return "", err
+			}
+			return flatPath, nil
+		}
 	}
 
 	return "", ErrNotCached
@@ -72,10 +115,17 @@ func (c *Cache) verify(bundlePath string) error {
 		return fmt.Errorf("bundle missing signature file: %w", err)
 	}
 
-	manifestPath := filepath.Join(bundlePath, "manifest.yaml")
-	manifest, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return fmt.Errorf("reading manifest for verification: %w", err)
+	// Try each recognised manifest file name.
+	var manifest []byte
+	for _, m := range manifestFiles {
+		data, readErr := os.ReadFile(filepath.Join(bundlePath, m))
+		if readErr == nil {
+			manifest = data
+			break
+		}
+	}
+	if manifest == nil {
+		return fmt.Errorf("reading manifest for verification: no manifest found in %s", bundlePath)
 	}
 
 	if !ed25519.Verify(c.publicKey, manifest, sig) {
@@ -85,9 +135,9 @@ func (c *Cache) verify(bundlePath string) error {
 	return nil
 }
 
-// Store extracts a .tar.gz bundle archive into the cache at {bundleDir}/{bundleName}/{version}/.
+// Store extracts a .tar.gz bundle archive into the cache at {bundleDir}/{sanitizedName}/{version}/.
 func (c *Cache) Store(bundleName, version string, data []byte) (string, error) {
-	destDir := filepath.Join(c.bundleDir, bundleName, version)
+	destDir := filepath.Join(c.bundleDir, sanitizeBundleName(bundleName), version)
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return "", fmt.Errorf("creating cache directory: %w", err)
 	}

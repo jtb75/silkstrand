@@ -94,7 +94,7 @@ func run() error {
 	agentsH := handler.NewAgentsHandler(pgStore, hub, ps, eventBus, cfg.AgentReleasesURL)
 	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey)
 	probeH := handler.NewProbeHandler(pgStore, ps, cfg.CredentialEncryptionKey)
-	bundlesH := handler.NewBundlesHandler(pgStore, cfg.BundleStoragePath)
+	bundlesH := handler.NewBundlesHandler(pgStore, cfg.BundleStoragePath, cfg.BundleGCSBucket)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
 	assetH := handler.NewAssetHandler(pgStore)
 

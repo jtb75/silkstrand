@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 
+	"os/exec"
+
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -28,10 +30,11 @@ const maxUploadSize = 50 << 20
 type BundlesHandler struct {
 	store       store.Store
 	storagePath string // local filesystem path for bundle tarballs (v1)
+	gcsBucket   string // GCS bucket name for bundle tarballs (empty = local-only)
 }
 
-func NewBundlesHandler(s store.Store, storagePath string) *BundlesHandler {
-	return &BundlesHandler{store: s, storagePath: storagePath}
+func NewBundlesHandler(s store.Store, storagePath, gcsBucket string) *BundlesHandler {
+	return &BundlesHandler{store: s, storagePath: storagePath, gcsBucket: gcsBucket}
 }
 
 // GET /api/v1/bundles (tenant-authed)
@@ -267,6 +270,22 @@ func (h *BundlesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	hashSum := sha256.Sum256(tarballData)
 	tarballHash := hex.EncodeToString(hashSum[:])
 
+	// Upload tarball to GCS if configured.
+	var gcsPath *string
+	if h.gcsBucket != "" {
+		objectName := fmt.Sprintf("bundles/%s-%s.tar.gz", manifest.Name, manifest.Version)
+		gcsURL, uploadErr := uploadToGCS(h.gcsBucket, objectName, tarballData, tarballHash)
+		if uploadErr != nil {
+			slog.Warn("failed to upload bundle to GCS", "error", uploadErr)
+			// Non-fatal: DB registration + local storage is the fallback.
+		} else {
+			gcsPath = &gcsURL
+			slog.Info("bundle uploaded to GCS", "url", gcsURL)
+		}
+	} else {
+		slog.Warn("BUNDLE_GCS_BUCKET not configured, skipping GCS upload (local-only mode)")
+	}
+
 	// Build the bundle model.
 	engine := manifest.Engine
 	b := model.Bundle{
@@ -278,6 +297,7 @@ func (h *BundlesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		Engine:       &engine,
 		ControlCount: len(manifest.Controls),
 		TarballHash:  &tarballHash,
+		GCSPath:      gcsPath,
 	}
 
 	// Upsert the bundle row.
@@ -552,6 +572,53 @@ func storeTarball(basePath, name, version string, data []byte) error {
 		return fmt.Errorf("writing tarball: %w", err)
 	}
 	return nil
+}
+
+// uploadToGCS uploads data to a GCS bucket using gsutil (available on Cloud
+// Run by default). It also writes a sibling .sha256 checksum file so the
+// agent's GetOrFetch can verify the download.
+// Returns the public HTTPS URL of the uploaded object.
+func uploadToGCS(bucket, objectName string, data []byte, sha256Hash string) (string, error) {
+	gcsURI := fmt.Sprintf("gs://%s/%s", bucket, objectName)
+
+	// Write tarball to a temp file for gsutil.
+	tmpFile, err := os.CreateTemp("", "bundle-upload-*.tar.gz")
+	if err != nil {
+		return "", fmt.Errorf("creating temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return "", fmt.Errorf("writing temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Upload tarball.
+	cmd := exec.Command("gsutil", "cp", tmpFile.Name(), gcsURI)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("gsutil cp tarball: %s: %w", string(out), err)
+	}
+
+	// Write and upload the .sha256 sidecar file.
+	shaFile, err := os.CreateTemp("", "bundle-upload-*.sha256")
+	if err != nil {
+		return "", fmt.Errorf("creating sha256 temp file: %w", err)
+	}
+	defer os.Remove(shaFile.Name())
+	if _, err := shaFile.WriteString(sha256Hash + "  " + filepath.Base(objectName) + "\n"); err != nil {
+		shaFile.Close()
+		return "", fmt.Errorf("writing sha256 temp file: %w", err)
+	}
+	shaFile.Close()
+
+	shaURI := gcsURI + ".sha256"
+	cmd = exec.Command("gsutil", "cp", shaFile.Name(), shaURI)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("gsutil cp sha256: %s: %w", string(out), err)
+	}
+
+	publicURL := fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, objectName)
+	return publicURL, nil
 }
 
 // UpsertBundle — internal (backoffice-authed). Used to seed global bundles
