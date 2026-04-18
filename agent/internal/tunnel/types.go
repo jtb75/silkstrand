@@ -61,19 +61,28 @@ type UpgradePayload struct {
 	// Keys are "<os>-<arch>": linux-amd64, darwin-arm64, etc.
 }
 
+// CredentialResolverConfig tells the agent to resolve credentials
+// locally (e.g. from an on-prem Vault) instead of receiving
+// pre-resolved plaintext from the server.
+type CredentialResolverConfig struct {
+	Type   string          `json:"type"`   // "hashicorp_vault"
+	Config json.RawMessage `json:"config"` // resolver-specific config
+}
+
 // DirectivePayload is received from the server with scan instructions.
 type DirectivePayload struct {
-	ScanID           string          `json:"scan_id"`
-	ScanType         string          `json:"scan_type,omitempty"` // "compliance" (default) | "discovery"
-	BundleID         string          `json:"bundle_id"`
-	BundleName       string          `json:"bundle_name"`
-	BundleVersion    string          `json:"bundle_version"`
-	BundleURL        string          `json:"bundle_url,omitempty"` // HTTPS URL to a .tar.gz; agent fetches if not cached
-	TargetID         string          `json:"target_id"`
-	TargetType       string          `json:"target_type"`
-	TargetIdentifier string          `json:"target_identifier"`
-	TargetConfig     json.RawMessage `json:"target_config"`
-	Credentials      json.RawMessage `json:"credentials,omitempty"`
+	ScanID             string                    `json:"scan_id"`
+	ScanType           string                    `json:"scan_type,omitempty"` // "compliance" (default) | "discovery"
+	BundleID           string                    `json:"bundle_id"`
+	BundleName         string                    `json:"bundle_name"`
+	BundleVersion      string                    `json:"bundle_version"`
+	BundleURL          string                    `json:"bundle_url,omitempty"` // HTTPS URL to a .tar.gz; agent fetches if not cached
+	TargetID           string                    `json:"target_id"`
+	TargetType         string                    `json:"target_type"`
+	TargetIdentifier   string                    `json:"target_identifier"`
+	TargetConfig       json.RawMessage           `json:"target_config"`
+	Credentials        json.RawMessage           `json:"credentials,omitempty"`          // set when server resolves (static, aws_secrets_manager)
+	CredentialResolver *CredentialResolverConfig  `json:"credential_resolver,omitempty"`  // set for agent-side resolution (on-prem vault)
 }
 
 // AssetDiscoveredPayload is sent during a discovery scan with a batch of

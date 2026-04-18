@@ -28,6 +28,7 @@ import (
 	"github.com/jtb75/silkstrand/agent/internal/runner"
 	"github.com/jtb75/silkstrand/agent/internal/tunnel"
 	"github.com/jtb75/silkstrand/agent/internal/updater"
+	"github.com/jtb75/silkstrand/agent/internal/vault"
 )
 
 // version is set via ldflags: -X main.version=$VERSION
@@ -190,6 +191,19 @@ func handleDirective(tun *tunnel.Tunnel, c *cache.Cache, r runner.Runner, d tunn
 	// Notify server that scan has started
 	sendStarted(tun, d.ScanID)
 
+	// Agent-side credential resolution: if the server sent a resolver
+	// config instead of plaintext credentials, resolve locally.
+	if d.Credentials == nil && d.CredentialResolver != nil {
+		resolved, err := resolveCredentialLocally(ctx, d.CredentialResolver)
+		if err != nil {
+			slog.ErrorContext(ctx, "agent-side credential resolution failed",
+				"scan_id", d.ScanID, "resolver_type", d.CredentialResolver.Type, "error", err)
+			sendError(tun, d.ScanID, "credential resolution error: "+err.Error())
+			return
+		}
+		d.Credentials = resolved
+	}
+
 	// Resolve bundle from cache
 	bundlePath, err := c.GetOrFetch(d.BundleName, d.BundleVersion, d.BundleURL)
 	if err != nil {
@@ -346,6 +360,32 @@ func sendScanComplete(tun *tunnel.Tunnel, scanID string) {
 func sendError(tun *tunnel.Tunnel, scanID, errMsg string) {
 	payload, _ := json.Marshal(tunnel.ScanErrorPayload{ScanID: scanID, Error: errMsg})
 	tun.Send(tunnel.Message{Type: tunnel.TypeScanError, Payload: payload})
+}
+
+// resolveCredentialLocally dispatches on the resolver type and returns
+// the credential JSON ({"username":"...","password":"..."}) for the
+// bundle runner.
+func resolveCredentialLocally(ctx context.Context, rc *tunnel.CredentialResolverConfig) (json.RawMessage, error) {
+	switch rc.Type {
+	case "hashicorp_vault":
+		var cfg vault.ResolveConfig
+		if err := json.Unmarshal(rc.Config, &cfg); err != nil {
+			return nil, fmt.Errorf("parsing vault config: %w", err)
+		}
+		cred, err := vault.Resolve(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("vault resolve: %w", err)
+		}
+		credJSON, _ := json.Marshal(map[string]string{
+			"username": cred.Username,
+			"password": cred.Password,
+		})
+		slog.InfoContext(ctx, "agent-side credential resolved",
+			"resolver_type", "hashicorp_vault")
+		return credJSON, nil
+	default:
+		return nil, fmt.Errorf("unsupported credential resolver type: %q", rc.Type)
+	}
 }
 
 // runUninstall calls the DC's /api/v1/agents/self endpoint to deregister
