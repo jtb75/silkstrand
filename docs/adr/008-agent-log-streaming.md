@@ -1,6 +1,6 @@
 # ADR 008: Agent log streaming
 
-**Status:** Proposed
+**Status:** Accepted (shipped v0.1.77 — persisted logs + SSE + console UI)
 **Date:** 2026-04-16
 **Related:** [ADR 005](./005-audit-events.md) (audit events — same envelope
 shape), [ADR 007](./007-findings-scheduler.md) (scan_progress events — same
