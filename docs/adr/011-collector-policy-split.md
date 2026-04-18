@@ -71,14 +71,40 @@ Agent (customer network)              Server (DC API)
    }                                 
 ```
 
-### D2. Collector definition
+### D2. Collectors are signed Go binaries
 
-A collector replaces the current `check.py`. It's a script that:
+A collector is a **single cross-compiled Go binary** per engine —
+not a Python script. This eliminates runtime dependencies (no Python,
+no pip, no virtualenv) and matches the agent's own deployment model.
 
-- Connects to a target using provided credentials
-- Runs one or more queries / commands
-- Returns a structured JSON facts object
-- Makes **no pass/fail decisions**
+Collectors are stored in GCS alongside the recon tools:
+
+```
+gs://silkstrand-runtimes/collectors/
+  mssql-collector-darwin-arm64
+  mssql-collector-darwin-arm64.sha256
+  mssql-collector-linux-amd64
+  mssql-collector-linux-amd64.sha256
+  postgresql-collector-linux-amd64
+  postgresql-collector-linux-amd64.sha256
+  mongodb-collector-linux-amd64
+  mongodb-collector-linux-amd64.sha256
+```
+
+The agent treats collectors like tools (naabu/httpx/nuclei) — download
+on first use via `EnsureTool`, verify SHA256, cache locally, re-download
+when the hash changes on the server.
+
+Each collector binary:
+
+- Receives credentials + target config via **stdin** (JSON, same FD
+  pipe mechanism as today's Python runner)
+- Connects to the target database using a Go driver (e.g.,
+  `github.com/denisenkom/go-mssqldb` for MSSQL)
+- Runs all prescribed queries for that engine
+- Prints facts JSON to **stdout**
+- Exits with 0 (success) or non-zero (connection failure / error)
+- Makes **no pass/fail decisions** — only reports facts
 
 ```yaml
 # collectors/mssql-config/collector.yaml
@@ -88,7 +114,8 @@ description: Collects security-relevant configuration from SQL Server
 engine:
   - name: mssql
     versions: ["2019", "2022"]
-framework: python
+binary: mssql-collector           # base name; agent appends -<os>-<arch>
+version: 1.0.0
 facts_schema:
   tls_enabled: boolean
   tls_version: string
@@ -102,51 +129,75 @@ facts_schema:
   remote_admin_connections: boolean
   default_trace_enabled: boolean
   max_error_log_files: integer
-  # ... all facts this collector gathers
 ```
 
-```python
-# collectors/mssql-config/collect.py
-import sys, json, pytds
+Example collector (Go):
 
-def collect(host, port, username, password):
-    conn = pytds.connect(host, port=port, user=username, password=password)
-    cursor = conn.cursor()
-    facts = {}
+```go
+// cmd/mssql-collector/main.go
+package main
 
-    # TLS
-    cursor.execute("SELECT encrypt_option FROM sys.dm_exec_connections WHERE session_id = @@SPID")
-    row = cursor.fetchone()
-    facts["tls_enabled"] = row[0] == "TRUE" if row else False
+import (
+    "database/sql"
+    "encoding/json"
+    "fmt"
+    "os"
+    _ "github.com/denisenkom/go-mssqldb"
+)
 
-    # SA account
-    cursor.execute("SELECT is_disabled FROM sys.server_principals WHERE name = 'sa'")
-    row = cursor.fetchone()
-    facts["sa_account_disabled"] = bool(row[0]) if row else False
+type Input struct {
+    Host     string `json:"host"`
+    Port     int    `json:"port"`
+    Username string `json:"username"`
+    Password string `json:"password"`
+}
 
-    # Audit
-    cursor.execute("SELECT name, is_state_enabled FROM sys.server_audits")
-    audits = cursor.fetchall()
-    facts["audit_login_enabled"] = any(a[1] for a in audits)
+func main() {
+    var in Input
+    json.NewDecoder(os.Stdin).Decode(&in)
 
-    # xp_cmdshell
-    cursor.execute("SELECT value_in_use FROM sys.configurations WHERE name = 'xp_cmdshell'")
-    row = cursor.fetchone()
-    facts["xp_cmdshell_enabled"] = bool(row[0]) if row else False
+    dsn := fmt.Sprintf("sqlserver://%s:%s@%s:%d", in.Username, in.Password, in.Host, in.Port)
+    db, err := sql.Open("sqlserver", dsn)
+    if err != nil { fatal(err) }
+    defer db.Close()
 
-    # ... more facts ...
+    facts := map[string]any{}
 
-    conn.close()
-    return facts
+    // TLS
+    var encOpt string
+    db.QueryRow("SELECT encrypt_option FROM sys.dm_exec_connections WHERE session_id = @@SPID").Scan(&encOpt)
+    facts["tls_enabled"] = encOpt == "TRUE"
 
-creds = json.loads(sys.stdin.read())
-facts = collect(creds["host"], int(creds["port"]), creds["username"], creds["password"])
-print(json.dumps({"collector_id": "mssql-config", "facts": facts}))
+    // SA account
+    var saDisabled bool
+    db.QueryRow("SELECT is_disabled FROM sys.server_principals WHERE name = 'sa'").Scan(&saDisabled)
+    facts["sa_account_disabled"] = saDisabled
+
+    // xp_cmdshell
+    var xpCmd int
+    db.QueryRow("SELECT CAST(value_in_use AS INT) FROM sys.configurations WHERE name = 'xp_cmdshell'").Scan(&xpCmd)
+    facts["xp_cmdshell_enabled"] = xpCmd != 0
+
+    // ... all other facts ...
+
+    json.NewEncoder(os.Stdout).Encode(map[string]any{
+        "collector_id": "mssql-config",
+        "facts":        facts,
+    })
+}
 ```
 
 One collector per engine gathers ALL facts for that engine. Not one
-collector per control — that would be N database connections per scan.
-A single connection gathers everything.
+per control — that would be N database connections. A single
+connection gathers everything.
+
+**Benefits over Python:**
+- Zero environmental dependencies (no Python, no pip, no vendor/)
+- Cross-compiled like the agent: one build produces binaries for all
+  platforms
+- Signable + hash-verifiable via the same EnsureTool infrastructure
+- Go's DB drivers are well-maintained and statically linked
+- Collector authors use the same language as the rest of the platform
 
 ### D3. Policy definition (Rego)
 
@@ -301,17 +352,73 @@ The agent does NOT run Rego. It only runs the collector.
 
 ### D9. Policy management in the UI
 
-The Compliance → Controls tab evolves:
+The Compliance → Controls tab evolves into a full policy management
+surface:
 
 - **Controls** still exist as the user-facing concept ("Ensure
   xp_cmdshell is disabled")
 - Each control now has a **policy** (Rego source) + a **collector
   reference** instead of a `check.py`
-- The control detail drawer shows the Rego source (read-only in v1;
-  editable for custom profiles in a follow-up)
-- The Profiles tab can customize policy thresholds without touching
-  collectors: override a Rego rule's default values for a specific
-  tenant
+- The control detail drawer shows the **Rego source** with syntax
+  highlighting
+
+**Three interaction modes per policy:**
+
+1. **View** — built-in CIS policies are read-only. The user can
+   inspect the Rego to understand what the control checks and why.
+   Transparency builds trust.
+
+2. **Copy and Edit** — for built-in policies the user wants to
+   customize. Creates a tenant-scoped copy with the original Rego
+   pre-filled. The user modifies thresholds, adds conditions, or
+   changes the severity. The copy lives in the tenant's custom
+   profile and doesn't affect other tenants or the base framework.
+
+3. **Edit** — for tenant-created policies (from Copy and Edit or
+   from scratch). Full in-browser Rego editor with:
+   - Syntax highlighting (CodeMirror or Monaco with Rego grammar)
+   - Live preview: paste sample facts JSON → see the evaluation
+     result (pass/fail) without running a real scan
+   - Save → policy is stored in `tenant_policies` table
+   - Validation: OPA compiles the Rego on save; syntax errors are
+     surfaced inline
+
+**Policy provenance:**
+
+Each policy has an `origin` field:
+- `builtin` — shipped with SilkStrand, immutable, tied to a CIS
+  framework. View only.
+- `derived` — created via Copy and Edit from a builtin. Shows
+  "Based on: mssql-xp-cmdshell (CIS MSSQL 2022 §2.7)". Editable.
+- `custom` — created from scratch by the tenant. Editable.
+
+**Schema addition for tenant policies:**
+
+```sql
+CREATE TABLE tenant_policies (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  control_id TEXT NOT NULL,         -- unique per tenant
+  origin TEXT NOT NULL,             -- 'derived' | 'custom'
+  based_on TEXT,                    -- original builtin control_id (for derived)
+  name TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  rego_source TEXT NOT NULL,        -- the Rego policy text
+  collector_id TEXT NOT NULL,       -- which collector provides facts
+  fact_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+  frameworks JSONB NOT NULL DEFAULT '[]'::jsonb,
+  tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (tenant_id, control_id)
+);
+```
+
+**Evaluation priority:** when evaluating facts, tenant policies
+override builtins for the same control_id. If a tenant has a derived
+`mssql-xp-cmdshell` policy, it replaces the builtin version for that
+tenant's evaluations. Other tenants still use the builtin.
 
 ### D10. Benefits of retroactive evaluation
 
@@ -362,39 +469,44 @@ each opening their own database connection.
 
 **Scope boundary:**
 
-- Policy editor UI (edit Rego in the browser) is a follow-on.
-- Dynamic policy thresholds per tenant are a follow-on.
 - Non-database collectors (OS config, file permissions) are future
   scope.
 - Policy testing framework (unit tests for Rego rules) is a follow-on.
+- PostgreSQL and MongoDB collectors follow the MSSQL pattern — same
+  architecture, different Go driver + queries.
 
 ## Implementation (PR split)
 
 1. **PR 1 — Facts schema + storage**: `collected_facts` table +
    `facts_collected` WSS handler + store methods.
 2. **PR 2 — OPA integration**: embed OPA Go library, policy loader,
-   evaluator, findings writer.
-3. **PR 3 — Collector format**: new collector.yaml + collect.py
-   schema. Convert one existing bundle (MSSQL) as proof of concept.
-4. **PR 4 — Agent collector runner**: new bundle type `collector`,
-   agent runs collect.py + streams facts.
+   evaluator, findings writer. Pre-compile at startup + hot-reload
+   on policy changes.
+3. **PR 3 — MSSQL collector Go binary**: new `cmd/mssql-collector/`
+   module. Cross-compile + publish to GCS alongside agent releases.
+   Agent downloads via EnsureTool. Replace the Python bundle.
+4. **PR 4 — Agent collector runner**: new directive type `collect`,
+   agent downloads collector binary + runs it + streams facts.
 5. **PR 5 — Rego policies for CIS MSSQL**: 35 Rego rules covering
-   all CIS MSSQL 2022 controls.
-6. **PR 6 — UI**: facts viewer in scan results, Rego source in
-   control detail drawer.
-7. **PR 7 — Retroactive evaluation**: `POST /evaluations/replay`
-   endpoint.
+   all CIS MSSQL 2022 controls. Engine-scoped namespacing.
+6. **PR 6 — Tenant policy management**: `tenant_policies` table,
+   CRUD API, Copy and Edit flow, in-browser Rego editor with
+   syntax highlighting + live preview.
+7. **PR 7 — UI polish**: facts viewer in scan results, Rego source
+   in control detail drawer, policy provenance badges.
+8. **PR 8 — Retroactive evaluation**: `POST /evaluations/replay`
+   endpoint + UI trigger.
 
-## Open questions
+## Resolved questions
 
-- **OQ1.** Should collectors be engine-level (one per DB engine,
-  collects everything) or domain-level (one per concern area —
-  `mssql-auth`, `mssql-network`, `mssql-audit`)? Lean engine-level
-  for fewer DB connections; domain-level if fact sets get too large.
-- **OQ2.** Rego module namespacing: `data.silkstrand.<engine>.<control>`
-  or flat `data.silkstrand.controls.<control_id>`? Lean engine-scoped
-  for natural grouping.
-- **OQ3.** Should the server pre-compile Rego policies at startup
-  (faster eval, slower startup) or compile on demand (slower first
-  eval, faster startup)? Lean pre-compile — policies change rarely,
-  eval happens on every scan.
+- **Q1. Collector granularity** — engine-level. One Go binary per
+  engine (mssql-collector, postgresql-collector, mongodb-collector).
+  Gathers all facts in one DB connection. Stored in GCS, cached
+  by agent via EnsureTool, hash-verified on download.
+- **Q2. Rego namespacing** — engine-scoped:
+  `data.silkstrand.mssql.xp_cmdshell`. Groups naturally by engine;
+  avoids flat namespace collisions.
+- **Q3. Policy compilation** — pre-compile at startup + hot-reload
+  on policy change. Steady-state eval is ~1ms. When a tenant saves
+  a custom policy or a new builtin is uploaded, re-compile just that
+  module. OPA's Go library supports incremental compilation.
