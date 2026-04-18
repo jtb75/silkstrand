@@ -237,6 +237,13 @@ type Store interface {
 	// scheduler dispatch. Returns endpoint ids for scope=endpoint/finding
 	// collections, asset ids for scope=asset.
 	CollectionEndpointIDs(ctx context.Context, collectionID string) ([]string, error)
+
+	// --- Collected facts (ADR 011 D4) --------------------------------
+
+	InsertCollectedFacts(ctx context.Context, f model.CollectedFacts) error
+	GetCollectedFactsByScan(ctx context.Context, scanID string) ([]model.CollectedFacts, error)
+	GetLatestFactsForEndpoint(ctx context.Context, endpointID string) (*model.CollectedFacts, error)
+	DeleteOldCollectedFacts(ctx context.Context, maxAge time.Duration) (int, error)
 }
 
 // --- Helper types passed through the store boundary ------------------

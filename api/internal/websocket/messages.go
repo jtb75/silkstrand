@@ -18,6 +18,7 @@ const (
 	TypeAgentLog               = "agent_log"               // ADR 008 — slog records streamed from agent
 	TypeCredentialTest         = "credential_test"         // server → agent: test a credential source via agent
 	TypeCredentialTestResult   = "credential_test_result"  // agent → server: result of credential test
+	TypeFactsCollected         = "facts_collected"         // ADR 011 — agent → server: raw collector facts
 )
 
 // AllowlistSnapshotPayload is the agent's most recently loaded scan
@@ -142,6 +143,14 @@ type CredentialTestResultPayload struct {
 	Username   string `json:"username,omitempty"`
 	Error      string `json:"error,omitempty"`
 	DurationMs int64  `json:"duration_ms"`
+}
+
+// FactsCollectedPayload is sent from agent to server with raw facts
+// gathered by a collector binary (ADR 011 D5).
+type FactsCollectedPayload struct {
+	ScanID      string          `json:"scan_id"`
+	CollectorID string          `json:"collector_id"`
+	Facts       json.RawMessage `json:"facts"`
 }
 
 // NewDirectiveMessage creates a Message containing an enriched scan directive.

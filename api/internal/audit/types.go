@@ -53,6 +53,9 @@ const (
 	EventProfileCreated   = "profile.created"
 	EventProfilePublished = "profile.published"
 	EventProfileDeleted   = "profile.deleted"
+
+	// Facts (ADR 011)
+	EventFactsCollected = "facts.collected"
 )
 
 // Actor types.

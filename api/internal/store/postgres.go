@@ -3027,3 +3027,63 @@ func (s *PostgresStore) PublishProfile(ctx context.Context, profileID string, bu
 	}
 	return nil
 }
+
+// ======================================================================
+// Collected facts (ADR 011 D4)
+// ======================================================================
+
+func (s *PostgresStore) InsertCollectedFacts(ctx context.Context, f model.CollectedFacts) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO collected_facts (id, tenant_id, asset_endpoint_id, scan_id, collector_id, facts, collected_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		f.ID, f.TenantID, f.AssetEndpointID, f.ScanID, f.CollectorID, f.Facts, f.CollectedAt)
+	if err != nil {
+		return fmt.Errorf("inserting collected facts: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) GetCollectedFactsByScan(ctx context.Context, scanID string) ([]model.CollectedFacts, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, asset_endpoint_id, scan_id, collector_id, facts, collected_at
+		   FROM collected_facts WHERE scan_id = $1 ORDER BY collected_at ASC`, scanID)
+	if err != nil {
+		return nil, fmt.Errorf("querying collected facts by scan: %w", err)
+	}
+	defer rows.Close()
+	var out []model.CollectedFacts
+	for rows.Next() {
+		var f model.CollectedFacts
+		if err := rows.Scan(&f.ID, &f.TenantID, &f.AssetEndpointID, &f.ScanID, &f.CollectorID, &f.Facts, &f.CollectedAt); err != nil {
+			return nil, fmt.Errorf("scanning collected facts: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetLatestFactsForEndpoint(ctx context.Context, endpointID string) (*model.CollectedFacts, error) {
+	var f model.CollectedFacts
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, asset_endpoint_id, scan_id, collector_id, facts, collected_at
+		   FROM collected_facts WHERE asset_endpoint_id = $1 ORDER BY collected_at DESC LIMIT 1`, endpointID).
+		Scan(&f.ID, &f.TenantID, &f.AssetEndpointID, &f.ScanID, &f.CollectorID, &f.Facts, &f.CollectedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting latest facts for endpoint: %w", err)
+	}
+	return &f, nil
+}
+
+func (s *PostgresStore) DeleteOldCollectedFacts(ctx context.Context, maxAge time.Duration) (int, error) {
+	cutoff := time.Now().UTC().Add(-maxAge)
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM collected_facts WHERE collected_at < $1`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("deleting old collected facts: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
+}
