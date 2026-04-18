@@ -1,6 +1,6 @@
 # ADR 003: Recon + compliance pipeline (active design)
 
-**Status:** Proposed (active design)
+**Status:** Accepted (R0–R1c shipped v0.1.44, asset-first refactor v0.1.49)
 **Date:** 2026-04-13
 **Supersedes:** [ADR 002](./002-recon-pipeline.md)
 **Related:** [ADR 004](./004-credential-resolver.md) (credential resolver)

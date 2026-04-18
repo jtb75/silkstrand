@@ -1,6 +1,6 @@
 # ADR 010: Hybrid bundle architecture — controls + computed compositions
 
-**Status:** Proposed
+**Status:** Accepted (shipped v0.1.82 — controls, builder, runner, upload, UI)
 **Date:** 2026-04-17
 **Related:** [ADR 003](./003-recon-pipeline.md) (recon pipeline — bundle execution),
 [ADR 007](./007-findings-scheduler.md) (findings table — `source` + `source_id`
