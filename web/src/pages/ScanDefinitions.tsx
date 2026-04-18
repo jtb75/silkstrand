@@ -230,11 +230,13 @@ export default function ScanDefinitions() {
         ...(old ?? []),
         {
           id: `optimistic-${Date.now()}`,
+          tenant_id: '',
           scan_definition_id: defId,
           status: 'pending',
           scan_type: 'compliance',
+          bundle_id: '',
           created_at: new Date().toISOString(),
-        } as Scan,
+        } as unknown as Scan,
       ]);
     },
     onSuccess: () => {
