@@ -1,6 +1,6 @@
 # ADR 003: Recon + compliance pipeline (active design)
 
-**Status:** Accepted (R0–R1c shipped v0.1.44, asset-first refactor v0.1.49)
+**Status:** Superseded by [ADR 006](./006-asset-first-data-model.md) + [ADR 007](./007-findings-scheduler.md). Pipeline stages (naabu → httpx → nuclei) remain; schema replaced.
 **Date:** 2026-04-13
 **Supersedes:** [ADR 002](./002-recon-pipeline.md)
 **Related:** [ADR 004](./004-credential-resolver.md) (credential resolver)
