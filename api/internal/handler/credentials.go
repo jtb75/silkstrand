@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jtb75/silkstrand/api/internal/awssm"
 	"github.com/jtb75/silkstrand/api/internal/crypto"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
@@ -290,6 +291,13 @@ func (h *CredentialsHandler) CreateSource(w http.ResponseWriter, r *http.Request
 		}
 		req.Config = cfg
 	}
+	// AWS Secrets Manager: validate required config fields.
+	if req.Type == model.CredentialSourceTypeAWSSecretsManager {
+		if err := validateAWSSecretsManagerConfig(req.Config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	id, err := h.store.CreateCredentialSource(r.Context(), claims.TenantID, req.Name, req.Type, req.Config)
 	if err != nil {
 		slog.Error("creating credential source", "error", err)
@@ -470,6 +478,130 @@ func (h *CredentialsHandler) DeleteSource(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// validateAWSSecretsManagerConfig checks that the required fields are
+// present in the config for an aws_secrets_manager credential source.
+// We don't validate connectivity at create time — that's what the
+// test endpoint is for.
+func validateAWSSecretsManagerConfig(raw json.RawMessage) error {
+	var cfg struct {
+		Region           string `json:"region"`
+		SecretARN        string `json:"secret_arn"`
+		SecretKeyUsername string `json:"secret_key_username"`
+		SecretKeyPassword string `json:"secret_key_password"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return errors.New("config must be a JSON object")
+	}
+	if cfg.Region == "" {
+		return errors.New("region is required for aws_secrets_manager")
+	}
+	if cfg.SecretARN == "" {
+		return errors.New("secret_arn is required for aws_secrets_manager")
+	}
+	if cfg.SecretKeyUsername == "" {
+		return errors.New("secret_key_username is required for aws_secrets_manager")
+	}
+	if cfg.SecretKeyPassword == "" {
+		return errors.New("secret_key_password is required for aws_secrets_manager")
+	}
+	return nil
+}
+
+// TestSource — POST /api/v1/credential-sources/{id}/test
+// Attempts to resolve the credential source and returns success/failure.
+// For aws_secrets_manager: calls AWS to fetch the secret and extract
+// username + password. Returns the username (never the password) on success.
+func (h *CredentialsHandler) TestSource(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.TenantID == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id := r.PathValue("id")
+	cs, err := h.store.GetCredentialSource(r.Context(), id)
+	if err != nil {
+		slog.Error("testing credential source", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if cs == nil || cs.TenantID != claims.TenantID {
+		writeError(w, http.StatusNotFound, "credential source not found")
+		return
+	}
+
+	switch cs.Type {
+	case model.CredentialSourceTypeAWSSecretsManager:
+		var cfg awssm.ResolveConfig
+		if err := json.Unmarshal(cs.Config, &cfg); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   "invalid config: " + err.Error(),
+			})
+			return
+		}
+		cred, err := awssm.Resolve(r.Context(), cfg)
+		if err != nil {
+			slog.Warn("credential_source.test",
+				"source_id", cs.ID, "type", cs.Type, "error", err)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   err.Error(),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":  true,
+			"username": cred.Username,
+		})
+
+	case model.CredentialSourceTypeStatic:
+		// For static sources, verify we can decrypt the stored credential.
+		var cfg model.StaticCredentialConfig
+		if err := json.Unmarshal(cs.Config, &cfg); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   "invalid config",
+			})
+			return
+		}
+		data, decErr := base64Enc.DecodeString(cfg.EncryptedData)
+		if decErr != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   "failed to decode credential data",
+			})
+			return
+		}
+		if len(h.encKey) > 0 {
+			decrypted, decErr := crypto.Decrypt(data, h.encKey)
+			if decErr != nil {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"success": false,
+					"error":   "failed to decrypt credential",
+				})
+				return
+			}
+			var creds map[string]string
+			if err := json.Unmarshal(decrypted, &creds); err == nil {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"success":  true,
+					"username": creds["username"],
+				})
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+		})
+
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   "test not supported for type: " + cs.Type,
+		})
+	}
 }
 
 // DELETE /api/v1/targets/{id}/credential

@@ -332,6 +332,11 @@ export const updateCredentialSource = (id: string, body: { name?: string; config
 export const deleteCredentialSource = (id: string) =>
   request<void>(`/api/v1/credential-sources/${id}`, { method: 'DELETE' });
 
+export const testCredentialSource = (id: string) =>
+  request<{ success: boolean; username?: string; error?: string }>(
+    `/api/v1/credential-sources/${id}/test`, { method: 'POST' },
+  );
+
 export type MappingScopeKind = 'collection' | 'asset_endpoint' | 'asset';
 
 export interface CredentialMapping {

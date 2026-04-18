@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jtb75/silkstrand/api/internal/awssm"
 	"github.com/jtb75/silkstrand/api/internal/crypto"
 	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/model"
@@ -272,17 +273,18 @@ func (h *AgentHandler) forwardDirective(ctx context.Context, agentID string, d p
 func (h *AgentHandler) fetchCredentialForDirective(ctx context.Context, d pubsub.Directive) json.RawMessage {
 	// 1. Try the target-level credential_source (direct binding).
 	if d.TargetID != "" {
-		encryptedCreds, _, credErr := h.store.GetStaticCredentialForTarget(ctx, d.TargetID)
-		switch {
-		case credErr != nil:
+		cs, err := h.store.GetCredentialSourceByTarget(ctx, d.TargetID)
+		if err != nil {
 			slog.Info("credential.fetch",
-				"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
-				"outcome", "error", "error", credErr)
-		case encryptedCreds != nil:
-			return h.decryptCredential(encryptedCreds, d.ScanID, d.TargetID, "target")
-		default:
+				"target_id", d.TargetID, "scan_id", d.ScanID,
+				"outcome", "error", "error", err)
+		} else if cs != nil {
+			if result := h.resolveCredentialSource(ctx, cs, d.ScanID, d.TargetID, "target"); result != nil {
+				return result
+			}
+		} else {
 			slog.Info("credential.fetch",
-				"source_type", "static", "target_id", d.TargetID, "scan_id", d.ScanID,
+				"target_id", d.TargetID, "scan_id", d.ScanID,
 				"outcome", "miss")
 		}
 	}
@@ -295,11 +297,51 @@ func (h *AgentHandler) fetchCredentialForDirective(ctx context.Context, d pubsub
 			slog.Warn("credential.fetch.mapping_resolve",
 				"endpoint", d.AssetEndpointID, "scan_id", d.ScanID, "error", err)
 		} else if cs != nil {
-			return h.decryptStaticSource(cs, d.ScanID, d.AssetEndpointID)
+			if result := h.resolveCredentialSource(ctx, cs, d.ScanID, d.AssetEndpointID, "mapping"); result != nil {
+				return result
+			}
 		}
 	}
 
 	return nil
+}
+
+// resolveCredentialSource dispatches on the source type and returns
+// the plaintext credential JSON to embed in the directive. Returns
+// nil on failure (errors are logged).
+func (h *AgentHandler) resolveCredentialSource(ctx context.Context, cs *model.CredentialSource, scanID, ref, via string) json.RawMessage {
+	switch cs.Type {
+	case model.CredentialSourceTypeStatic:
+		return h.decryptStaticSource(cs, scanID, ref)
+
+	case model.CredentialSourceTypeAWSSecretsManager:
+		var cfg awssm.ResolveConfig
+		if err := json.Unmarshal(cs.Config, &cfg); err != nil {
+			slog.Error("credential.fetch.aws_parse_config",
+				"source_id", cs.ID, "scan_id", scanID, "error", err)
+			return nil
+		}
+		cred, err := awssm.Resolve(ctx, cfg)
+		if err != nil {
+			slog.Error("credential.fetch.aws_resolve",
+				"source_id", cs.ID, "scan_id", scanID, "via", via,
+				"outcome", "error", "error", err)
+			return nil
+		}
+		credJSON, _ := json.Marshal(map[string]string{
+			"username": cred.Username,
+			"password": cred.Password,
+		})
+		slog.Info("credential.fetch",
+			"source_type", "aws_secrets_manager", "source_id", cs.ID,
+			"scan_id", scanID, "via", via, "outcome", "ok")
+		return credJSON
+
+	default:
+		slog.Warn("credential.fetch.unsupported_type",
+			"source_type", cs.Type, "source_id", cs.ID, "scan_id", scanID)
+		return nil
+	}
 }
 
 // decryptCredential decrypts a raw credential blob (from GetStaticCredentialForTarget).
