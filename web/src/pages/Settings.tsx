@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { authApi } from '../api/authClient';
-import { getToken } from '../api/client';
+import { getToken, listAuditEvents, type AuditEvent } from '../api/client';
 import { useAuth } from '../auth/useAuth';
 import Team from './Team';
 import Credentials from './Credentials';
@@ -9,7 +9,7 @@ import Credentials from './Credentials';
 // Band 4). Team is folded in as a tab; the old top-level Team entry is
 // gone. Credentials consolidates DB/host auth + Integrations + Vaults.
 // Bundles moved to the top-level Compliance page (Level 1).
-// Audit log is a placeholder until ADR 005 / O7.
+// Audit log implemented per ADR 005 / O7.
 
 type Tab = 'profile' | 'team' | 'credentials' | 'audit';
 
@@ -34,7 +34,7 @@ export default function Settings() {
         {tab === 'profile' && <ProfileTab />}
         {tab === 'team' && isAdmin && <Team />}
         {tab === 'credentials' && <Credentials />}
-        {tab === 'audit' && isAdmin && <AuditPlaceholder />}
+        {tab === 'audit' && isAdmin && <AuditTab />}
       </div>
     </div>
   );
@@ -153,14 +153,168 @@ function ProfileTab() {
   );
 }
 
-function AuditPlaceholder() {
+// Event type → badge colour mapping per ADR 005 D7.
+function eventBadgeStyle(eventType: string): React.CSSProperties {
+  const base: React.CSSProperties = {
+    display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+    fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+  };
+  if (eventType.startsWith('credential.')) return { ...base, background: '#dbeafe', color: '#1e40af' };
+  if (eventType.startsWith('scan')) return { ...base, background: '#f3f4f6', color: '#374151' };
+  if (eventType.startsWith('rule.')) return { ...base, background: '#fef3c7', color: '#92400e' };
+  if (eventType.startsWith('agent.')) return { ...base, background: '#d1fae5', color: '#065f46' };
+  if (eventType.startsWith('collection.')) return { ...base, background: '#ede9fe', color: '#5b21b6' };
+  return { ...base, background: '#f3f4f6', color: '#374151' };
+}
+
+const EVENT_TYPE_OPTIONS = [
+  '', 'credential.fetch', 'credential.created', 'credential.updated', 'credential.deleted',
+  'credential.mapped', 'credential.unmapped', 'credential.test',
+  'scan.dispatched', 'scan.completed', 'scan.failed',
+  'scan_definition.created', 'scan_definition.updated', 'scan_definition.deleted', 'scan_definition.executed',
+  'rule.created', 'rule.updated', 'rule.deleted', 'rule.fired',
+  'agent.connected', 'agent.disconnected', 'agent.upgraded', 'agent.key_rotated', 'agent.deleted', 'agent.created',
+  'collection.created', 'collection.updated', 'collection.deleted',
+];
+
+function AuditTab() {
+  const [items, setItems] = useState<AuditEvent[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | undefined>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Filters
+  const [eventType, setEventType] = useState('');
+  const [resourceSearch, setResourceSearch] = useState('');
+
+  const fetchEvents = useCallback(async (cursor?: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const result = await listAuditEvents({
+        event_type: eventType || undefined,
+        resource_id: resourceSearch || undefined,
+        since,
+        limit: 50,
+        cursor,
+      });
+      if (cursor) {
+        setItems(prev => [...prev, ...result.items]);
+      } else {
+        setItems(result.items);
+      }
+      setNextCursor(result.next_cursor);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [eventType, resourceSearch]);
+
+  useEffect(() => { fetchEvents(); }, [fetchEvents]);
+
+  function formatTime(iso: string): string {
+    const d = new Date(iso);
+    return d.toLocaleString();
+  }
+
+  function formatActor(ev: AuditEvent): string {
+    if (ev.actor_type === 'system') return 'system';
+    const id = ev.actor_id ?? '';
+    return `${ev.actor_type}:${id.slice(0, 8)}`;
+  }
+
+  function formatResource(ev: AuditEvent): string {
+    if (!ev.resource_type) return '-';
+    const id = ev.resource_id ?? '';
+    return `${ev.resource_type}:${id.slice(0, 8)}`;
+  }
+
   return (
     <section>
       <h2>Audit log</h2>
-      <p className="muted">
-        Audit events will be surfaced here once ADR 005 / O7 ships. Read-only view of
-        credential reads, tenant-admin actions, and scan lifecycle events.
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Read-only log of privileged operations. Showing the last 7 days.
       </p>
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <select value={eventType} onChange={e => setEventType(e.target.value)}
+          style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #d1d5db' }}>
+          <option value="">All event types</option>
+          {EVENT_TYPE_OPTIONS.filter(Boolean).map(t => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+        <input
+          type="text" placeholder="Resource ID..."
+          value={resourceSearch} onChange={e => setResourceSearch(e.target.value)}
+          style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #d1d5db', width: 240 }}
+        />
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+        <thead>
+          <tr style={{ borderBottom: '2px solid #e5e7eb', textAlign: 'left' }}>
+            <th style={{ padding: '8px 12px' }}>Timestamp</th>
+            <th style={{ padding: '8px 12px' }}>Event Type</th>
+            <th style={{ padding: '8px 12px' }}>Actor</th>
+            <th style={{ padding: '8px 12px' }}>Resource</th>
+            <th style={{ padding: '8px 12px' }}>Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(ev => (
+            <>
+              <tr key={ev.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>{formatTime(ev.occurred_at)}</td>
+                <td style={{ padding: '8px 12px' }}>
+                  <span style={eventBadgeStyle(ev.event_type)}>{ev.event_type}</span>
+                </td>
+                <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12 }}>{formatActor(ev)}</td>
+                <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12 }}>{formatResource(ev)}</td>
+                <td style={{ padding: '8px 12px' }}>
+                  <button
+                    onClick={() => setExpandedId(expandedId === ev.id ? null : ev.id)}
+                    style={{ background: 'none', border: 'none', color: '#0f766e', cursor: 'pointer', fontSize: 12 }}
+                  >
+                    {expandedId === ev.id ? 'Hide' : 'Show'}
+                  </button>
+                </td>
+              </tr>
+              {expandedId === ev.id && (
+                <tr key={`${ev.id}-detail`}>
+                  <td colSpan={5} style={{ padding: '8px 12px 16px', background: '#f9fafb' }}>
+                    <pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {JSON.stringify(ev.payload, null, 2)}
+                    </pre>
+                  </td>
+                </tr>
+              )}
+            </>
+          ))}
+          {items.length === 0 && !loading && (
+            <tr><td colSpan={5} style={{ padding: 24, textAlign: 'center', color: '#9ca3af' }}>
+              No audit events found for the selected filters.
+            </td></tr>
+          )}
+        </tbody>
+      </table>
+
+      {loading && <p className="muted" style={{ marginTop: 12 }}>Loading...</p>}
+
+      {nextCursor && !loading && (
+        <button
+          className="btn btn-secondary"
+          onClick={() => fetchEvents(nextCursor)}
+          style={{ marginTop: 12 }}
+        >
+          Load more
+        </button>
+      )}
     </section>
   );
 }

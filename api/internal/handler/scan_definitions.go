@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jtb75/silkstrand/api/internal/audit"
+	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/scheduler"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -20,10 +22,11 @@ import (
 type ScanDefinitionsHandler struct {
 	store store.Store
 	disp  scheduler.Dispatcher
+	audit audit.Writer
 }
 
-func NewScanDefinitionsHandler(s store.Store, d scheduler.Dispatcher) *ScanDefinitionsHandler {
-	return &ScanDefinitionsHandler{store: s, disp: d}
+func NewScanDefinitionsHandler(s store.Store, d scheduler.Dispatcher, aw audit.Writer) *ScanDefinitionsHandler {
+	return &ScanDefinitionsHandler{store: s, disp: d, audit: aw}
 }
 
 type scanDefRequest struct {
@@ -172,6 +175,13 @@ func (h *ScanDefinitionsHandler) Create(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to create scan definition")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: out.TenantID, EventType: audit.EventScanDefCreated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "scan_definition", ResourceID: out.ID,
+		Payload: map[string]any{"name": out.Name, "kind": out.Kind},
+	})
 	writeJSON(w, http.StatusCreated, out)
 }
 
@@ -213,6 +223,12 @@ func (h *ScanDefinitionsHandler) Update(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "scan definition not found")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: out.TenantID, EventType: audit.EventScanDefUpdated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "scan_definition", ResourceID: out.ID,
+	})
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -227,6 +243,12 @@ func (h *ScanDefinitionsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to delete scan definition")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventScanDefDeleted,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "scan_definition", ResourceID: id,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -251,6 +273,13 @@ func (h *ScanDefinitionsHandler) Execute(w http.ResponseWriter, r *http.Request)
 	}
 	now := time.Now().UTC()
 	_ = h.store.SetScanDefinitionLastRun(r.Context(), id, now, "dispatched")
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: def.TenantID, EventType: audit.EventScanDefExecuted,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "scan_definition", ResourceID: id,
+		Payload: map[string]any{"name": def.Name},
+	})
 	w.WriteHeader(http.StatusAccepted)
 }
 

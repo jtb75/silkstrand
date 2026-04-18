@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jtb75/silkstrand/api/internal/audit"
+	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/rules"
 	"github.com/jtb75/silkstrand/api/internal/store"
@@ -19,10 +21,11 @@ import (
 // arbitrary predicates without validating them beyond JSON-wellformedness.
 type CollectionsHandler struct {
 	store store.Store
+	audit audit.Writer
 }
 
-func NewCollectionsHandler(s store.Store) *CollectionsHandler {
-	return &CollectionsHandler{store: s}
+func NewCollectionsHandler(s store.Store, aw audit.Writer) *CollectionsHandler {
+	return &CollectionsHandler{store: s, audit: aw}
 }
 
 type createCollectionRequest struct {
@@ -105,6 +108,13 @@ func (h *CollectionsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create collection")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: out.TenantID, EventType: audit.EventCollectionCreated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "collection", ResourceID: out.ID,
+		Payload: map[string]any{"name": out.Name, "scope": out.Scope},
+	})
 	writeJSON(w, http.StatusCreated, out)
 }
 
@@ -148,6 +158,12 @@ func (h *CollectionsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "collection not found")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: out.TenantID, EventType: audit.EventCollectionUpdated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "collection", ResourceID: out.ID,
+	})
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -162,6 +178,12 @@ func (h *CollectionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete collection")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventCollectionDeleted,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "collection", ResourceID: id,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jtb75/silkstrand/api/internal/audit"
 	"github.com/jtb75/silkstrand/api/internal/awssm"
 	"github.com/jtb75/silkstrand/api/internal/crypto"
 	"github.com/jtb75/silkstrand/api/internal/events"
@@ -30,10 +31,11 @@ type AgentHandler struct {
 	ps      *pubsub.PubSub
 	credKey []byte
 	bus     events.Bus
+	audit   audit.Writer
 }
 
-func NewAgentHandler(hub *websocket.Hub, s store.Store, ps *pubsub.PubSub, credKey []byte, bus events.Bus) *AgentHandler {
-	return &AgentHandler{hub: hub, store: s, ps: ps, credKey: credKey, bus: bus}
+func NewAgentHandler(hub *websocket.Hub, s store.Store, ps *pubsub.PubSub, credKey []byte, bus events.Bus, aw audit.Writer) *AgentHandler {
+	return &AgentHandler{hub: hub, store: s, ps: ps, credKey: credKey, bus: bus, audit: aw}
 }
 
 // Connect handles the WebSocket upgrade for agent connections.
@@ -101,6 +103,11 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("updating agent status", "agent_id", agentID, "error", err)
 	}
 	h.publishAgentStatus(agent.TenantID, agentID, "connected")
+	h.audit.Emit(ctx, audit.Event{
+		TenantID: agent.TenantID, EventType: audit.EventAgentConnected,
+		ActorType: audit.ActorAgent, ActorID: agentID,
+		ResourceType: "agent", ResourceID: agentID,
+	})
 
 	// HandleConnection blocks until the agent disconnects
 	if err := h.hub.HandleConnection(w, r, agentID); err != nil {
@@ -112,6 +119,11 @@ func (h *AgentHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("updating agent status on disconnect", "agent_id", agentID, "error", err)
 	}
 	h.publishAgentStatus(agent.TenantID, agentID, "disconnected")
+	h.audit.Emit(context.Background(), audit.Event{
+		TenantID: agent.TenantID, EventType: audit.EventAgentDisconnected,
+		ActorType: audit.ActorAgent, ActorID: agentID,
+		ResourceType: "agent", ResourceID: agentID,
+	})
 
 	if count, err := h.store.FailRunningScansForAgent(context.Background(), agentID); err != nil {
 		slog.Error("failing scans on agent disconnect", "agent_id", agentID, "error", err)
@@ -335,6 +347,11 @@ func (h *AgentHandler) resolveCredentialSource(ctx context.Context, cs *model.Cr
 		slog.Info("credential.fetch",
 			"source_type", "aws_secrets_manager", "source_id", cs.ID,
 			"scan_id", scanID, "via", via, "outcome", "ok")
+		h.audit.Emit(ctx, audit.Event{
+			TenantID: cs.TenantID, EventType: audit.EventCredentialFetch,
+			ActorType: audit.ActorSystem, ResourceType: "credential_source", ResourceID: cs.ID,
+			Payload: map[string]any{"source_type": "aws_secrets_manager", "scan_id": scanID, "via": via},
+		})
 		return credJSON
 
 	default:
@@ -375,7 +392,15 @@ func (h *AgentHandler) decryptStaticSource(cs *model.CredentialSource, scanID, e
 			"source_id", cs.ID, "scan_id", scanID, "error", err)
 		return nil
 	}
-	return h.decryptCredential(data, scanID, endpointID, "mapping")
+	result := h.decryptCredential(data, scanID, endpointID, "mapping")
+	if result != nil {
+		h.audit.Emit(context.Background(), audit.Event{
+			TenantID: cs.TenantID, EventType: audit.EventCredentialFetch,
+			ActorType: audit.ActorSystem, ResourceType: "credential_source", ResourceID: cs.ID,
+			Payload: map[string]any{"source_type": "static", "scan_id": scanID, "via": "mapping"},
+		})
+	}
+	return result
 }
 
 func base64Decode(s string) ([]byte, error) {

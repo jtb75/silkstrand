@@ -23,6 +23,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 
 	"github.com/jtb75/silkstrand/api/internal/allowlist"
+	"github.com/jtb75/silkstrand/api/internal/audit"
 	"github.com/jtb75/silkstrand/api/internal/config"
 	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/handler"
@@ -70,6 +71,19 @@ func run() error {
 		defer ps.Close()
 	}
 
+	// Audit writer (ADR 005 D4). Enabled by default; disable with
+	// AUDIT_EVENTS_ENABLED=false. PostgresWriter batch-inserts via a
+	// background goroutine; NoopWriter drops silently.
+	var auditW audit.Writer
+	if cfg.AuditEventsEnabled {
+		auditW = audit.NewPostgresWriter(pgStore.DB())
+		slog.Info("audit events enabled")
+	} else {
+		auditW = audit.NoopWriter{}
+		slog.Info("audit events disabled")
+	}
+	defer auditW.Close()
+
 	websocket.AllowedOrigins = cfg.AllowedOrigins
 	hub := websocket.NewHub()
 	notifier := notify.New(pgStore, cfg.CredentialEncryptionKey)
@@ -78,7 +92,7 @@ func run() error {
 	// and to the events handler that exposes the SSE subscriber endpoint.
 	eventBus := events.NewMemoryBus()
 	sched := scheduler.New(pgStore, ps, eventBus)
-	hub.OnMessage = buildOnMessage(pgStore, ps, notifier, sched.D, eventBus)
+	hub.OnMessage = buildOnMessage(pgStore, ps, notifier, sched.D, eventBus, auditW)
 
 	// Scheduler goroutine (ADR 007 D4). Started before routes are served
 	// so locally-due definitions dispatch promptly on boot.
@@ -90,9 +104,9 @@ func run() error {
 	healthH := handler.NewHealthHandler(pgStore, redisPingFunc(ps))
 	targetH := handler.NewTargetHandler(pgStore)
 	scanH := handler.NewScanHandler(pgStore, ps, hub, eventBus)
-	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey, eventBus)
-	agentsH := handler.NewAgentsHandler(pgStore, hub, ps, eventBus, cfg.AgentReleasesURL)
-	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey)
+	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey, eventBus, auditW)
+	agentsH := handler.NewAgentsHandler(pgStore, hub, ps, eventBus, auditW, cfg.AgentReleasesURL)
+	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey, auditW)
 	probeH := handler.NewProbeHandler(pgStore, ps, cfg.CredentialEncryptionKey)
 	bundlesH := handler.NewBundlesHandler(pgStore, cfg.BundleStoragePath, cfg.BundleGCSBucket)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
@@ -100,13 +114,14 @@ func run() error {
 
 	// Handlers — new asset-first surface (collections has working impls;
 	// the rest return 501 in P1).
-	collectionsH := handler.NewCollectionsHandler(pgStore)
+	collectionsH := handler.NewCollectionsHandler(pgStore, auditW)
 	findingsH := handler.NewFindingsHandler(pgStore)
-	scanDefsH := handler.NewScanDefinitionsHandler(pgStore, sched.D)
-	credMapH := handler.NewCredentialMappingsHandler(pgStore)
+	scanDefsH := handler.NewScanDefinitionsHandler(pgStore, sched.D, auditW)
+	credMapH := handler.NewCredentialMappingsHandler(pgStore, auditW)
 	dashH := handler.NewDashboardHandler(pgStore)
 	profilesH := handler.NewProfilesHandler(pgStore, cfg.BundleControlsDir, cfg.BundleStoragePath)
-	rulesH := handler.NewCorrelationRulesHandler(pgStore)
+	rulesH := handler.NewCorrelationRulesHandler(pgStore, auditW)
+	auditH := handler.NewAuditHandler(pgStore.DB())
 	eventsH := handler.NewEventsHandler(eventBus, cfg.JWTSecret)
 
 	mux := http.NewServeMux()
@@ -261,6 +276,9 @@ func run() error {
 	apiMux.HandleFunc("GET /api/v1/dashboard/suggested-actions", dashH.GetSuggestedActions)
 	apiMux.HandleFunc("GET /api/v1/dashboard/recent-activity", dashH.GetRecentActivity)
 
+	// Audit events (ADR 005 D5).
+	apiMux.HandleFunc("GET /api/v1/audit-events", auditH.List)
+
 	authedAPI := middleware.Auth(cfg.JWTSecret)(middleware.Tenant(pgStore)(apiMux))
 	mux.Handle("/api/", authedAPI)
 
@@ -299,7 +317,7 @@ func run() error {
 // asset / asset_endpoint schema; the rule engine fires per endpoint.
 // ADR 008 adds agent_log: republish through the event bus (no DB write)
 // for SSE fan-out to the Agents and Scan-Results consoles.
-func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatcher, sched scheduler.Dispatcher, bus events.Bus) func(agentID string, msg websocket.Message) {
+func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatcher, sched scheduler.Dispatcher, bus events.Bus, auditW audit.Writer) func(agentID string, msg websocket.Message) {
 	return func(agentID string, msg websocket.Message) {
 		ctx := context.Background()
 
@@ -319,7 +337,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			slog.Info("scan started", "agent_id", agentID, "scan_id", payload.ScanID)
 
 		case websocket.TypeScanResults:
-			handleScanResults(ctx, s, bus, agentID, msg.Payload)
+			handleScanResults(ctx, s, bus, auditW, agentID, msg.Payload)
 			sched.DrainAgentQueue(ctx, agentID)
 
 		case websocket.TypeScanError:
@@ -333,6 +351,12 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			}
 			if scan, _ := s.GetScanByID(ctx, payload.ScanID); scan != nil {
 				handler.PublishScanStatusFromScan(ctx, bus, scan)
+				auditW.Emit(ctx, audit.Event{
+					TenantID: scan.TenantID, EventType: audit.EventScanFailed,
+					ActorType: audit.ActorAgent, ActorID: agentID,
+					ResourceType: "scan", ResourceID: scan.ID,
+					Payload: map[string]any{"error": payload.Error},
+				})
 			}
 			slog.Warn("scan failed", "agent_id", agentID, "scan_id", payload.ScanID, "error", payload.Error)
 			sched.DrainAgentQueue(ctx, agentID)
@@ -362,7 +386,7 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			handleAllowlistSnapshot(ctx, s, agentID, msg.Payload)
 
 		case websocket.TypeAssetDiscovered:
-			handleAssetDiscovered(ctx, s, notifier, sched, bus, agentID, msg.Payload)
+			handleAssetDiscovered(ctx, s, notifier, sched, bus, auditW, agentID, msg.Payload)
 
 		case websocket.TypeAgentLog:
 			handleAgentLog(ctx, s, bus, agentID, msg.Payload)
@@ -424,7 +448,7 @@ func redisPingFunc(ps *pubsub.PubSub) func(context.Context) error {
 // service, ...) tuples into assets + asset_endpoints, logs provenance,
 // derives asset_events for deltas, and runs the collection-aware rule
 // engine per endpoint.
-func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.Dispatcher, sched scheduler.Dispatcher, bus events.Bus, agentID string, payload json.RawMessage) {
+func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.Dispatcher, sched scheduler.Dispatcher, bus events.Bus, auditW audit.Writer, agentID string, payload json.RawMessage) {
 	var batch websocket.AssetDiscoveredPayload
 	if err := json.Unmarshal(payload, &batch); err != nil {
 		slog.Error("parsing asset_discovered payload", "agent_id", agentID, "error", err)
@@ -517,7 +541,7 @@ func handleAssetDiscovered(ctx context.Context, s store.Store, notifier *notify.
 			slog.Error("appending asset events", "endpoint", ep.ID, "error", err)
 		}
 		ingestNucleiFindings(tctx, s, scan.TenantID, scan.ID, ep.ID, a.CVEs)
-		runRuleActions(tctx, s, notifier, sched, activeRules, asset, ep)
+		runRuleActions(tctx, s, notifier, sched, auditW, activeRules, asset, ep)
 	}
 }
 
@@ -725,12 +749,21 @@ func cvesFromPayload(raw json.RawMessage) []string {
 // dispatch — requires a scan_definition to execute against, which is
 // P3-backend). auto_create_target is accepted but logged as no-op until
 // P3 lands scan_definitions.
-func runRuleActions(ctx context.Context, s store.Store, notifier *notify.Dispatcher, sched scheduler.Dispatcher, ruleSet []model.CorrelationRule, asset *model.Asset, ep *model.AssetEndpoint) {
+func runRuleActions(ctx context.Context, s store.Store, notifier *notify.Dispatcher, sched scheduler.Dispatcher, auditW audit.Writer, ruleSet []model.CorrelationRule, asset *model.Asset, ep *model.AssetEndpoint) {
 	if asset == nil || ep == nil || len(ruleSet) == 0 {
 		return
 	}
 	fired := rules.EvaluateAsset(ctx, s, ruleSet, asset, ep)
 	for _, act := range fired {
+		auditW.Emit(ctx, audit.Event{
+			TenantID: act.TenantID, EventType: audit.EventRuleFired,
+			ActorType: audit.ActorSystem,
+			ResourceType: "rule", ResourceID: act.RuleID,
+			Payload: map[string]any{
+				"rule_name": act.RuleName, "action": act.Type,
+				"asset_id": asset.ID, "endpoint_id": ep.ID,
+			},
+		})
 		switch act.Type {
 		case rules.ActionSuggestTarget:
 			slog.Info("rule.fired",
@@ -915,7 +948,7 @@ func strPtrOrNil(s string) *string {
 // array under `results` with per-control rows. Shape is tolerant —
 // each row provides at least id/status; title + severity + evidence
 // are optional.
-func handleScanResults(ctx context.Context, s store.Store, bus events.Bus, agentID string, payload json.RawMessage) {
+func handleScanResults(ctx context.Context, s store.Store, bus events.Bus, auditW audit.Writer, agentID string, payload json.RawMessage) {
 	var wrapper struct {
 		ScanID  string            `json:"scan_id"`
 		Results []json.RawMessage `json:"results"`
@@ -993,6 +1026,12 @@ func handleScanResults(ctx context.Context, s store.Store, bus events.Bus, agent
 		}
 		if completedScan, _ := s.GetScanByID(ctx, wrapper.ScanID); completedScan != nil {
 			handler.PublishScanStatusFromScan(ctx, bus, completedScan)
+			auditW.Emit(ctx, audit.Event{
+				TenantID: completedScan.TenantID, EventType: audit.EventScanCompleted,
+				ActorType: audit.ActorAgent, ActorID: agentID,
+				ResourceType: "scan", ResourceID: completedScan.ID,
+				Payload: map[string]any{"results_count": len(wrapper.Results)},
+			})
 		}
 	}
 

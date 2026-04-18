@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jtb75/silkstrand/api/internal/audit"
 	"github.com/jtb75/silkstrand/api/internal/crypto"
 	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/middleware"
@@ -28,11 +29,12 @@ type AgentsHandler struct {
 	hub         *websocket.Hub
 	ps          *pubsub.PubSub
 	bus         events.Bus
+	audit       audit.Writer
 	releasesURL string // base URL for agent binaries/installer, e.g. GCS bucket
 }
 
-func NewAgentsHandler(s store.Store, hub *websocket.Hub, ps *pubsub.PubSub, bus events.Bus, releasesURL string) *AgentsHandler {
-	return &AgentsHandler{store: s, hub: hub, ps: ps, bus: bus, releasesURL: releasesURL}
+func NewAgentsHandler(s store.Store, hub *websocket.Hub, ps *pubsub.PubSub, bus events.Bus, aw audit.Writer, releasesURL string) *AgentsHandler {
+	return &AgentsHandler{store: s, hub: hub, ps: ps, bus: bus, audit: aw, releasesURL: releasesURL}
 }
 
 // GET /api/v1/agents
@@ -129,6 +131,12 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create agent")
 		return
 	}
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventAgentCreated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "agent", ResourceID: agent.ID,
+		Payload: map[string]any{"name": req.Name},
+	})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"agent":   agent,
 		"api_key": rawKey, // shown once; store securely
@@ -221,6 +229,12 @@ func (h *AgentsHandler) RotateKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to rotate key")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: agent.TenantID, EventType: audit.EventAgentKeyRotated,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "agent", ResourceID: id,
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"api_key": rawKey})
 }
 
@@ -267,6 +281,12 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete agent")
 		return
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: claims.TenantID, EventType: audit.EventAgentDeleted,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "agent", ResourceID: id,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -367,6 +387,12 @@ func (h *AgentsHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: tenantID, EventType: audit.EventAgentCreated,
+		ActorType: audit.ActorSystem,
+		ResourceType: "agent", ResourceID: agent.ID,
+		Payload: map[string]any{"name": req.Name, "via": "bootstrap"},
+	})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"agent_id": agent.ID,
 		"api_key":  rawKey,
@@ -443,6 +469,13 @@ func (h *AgentsHandler) Upgrade(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	claims := middleware.GetClaims(r.Context())
+	h.audit.Emit(r.Context(), audit.Event{
+		TenantID: agent.TenantID, EventType: audit.EventAgentUpgraded,
+		ActorType: audit.ActorUser, ActorID: claimsActorID(claims),
+		ResourceType: "agent", ResourceID: id,
+		Payload: map[string]any{"version": req.Version},
+	})
 	writeJSON(w, http.StatusAccepted, map[string]string{
 		"status":  "requested",
 		"version": req.Version,

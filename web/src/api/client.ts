@@ -817,6 +817,45 @@ export const setProfileControls = (id: string, controlIds: string[]) =>
 export const publishProfile = (id: string) =>
   request<ComplianceProfile>(`/api/v1/compliance-profiles/${id}/publish`, { method: 'POST' });
 
+// ─── ADR 005 — Audit events ─────────────────────────────────────────────────
+
+export interface AuditEvent {
+  id: string;
+  tenant_id: string;
+  occurred_at: string;
+  event_type: string;
+  actor_type: string;
+  actor_id?: string;
+  resource_type?: string;
+  resource_id?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface AuditEventsResponse {
+  items: AuditEvent[];
+  next_cursor?: string;
+}
+
+export const listAuditEvents = (params?: {
+  event_type?: string; actor_id?: string; resource_id?: string;
+  resource_type?: string; since?: string; until?: string;
+  limit?: number; cursor?: string;
+}) => {
+  const u = new URLSearchParams();
+  if (params?.event_type) u.set('event_type', params.event_type);
+  if (params?.actor_id) u.set('actor_id', params.actor_id);
+  if (params?.resource_id) u.set('resource_id', params.resource_id);
+  if (params?.resource_type) u.set('resource_type', params.resource_type);
+  if (params?.since) u.set('since', params.since);
+  if (params?.until) u.set('until', params.until);
+  if (params?.limit) u.set('limit', String(params.limit));
+  if (params?.cursor) u.set('cursor', params.cursor);
+  const qs = u.toString();
+  return request<AuditEventsResponse>(`/api/v1/audit-events${qs ? `?${qs}` : ''}`);
+};
+
+// ─── end Audit events ───────────────────────────────────────────────────────
+
 // Absolute SSE URL builder — combines the active DC base URL with the
 // /api/v1/events/stream path and the minted token. Exposed so
 // `useEventStream` can construct a URL without duplicating the
