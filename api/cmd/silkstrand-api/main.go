@@ -122,6 +122,7 @@ func run() error {
 	dashH := handler.NewDashboardHandler(pgStore)
 	profilesH := handler.NewProfilesHandler(pgStore, cfg.BundleControlsDir, cfg.BundleStoragePath)
 	rulesH := handler.NewCorrelationRulesHandler(pgStore, auditW)
+	tenantPoliciesH := handler.NewTenantPoliciesHandler(pgStore, cfg.PoliciesDir)
 	auditH := handler.NewAuditHandler(pgStore.DB())
 	eventsH := handler.NewEventsHandler(eventBus, cfg.JWTSecret)
 
@@ -189,6 +190,15 @@ func run() error {
 	apiMux.HandleFunc("POST /api/v1/compliance-profiles/{id}/controls", profilesH.SetControls)
 	apiMux.HandleFunc("GET /api/v1/compliance-profiles/{id}/controls", profilesH.GetControls)
 	apiMux.HandleFunc("POST /api/v1/compliance-profiles/{id}/publish", profilesH.Publish)
+
+	// Tenant policies (ADR 011 D9)
+	apiMux.HandleFunc("GET /api/v1/tenant-policies", tenantPoliciesH.List)
+	apiMux.HandleFunc("POST /api/v1/tenant-policies", tenantPoliciesH.Create)
+	apiMux.HandleFunc("POST /api/v1/tenant-policies/validate", tenantPoliciesH.Validate)
+	apiMux.HandleFunc("POST /api/v1/tenant-policies/copy-from/{builtin_control_id}", tenantPoliciesH.CopyFromBuiltin)
+	apiMux.HandleFunc("GET /api/v1/tenant-policies/{id}", tenantPoliciesH.Get)
+	apiMux.HandleFunc("PUT /api/v1/tenant-policies/{id}", tenantPoliciesH.Update)
+	apiMux.HandleFunc("DELETE /api/v1/tenant-policies/{id}", tenantPoliciesH.Delete)
 
 	// Agents
 	apiMux.HandleFunc("GET /api/v1/agents/downloads", agentsH.Downloads)

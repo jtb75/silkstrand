@@ -13,6 +13,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/open-policy-agent/opa v1.15.2
 	github.com/redis/go-redis/v9 v9.18.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

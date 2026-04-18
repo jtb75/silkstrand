@@ -516,6 +516,33 @@ type CollectedFacts struct {
 	CollectedAt     time.Time       `json:"collected_at"`
 }
 
+// ----- Tenant policies (ADR 011 D9) ------------------------------
+
+// TenantPolicy is a tenant-scoped compliance policy rule (Rego source).
+// Origin is 'derived' (copy of a builtin) or 'custom' (from scratch).
+type TenantPolicy struct {
+	ID          string          `json:"id"`
+	TenantID    string          `json:"tenant_id"`
+	ControlID   string          `json:"control_id"`
+	Origin      string          `json:"origin"`
+	BasedOn     *string         `json:"based_on,omitempty"`
+	Name        string          `json:"name"`
+	Severity    string          `json:"severity"`
+	RegoSource  string          `json:"rego_source"`
+	CollectorID string          `json:"collector_id"`
+	FactKeys    json.RawMessage `json:"fact_keys"`
+	Frameworks  json.RawMessage `json:"frameworks"`
+	Tags        json.RawMessage `json:"tags"`
+	Enabled     bool            `json:"enabled"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+const (
+	TenantPolicyOriginDerived = "derived"
+	TenantPolicyOriginCustom  = "custom"
+)
+
 // ----- Agent statuses (unchanged) --------------------------------
 
 const (

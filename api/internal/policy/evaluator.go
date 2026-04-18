@@ -150,6 +150,36 @@ func (e *Evaluator) LoadFromDir(dir string) error {
 	return nil
 }
 
+// TenantPolicyRecord holds the fields the evaluator needs from a tenant
+// policy row.
+type TenantPolicyRecord struct {
+	ControlID  string
+	RegoSource string
+}
+
+// LoadTenantPolicies loads tenant-scoped policies, replacing any builtin
+// policy with the same control_id. This implements the "tenant policies
+// override builtins" behaviour from ADR 011 D9.
+func (e *Evaluator) LoadTenantPolicies(tenantID string, policies []TenantPolicyRecord) int {
+	loaded := 0
+	for _, tp := range policies {
+		query := deriveQuery(tp.RegoSource)
+		if query == "" {
+			slog.Warn("skipping tenant policy (no package declaration)",
+				"control_id", tp.ControlID, "tenant_id", tenantID)
+			continue
+		}
+		if err := e.Load(tp.ControlID, tp.RegoSource, query); err != nil {
+			slog.Error("failed to load tenant policy",
+				"control_id", tp.ControlID, "tenant_id", tenantID, "error", err)
+			continue
+		}
+		loaded++
+	}
+	slog.Info("tenant policies loaded", "count", loaded, "tenant_id", tenantID)
+	return loaded
+}
+
 // deriveQuery extracts the package name from Rego source and builds
 // the query "data.<package>.result".
 func deriveQuery(regoSource string) string {

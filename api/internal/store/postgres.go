@@ -3087,3 +3087,130 @@ func (s *PostgresStore) DeleteOldCollectedFacts(ctx context.Context, maxAge time
 	n, _ := result.RowsAffected()
 	return int(n), nil
 }
+
+// ======================================================================
+// Tenant policies (ADR 011 D9)
+// ======================================================================
+
+const tenantPolicyCols = `id, tenant_id, control_id, origin, based_on,
+	name, severity, rego_source, collector_id,
+	fact_keys, frameworks, tags, enabled, created_at, updated_at`
+
+func scanTenantPolicy(row interface{ Scan(dest ...any) error }) (*model.TenantPolicy, error) {
+	var p model.TenantPolicy
+	if err := row.Scan(
+		&p.ID, &p.TenantID, &p.ControlID, &p.Origin, &p.BasedOn,
+		&p.Name, &p.Severity, &p.RegoSource, &p.CollectorID,
+		&p.FactKeys, &p.Frameworks, &p.Tags, &p.Enabled,
+		&p.CreatedAt, &p.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (s *PostgresStore) ListTenantPolicies(ctx context.Context) ([]model.TenantPolicy, error) {
+	tenantID := TenantID(ctx)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+tenantPolicyCols+` FROM tenant_policies
+		 WHERE tenant_id = $1 ORDER BY name`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing tenant policies: %w", err)
+	}
+	defer rows.Close()
+	var out []model.TenantPolicy
+	for rows.Next() {
+		p, err := scanTenantPolicy(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning tenant policy: %w", err)
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetTenantPolicy(ctx context.Context, id string) (*model.TenantPolicy, error) {
+	tenantID := TenantID(ctx)
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+tenantPolicyCols+` FROM tenant_policies
+		 WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	p, err := scanTenantPolicy(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting tenant policy: %w", err)
+	}
+	return p, nil
+}
+
+func (s *PostgresStore) CreateTenantPolicy(ctx context.Context, p model.TenantPolicy) (*model.TenantPolicy, error) {
+	tenantID := TenantID(ctx)
+	row := s.db.QueryRowContext(ctx,
+		`INSERT INTO tenant_policies
+			(tenant_id, control_id, origin, based_on, name, severity,
+			 rego_source, collector_id, fact_keys, frameworks, tags, enabled)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		 RETURNING `+tenantPolicyCols,
+		tenantID, p.ControlID, p.Origin, p.BasedOn, p.Name, p.Severity,
+		p.RegoSource, p.CollectorID, p.FactKeys, p.Frameworks, p.Tags, p.Enabled)
+	out, err := scanTenantPolicy(row)
+	if err != nil {
+		return nil, fmt.Errorf("creating tenant policy: %w", err)
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) UpdateTenantPolicy(ctx context.Context, id string, p model.TenantPolicy) (*model.TenantPolicy, error) {
+	tenantID := TenantID(ctx)
+	row := s.db.QueryRowContext(ctx,
+		`UPDATE tenant_policies SET
+			control_id = $3, name = $4, severity = $5, rego_source = $6,
+			collector_id = $7, fact_keys = $8, frameworks = $9, tags = $10,
+			enabled = $11, updated_at = NOW()
+		 WHERE id = $1 AND tenant_id = $2
+		 RETURNING `+tenantPolicyCols,
+		id, tenantID, p.ControlID, p.Name, p.Severity, p.RegoSource,
+		p.CollectorID, p.FactKeys, p.Frameworks, p.Tags, p.Enabled)
+	out, err := scanTenantPolicy(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("updating tenant policy: %w", err)
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) DeleteTenantPolicy(ctx context.Context, id string) error {
+	tenantID := TenantID(ctx)
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM tenant_policies WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("deleting tenant policy: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("tenant policy not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListTenantPoliciesForTenant(ctx context.Context, tenantID string) ([]model.TenantPolicy, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+tenantPolicyCols+` FROM tenant_policies
+		 WHERE tenant_id = $1 AND enabled = true ORDER BY name`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("listing tenant policies for tenant: %w", err)
+	}
+	defer rows.Close()
+	var out []model.TenantPolicy
+	for rows.Next() {
+		p, err := scanTenantPolicy(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning tenant policy: %w", err)
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}

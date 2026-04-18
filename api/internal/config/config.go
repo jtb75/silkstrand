@@ -19,6 +19,7 @@ type Config struct {
 	BundleStoragePath      string   // Local filesystem path for uploaded bundle tarballs (v1)
 	BundleControlsDir      string   // Path to individual controls/ directory for server-side bundle assembly
 	BundleGCSBucket        string   // GCS bucket for bundle tarballs (empty = local-only dev mode)
+	PoliciesDir            string   // Path to builtin policies/ directory for copy-from-builtin
 	AuditEventsEnabled     bool     // ADR 005: enable audit event persistence (default true)
 }
 
@@ -49,6 +50,7 @@ func Load() (*Config, error) {
 		BundleStoragePath:      getEnv("BUNDLE_STORAGE_PATH", ""),
 		BundleControlsDir:     getEnv("BUNDLE_CONTROLS_DIR", "./controls"),
 		BundleGCSBucket:       getEnv("BUNDLE_GCS_BUCKET", ""),
+		PoliciesDir:          getEnv("POLICIES_DIR", "./policies"),
 		AuditEventsEnabled:    auditEnabled,
 	}
 
