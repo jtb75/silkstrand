@@ -74,10 +74,10 @@ export default function Credentials() {
 
       <Section
         title="Vaults"
-        description="External secret resolvers. AWS Secrets Manager is live; HashiCorp Vault and CyberArk are coming soon."
+        description="External secret resolvers. AWS Secrets Manager and HashiCorp Vault are live; CyberArk is coming soon."
         sources={vaultSources}
         allowedTypes={VAULT_TYPES}
-        testableTypes={['aws_secrets_manager']}
+        testableTypes={['aws_secrets_manager', 'hashicorp_vault']}
       />
     </div>
   );
@@ -298,6 +298,12 @@ function renderConfigSummary(s: CredentialSource): string {
     const truncatedArn = arn.length > 40 ? arn.slice(0, 37) + '...' : arn;
     return `region=${region}, arn=${truncatedArn}`;
   }
+  if (s.type === 'hashicorp_vault') {
+    const url = typeof cfg.vault_url === 'string' ? cfg.vault_url : '-';
+    const path = typeof cfg.secret_path === 'string' ? cfg.secret_path : '-';
+    const truncatedPath = path.length > 30 ? path.slice(0, 27) + '...' : path;
+    return `url=${url}, path=${truncatedPath}`;
+  }
   return Object.entries(cfg)
     .map(([k, v]) => `${k}=${v === '(set)' ? '(set)' : JSON.stringify(v)}`)
     .join(', ') || '--';
@@ -382,6 +388,19 @@ function EditSourceForm({
         config.secret_key_password = (fd.get('aws_key_password') as string).trim() || 'password';
         break;
       }
+      case 'hashicorp_vault': {
+        config.vault_url = (fd.get('vault_url') as string).trim();
+        config.auth_method = 'token';
+        const tok = (fd.get('vault_token') as string).trim();
+        if (tok) config.token = tok;
+        config.secret_path = (fd.get('vault_secret_path') as string).trim();
+        config.secret_key_username = (fd.get('vault_key_username') as string).trim() || 'username';
+        config.secret_key_password = (fd.get('vault_key_password') as string).trim() || 'password';
+        const ns = (fd.get('vault_namespace') as string).trim();
+        if (ns) config.namespace = ns;
+        config.tls_skip_verify = (fd.get('vault_tls_skip') as string) === 'on';
+        break;
+      }
       default:
         break;
     }
@@ -437,6 +456,22 @@ function EditSourceForm({
           <Field name="aws_role_arn" label="Role ARN (optional)" defaultValue={cfg.role_arn as string} />
           <Field name="aws_key_username" label="Username key" defaultValue={(cfg.secret_key_username as string | undefined) ?? 'username'} />
           <Field name="aws_key_password" label="Password key" defaultValue={(cfg.secret_key_password as string | undefined) ?? 'password'} />
+        </>
+      )}
+      {source.type === 'hashicorp_vault' && (
+        <>
+          <Field name="vault_url" label="Vault URL" defaultValue={cfg.vault_url as string} required />
+          <Field name="vault_token" label="Token (blank = keep existing)" type="password" />
+          <Field name="vault_secret_path" label="Secret path" defaultValue={cfg.secret_path as string} required />
+          <Field name="vault_key_username" label="Username key" defaultValue={(cfg.secret_key_username as string | undefined) ?? 'username'} />
+          <Field name="vault_key_password" label="Password key" defaultValue={(cfg.secret_key_password as string | undefined) ?? 'password'} />
+          <Field name="vault_namespace" label="Namespace (optional)" defaultValue={cfg.namespace as string} />
+          <div className="form-group">
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input type="checkbox" name="vault_tls_skip" defaultChecked={!!cfg.tls_skip_verify} />
+              Skip TLS verification
+            </label>
+          </div>
         </>
       )}
 
@@ -861,9 +896,24 @@ function CredentialSourceForm({
         break;
       }
       case 'hashicorp_vault': {
-        config.address = (fd.get('vault_addr') as string).trim();
+        config.vault_url = (fd.get('vault_url') as string).trim();
+        config.auth_method = 'token';
         const tok = (fd.get('vault_token') as string).trim();
         if (tok) config.token = tok;
+        config.secret_path = (fd.get('vault_secret_path') as string).trim();
+        config.secret_key_username = (fd.get('vault_key_username') as string).trim() || 'username';
+        config.secret_key_password = (fd.get('vault_key_password') as string).trim() || 'password';
+        const ns = (fd.get('vault_namespace') as string).trim();
+        if (ns) config.namespace = ns;
+        config.tls_skip_verify = (fd.get('vault_tls_skip') as string) === 'on';
+        if (!config.vault_url || !config.secret_path) {
+          setErr('Vault URL and secret path are required.');
+          return;
+        }
+        if (!tok) {
+          setErr('Token is required.');
+          return;
+        }
         break;
       }
       case 'cyberark': {
@@ -927,8 +977,18 @@ function CredentialSourceForm({
       )}
       {type === 'hashicorp_vault' && (
         <>
-          <Field name="vault_addr" label="Vault address" type="url" required />
+          <Field name="vault_url" label="Vault URL" required defaultValue="http://127.0.0.1:8200" />
           <Field name="vault_token" label="Token" type="password" required />
+          <Field name="vault_secret_path" label="Secret path (e.g. secret/data/mssql-creds)" required />
+          <Field name="vault_key_username" label="Username key in secret" defaultValue="username" />
+          <Field name="vault_key_password" label="Password key in secret" defaultValue="password" />
+          <Field name="vault_namespace" label="Namespace (optional)" />
+          <div className="form-group">
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input type="checkbox" name="vault_tls_skip" />
+              Skip TLS verification (dev / self-signed certs)
+            </label>
+          </div>
         </>
       )}
       {type === 'cyberark' && (

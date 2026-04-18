@@ -14,6 +14,7 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/middleware"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/store"
+	"github.com/jtb75/silkstrand/api/internal/vault"
 )
 
 var base64Enc = base64.StdEncoding
@@ -300,6 +301,13 @@ func (h *CredentialsHandler) CreateSource(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+	// HashiCorp Vault: validate required config fields.
+	if req.Type == model.CredentialSourceTypeHashiCorpVault {
+		if err := validateHashiCorpVaultConfig(req.Config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	id, err := h.store.CreateCredentialSource(r.Context(), claims.TenantID, req.Name, req.Type, req.Config)
 	if err != nil {
 		slog.Error("creating credential source", "error", err)
@@ -580,6 +588,30 @@ func (h *CredentialsHandler) TestSource(w http.ResponseWriter, r *http.Request) 
 			"username": cred.Username,
 		})
 
+	case model.CredentialSourceTypeHashiCorpVault:
+		var cfg vault.ResolveConfig
+		if err := json.Unmarshal(cs.Config, &cfg); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   "invalid config: " + err.Error(),
+			})
+			return
+		}
+		cred, err := vault.Resolve(r.Context(), cfg)
+		if err != nil {
+			slog.Warn("credential_source.test",
+				"source_id", cs.ID, "type", cs.Type, "error", err)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   err.Error(),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":  true,
+			"username": cred.Username,
+		})
+
 	case model.CredentialSourceTypeStatic:
 		// For static sources, verify we can decrypt the stored credential.
 		var cfg model.StaticCredentialConfig
@@ -646,4 +678,40 @@ func (h *CredentialsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// validateHashiCorpVaultConfig checks that the required fields are
+// present in the config for a hashicorp_vault credential source.
+func validateHashiCorpVaultConfig(raw json.RawMessage) error {
+	var cfg struct {
+		VaultURL         string `json:"vault_url"`
+		AuthMethod       string `json:"auth_method"`
+		Token            string `json:"token"`
+		SecretPath       string `json:"secret_path"`
+		SecretKeyUsername string `json:"secret_key_username"`
+		SecretKeyPassword string `json:"secret_key_password"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return errors.New("config must be a JSON object")
+	}
+	if cfg.VaultURL == "" {
+		return errors.New("vault_url is required for hashicorp_vault")
+	}
+	if cfg.SecretPath == "" {
+		return errors.New("secret_path is required for hashicorp_vault")
+	}
+	if cfg.SecretKeyUsername == "" {
+		return errors.New("secret_key_username is required for hashicorp_vault")
+	}
+	if cfg.SecretKeyPassword == "" {
+		return errors.New("secret_key_password is required for hashicorp_vault")
+	}
+	method := cfg.AuthMethod
+	if method == "" {
+		method = "token"
+	}
+	if method == "token" && cfg.Token == "" {
+		return errors.New("token is required for hashicorp_vault with auth_method=token")
+	}
+	return nil
 }
