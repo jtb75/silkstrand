@@ -224,13 +224,23 @@ export default function ScanDefinitions() {
 
   const executeMut = useMutation({
     mutationFn: (id: string) => executeScanDefinition(id),
+    onMutate: (defId) => {
+      // Optimistic: inject a fake pending scan so the chip updates instantly
+      queryClient.setQueryData<Scan[]>(['scans'], (old) => [
+        ...(old ?? []),
+        {
+          id: `optimistic-${Date.now()}`,
+          scan_definition_id: defId,
+          status: 'pending',
+          scan_type: 'compliance',
+          created_at: new Date().toISOString(),
+        } as Scan,
+      ]);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scans'] });
       queryClient.invalidateQueries({ queryKey: ['scan-definitions'] });
       toast('Scan dispatched', 'success');
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['scans'] });
-      }, 1500);
     },
   });
 
