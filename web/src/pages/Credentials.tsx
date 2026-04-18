@@ -77,6 +77,7 @@ export default function Credentials() {
         description="External secret resolvers. AWS Secrets Manager and HashiCorp Vault are live; CyberArk is coming soon."
         sources={vaultSources}
         allowedTypes={VAULT_TYPES}
+        supportsMappings
         testableTypes={['aws_secrets_manager', 'hashicorp_vault']}
       />
     </div>
