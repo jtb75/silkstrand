@@ -16,6 +16,7 @@ import (
 	"github.com/jtb75/silkstrand/api/internal/audit"
 	"github.com/jtb75/silkstrand/api/internal/awssm"
 	"github.com/jtb75/silkstrand/api/internal/crypto"
+	"github.com/jtb75/silkstrand/api/internal/vault"
 	"github.com/jtb75/silkstrand/api/internal/events"
 	"github.com/jtb75/silkstrand/api/internal/model"
 	"github.com/jtb75/silkstrand/api/internal/pubsub"
@@ -351,6 +352,34 @@ func (h *AgentHandler) resolveCredentialSource(ctx context.Context, cs *model.Cr
 			TenantID: cs.TenantID, EventType: audit.EventCredentialFetch,
 			ActorType: audit.ActorSystem, ResourceType: "credential_source", ResourceID: cs.ID,
 			Payload: map[string]any{"source_type": "aws_secrets_manager", "scan_id": scanID, "via": via},
+		})
+		return credJSON
+
+	case model.CredentialSourceTypeHashiCorpVault:
+		var cfg vault.ResolveConfig
+		if err := json.Unmarshal(cs.Config, &cfg); err != nil {
+			slog.Error("credential.fetch.vault_parse_config",
+				"source_id", cs.ID, "scan_id", scanID, "error", err)
+			return nil
+		}
+		cred, err := vault.Resolve(ctx, cfg)
+		if err != nil {
+			slog.Error("credential.fetch.vault_resolve",
+				"source_id", cs.ID, "scan_id", scanID, "via", via,
+				"outcome", "error", "error", err)
+			return nil
+		}
+		credJSON, _ := json.Marshal(map[string]string{
+			"username": cred.Username,
+			"password": cred.Password,
+		})
+		slog.Info("credential.fetch",
+			"source_type", "hashicorp_vault", "source_id", cs.ID,
+			"scan_id", scanID, "via", via, "outcome", "ok")
+		h.audit.Emit(ctx, audit.Event{
+			TenantID: cs.TenantID, EventType: audit.EventCredentialFetch,
+			ActorType: audit.ActorSystem, ResourceType: "credential_source", ResourceID: cs.ID,
+			Payload: map[string]any{"source_type": "hashicorp_vault", "scan_id": scanID, "via": via},
 		})
 		return credJSON
 
