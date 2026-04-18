@@ -1,0 +1,87 @@
+id: mssql-config
+name: MSSQL Server Configuration Collector
+description: Collects security-relevant configuration from Microsoft SQL Server for CIS benchmark evaluation
+version: 1.0.0
+binary: mssql-collector
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+facts_schema:
+  # Section 2 — Surface Area Reduction
+  ## sys.configurations options (value_configured + value_in_use per option)
+  ad_hoc_distributed_queries_configured: integer
+  ad_hoc_distributed_queries_in_use: integer
+  clr_enabled_configured: integer
+  clr_enabled_in_use: integer
+  clr_strict_security_configured: integer
+  clr_strict_security_in_use: integer
+  cross_db_ownership_chaining_configured: integer
+  cross_db_ownership_chaining_in_use: integer
+  database_mail_xps_configured: integer
+  database_mail_xps_in_use: integer
+  ole_automation_procedures_configured: integer
+  ole_automation_procedures_in_use: integer
+  remote_access_configured: integer
+  remote_access_in_use: integer
+  remote_admin_connections_configured: integer
+  remote_admin_connections_in_use: integer
+  scan_for_startup_procs_configured: integer
+  scan_for_startup_procs_in_use: integer
+  default_trace_enabled_configured: integer
+  default_trace_enabled_in_use: integer
+  ## Trustworthy databases (excluding msdb)
+  trustworthy_databases: string[]
+  ## Non-standard port check
+  listen_on_default_port: integer
+  ## Hide instance
+  hide_instance: integer
+  ## SA account
+  sa_login_enabled: boolean
+  sa_login_name: string
+  sa_login_exists: boolean
+  ## Auto-close on contained databases
+  auto_close_contained_databases: string[]
+  ## Clustering (for remote admin connections precondition)
+  is_clustered: integer
+
+  # Section 3 — Authentication and Authorization
+  login_mode: integer
+  ## Guest connect violations (per-database)
+  guest_connect_databases: string[]
+  ## Orphaned users (per-database)
+  orphaned_user_databases: string[]
+  ## SQL auth in contained databases (per-database)
+  sql_auth_contained_databases: string[]
+  ## Public role extra permissions
+  public_extra_permissions: object[]
+  ## BUILTIN group logins
+  builtin_group_logins: object[]
+  ## Local Windows group logins
+  local_windows_group_logins: object[]
+  ## msdb public proxy access
+  msdb_public_proxy_names: string[]
+  ## msdb admin role members
+  msdb_admin_role_members: object[]
+
+  # Section 4 — Password Policies
+  ## Sysadmin logins without CHECK_EXPIRATION
+  sysadmin_no_check_expiration: object[]
+  ## Logins without CHECK_POLICY
+  logins_no_check_policy: object[]
+
+  # Section 5 — Auditing and Logging
+  max_error_log_files: integer
+  ## Audit login gaps (FAILED_LOGIN_GROUP / SUCCESSFUL_LOGIN_GROUP)
+  audit_login_gaps: string[]
+
+  # Section 7 — Encryption
+  ## Weak symmetric keys per database
+  weak_symmetric_key_databases: string[]
+  ## Weak asymmetric keys per database
+  weak_asymmetric_key_databases: string[]
+  ## Unencrypted backups
+  unencrypted_backups_exist: boolean
+  ## Network encryption
+  network_encryption_options: string[]
+  ## TDE — unencrypted user databases
+  unencrypted_user_databases: string[]
