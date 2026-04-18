@@ -1,0 +1,13 @@
+id: mssql-max-error-log-files
+name: Ensure Maximum number of error log files is set to 12 or greater
+severity: medium
+collector: mssql-config
+fact_keys: [max_error_log_files]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "5.1"
+    title: "Ensure Maximum number of error log files is set to 12 or greater"
+tags: [logging, audit]

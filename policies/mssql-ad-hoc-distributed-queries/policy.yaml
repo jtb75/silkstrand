@@ -1,0 +1,13 @@
+id: mssql-ad-hoc-distributed-queries
+name: Ensure Ad Hoc Distributed Queries is set to 0
+severity: medium
+collector: mssql-config
+fact_keys: [ad_hoc_distributed_queries_in_use]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.1"
+    title: "Ensure Ad Hoc Distributed Queries is set to 0"
+tags: [hardening, surface-reduction]

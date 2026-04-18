@@ -1,0 +1,13 @@
+id: mssql-check-policy-all-logins
+name: Ensure CHECK_POLICY is set to ON for All SQL Authenticated Logins
+severity: high
+collector: mssql-config
+fact_keys: [logins_no_check_policy]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "4.3"
+    title: "Ensure CHECK_POLICY is set to ON for All SQL Authenticated Logins"
+tags: [authentication, password-policy]

@@ -1,0 +1,13 @@
+id: mssql-cross-db-ownership-chaining
+name: Ensure Cross DB Ownership Chaining is set to 0
+severity: medium
+collector: mssql-config
+fact_keys: [cross_db_ownership_chaining_in_use]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.3"
+    title: "Ensure Cross DB Ownership Chaining is set to 0"
+tags: [hardening, surface-reduction]

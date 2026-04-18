@@ -1,0 +1,13 @@
+id: mssql-public-role-permissions
+name: Ensure only the default permissions are granted to the public server role
+severity: medium
+collector: mssql-config
+fact_keys: [public_extra_permissions]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.8"
+    title: "Ensure only the default permissions are granted to the public server role"
+tags: [access-control, least-privilege]

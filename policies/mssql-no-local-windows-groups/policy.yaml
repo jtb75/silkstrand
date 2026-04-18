@@ -1,0 +1,13 @@
+id: mssql-no-local-windows-groups
+name: Ensure Windows local groups are not SQL Logins
+severity: high
+collector: mssql-config
+fact_keys: [local_windows_group_logins]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "3.10"
+    title: "Ensure Windows local groups are not SQL Logins"
+tags: [access-control, authentication]

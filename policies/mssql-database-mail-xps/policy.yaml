@@ -1,0 +1,13 @@
+id: mssql-database-mail-xps
+name: Ensure Database Mail XPs is set to 0
+severity: medium
+collector: mssql-config
+fact_keys: [database_mail_xps_in_use]
+engine:
+  - name: mssql
+    versions: ["2019", "2022"]
+frameworks:
+  - id: cis-mssql-2022
+    section: "2.4"
+    title: "Ensure Database Mail XPs is set to 0"
+tags: [hardening, surface-reduction]
