@@ -106,7 +106,7 @@ func run() error {
 	scanH := handler.NewScanHandler(pgStore, ps, hub, eventBus)
 	agentH := handler.NewAgentHandler(hub, pgStore, ps, cfg.CredentialEncryptionKey, eventBus, auditW)
 	agentsH := handler.NewAgentsHandler(pgStore, hub, ps, eventBus, auditW, cfg.AgentReleasesURL)
-	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey, auditW)
+	credsH := handler.NewCredentialsHandler(pgStore, cfg.CredentialEncryptionKey, auditW, ps)
 	probeH := handler.NewProbeHandler(pgStore, ps, cfg.CredentialEncryptionKey)
 	bundlesH := handler.NewBundlesHandler(pgStore, cfg.BundleStoragePath, cfg.BundleGCSBucket)
 	internalH := handler.NewInternalHandler(pgStore, cfg.CredentialEncryptionKey)
@@ -370,6 +370,18 @@ func buildOnMessage(s store.Store, ps *pubsub.PubSub, notifier *notify.Dispatche
 			if ps != nil {
 				if err := ps.PublishProbeResult(ctx, result.ProbeID, msg.Payload); err != nil {
 					slog.Error("publishing probe_result", "probe_id", result.ProbeID, "error", err)
+				}
+			}
+
+		case websocket.TypeCredentialTestResult:
+			var result websocket.CredentialTestResultPayload
+			if err := json.Unmarshal(msg.Payload, &result); err != nil {
+				slog.Error("parsing credential_test_result payload", "agent_id", agentID, "error", err)
+				return
+			}
+			if ps != nil {
+				if err := ps.PublishCredentialTestResult(ctx, result.TestID, msg.Payload); err != nil {
+					slog.Error("publishing credential_test_result", "test_id", result.TestID, "error", err)
 				}
 			}
 

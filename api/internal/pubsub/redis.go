@@ -174,6 +174,79 @@ func (ps *PubSub) SubscribeProbes(ctx context.Context, agentID string, callback 
 	}
 }
 
+// PublishCredentialTest sends a credential test request to whichever
+// instance owns the agent's WSS. Payload is the
+// websocket.CredentialTestPayload JSON bytes.
+func (ps *PubSub) PublishCredentialTest(ctx context.Context, agentID string, payload []byte) error {
+	channel := fmt.Sprintf("agent:%s:credential-tests", agentID)
+	if err := ps.client.Publish(ctx, channel, payload).Err(); err != nil {
+		return fmt.Errorf("publishing credential test: %w", err)
+	}
+	return nil
+}
+
+// SubscribeCredentialTests subscribes to credential test requests for an
+// agent. Each WSS connection handler runs one of these alongside the
+// other subscribe goroutines.
+func (ps *PubSub) SubscribeCredentialTests(ctx context.Context, agentID string, callback func(payload []byte)) error {
+	channel := fmt.Sprintf("agent:%s:credential-tests", agentID)
+	sub := ps.client.Subscribe(ctx, channel)
+	defer sub.Close()
+
+	ch := sub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case msg, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			callback([]byte(msg.Payload))
+		}
+	}
+}
+
+// PublishCredentialTestResult is called by the WSS handler when an agent
+// replies with a credential_test_result message. The originating HTTP
+// handler listens on credential_test:<id>:result.
+func (ps *PubSub) PublishCredentialTestResult(ctx context.Context, testID string, payload []byte) error {
+	channel := fmt.Sprintf("credential_test:%s:result", testID)
+	if err := ps.client.Publish(ctx, channel, payload).Err(); err != nil {
+		return fmt.Errorf("publishing credential test result: %w", err)
+	}
+	return nil
+}
+
+// AwaitCredentialTestResult subscribes to the result channel for testID,
+// then runs `then` (which should publish the test request) and waits up
+// to timeout for the agent's reply. Subscribe-before-publish is mandatory.
+func (ps *PubSub) AwaitCredentialTestResult(ctx context.Context, testID string, timeout time.Duration, then func() error) ([]byte, error) {
+	channel := fmt.Sprintf("credential_test:%s:result", testID)
+	sub := ps.client.Subscribe(ctx, channel)
+	defer sub.Close()
+
+	if _, err := sub.Receive(ctx); err != nil {
+		return nil, fmt.Errorf("registering credential test result subscription: %w", err)
+	}
+
+	if err := then(); err != nil {
+		return nil, err
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case msg, ok := <-sub.Channel():
+		if !ok {
+			return nil, fmt.Errorf("credential test result channel closed")
+		}
+		return []byte(msg.Payload), nil
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("agent did not reply in time")
+	}
+}
+
 // PublishProbeResult is called by the WSS handler when an agent replies
 // with a probe_result message. The originating HTTP handler is listening
 // on probe:<id>:result.

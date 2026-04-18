@@ -143,6 +143,41 @@ func main() {
 		tun.Send(tunnel.Message{Type: tunnel.TypeProbeResult, Payload: reply})
 	}
 
+	// Wire up credential test handler. Tests a credential source (e.g. Vault)
+	// using the agent's local network and sends the result back.
+	tun.OnCredentialTest = func(ct tunnel.CredentialTestPayload) {
+		slog.Info("credential test requested", "test_id", ct.TestID, "resolver_type", ct.ResolverType)
+		go func() {
+			start := time.Now()
+			var result tunnel.CredentialTestResultPayload
+			result.TestID = ct.TestID
+			switch ct.ResolverType {
+			case "hashicorp_vault":
+				var cfg vault.ResolveConfig
+				if err := json.Unmarshal(ct.Config, &cfg); err != nil {
+					result.Success = false
+					result.Error = "invalid config: " + err.Error()
+				} else {
+					cred, err := vault.Resolve(context.Background(), cfg)
+					if err != nil {
+						result.Success = false
+						result.Error = err.Error()
+					} else {
+						result.Success = true
+						result.Username = cred.Username
+					}
+				}
+			default:
+				result.Success = false
+				result.Error = "unsupported resolver type: " + ct.ResolverType
+			}
+			result.DurationMs = time.Since(start).Milliseconds()
+			reply, _ := json.Marshal(result)
+			tun.Send(tunnel.Message{Type: tunnel.TypeCredentialTestResult, Payload: reply})
+			slog.Info("credential test completed", "test_id", ct.TestID, "success", result.Success, "duration_ms", result.DurationMs)
+		}()
+	}
+
 	// Wire up upgrade handler. On success the process exits; the service
 	// manager (systemd/launchd) restarts us with the new binary.
 	tun.OnUpgrade = func(up tunnel.UpgradePayload) {

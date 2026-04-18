@@ -20,7 +20,9 @@ const (
 	TypeProbeResult        = "probe_result"
 	TypeAssetDiscovered    = "asset_discovered"    // ADR 003 R1a
 	TypeDiscoveryCompleted = "discovery_completed" // ADR 003 R1a
-	TypeAllowlistSnapshot  = "allowlist_snapshot"  // ADR 003 D11 — agent → server informational
+	TypeAllowlistSnapshot      = "allowlist_snapshot"      // ADR 003 D11 — agent → server informational
+	TypeCredentialTest         = "credential_test"         // server → agent: test a credential source
+	TypeCredentialTestResult   = "credential_test_result"  // agent → server: result of credential test
 )
 
 // AllowlistSnapshotPayload is the agent's most recently reported
@@ -104,6 +106,23 @@ type DiscoveredAssetUpsert struct {
 	Technologies json.RawMessage `json:"technologies,omitempty"`
 	CVEs         json.RawMessage `json:"cves,omitempty"`
 	ObservedAt   string          `json:"observed_at"`
+}
+
+// CredentialTestPayload is sent from server to agent to test a credential
+// source (e.g. HashiCorp Vault) using the agent's local network.
+type CredentialTestPayload struct {
+	TestID       string          `json:"test_id"`
+	ResolverType string          `json:"resolver_type"` // "hashicorp_vault"
+	Config       json.RawMessage `json:"config"`        // resolver-specific config
+}
+
+// CredentialTestResultPayload is the agent's reply to a credential_test.
+type CredentialTestResultPayload struct {
+	TestID     string `json:"test_id"`
+	Success    bool   `json:"success"`
+	Username   string `json:"username,omitempty"`
+	Error      string `json:"error,omitempty"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 // DiscoveryCompletedPayload is the terminal message for a discovery scan.
