@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { getScan, listFindings, getScanFacts } from '../api/client';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getScan, listFindings, getScanFacts, replayEvaluation } from '../api/client';
 import type { CollectedFactsEntry } from '../api/client';
 import type { Scan, ScanResult, Finding } from '../api/types';
 import AgentLogConsole from '../components/AgentLogConsole';
@@ -265,6 +265,53 @@ function CollectorFactsSection({ entry }: { entry: CollectedFactsEntry }) {
   );
 }
 
+function ReEvaluateButton({ scanId }: { scanId: string }) {
+  const queryClient = useQueryClient();
+  const [toast, setToast] = useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: () => replayEvaluation({ scan_id: scanId }),
+    onSuccess: (data) => {
+      setToast(
+        `Re-evaluation complete: ${data.findings_created} created, ${data.findings_updated} updated`,
+      );
+      void queryClient.invalidateQueries({ queryKey: ['findings'] });
+      void queryClient.invalidateQueries({ queryKey: ['scan', scanId] });
+      setTimeout(() => setToast(null), 5000);
+    },
+    onError: (err: Error) => {
+      setToast(`Re-evaluation failed: ${err.message}`);
+      setTimeout(() => setToast(null), 5000);
+    },
+  });
+
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <button
+        className="btn btn-secondary"
+        disabled={mutation.isPending}
+        onClick={() => mutation.mutate()}
+        title="Re-evaluate stored facts against current policies"
+      >
+        {mutation.isPending ? 'Re-evaluating...' : 'Re-evaluate'}
+      </button>
+      {toast && (
+        <span
+          style={{
+            padding: '4px 10px',
+            borderRadius: 4,
+            fontSize: 13,
+            background: mutation.isError ? '#fef2f2' : '#f0fdf4',
+            color: mutation.isError ? '#991b1b' : '#166534',
+          }}
+        >
+          {toast}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ScanOverview({ scan }: { scan: Scan }) {
   return (
     <div>
@@ -304,6 +351,12 @@ function ScanOverview({ scan }: { scan: Scan }) {
       )}
 
       <SummaryBar scan={scan} />
+
+      {(scan.status === 'completed' || scan.status === 'failed') && (
+        <div style={{ margin: '12px 0' }}>
+          <ReEvaluateButton scanId={scan.id} />
+        </div>
+      )}
 
       {scan.results && scan.results.length > 0 ? (
         <table className="table">

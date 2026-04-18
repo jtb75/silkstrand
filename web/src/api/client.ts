@@ -600,18 +600,6 @@ export const getControlRego = (controlId: string) =>
 export const copyTenantPolicy = (controlId: string) =>
   request<{ id: string }>(`/api/v1/tenant-policies/copy-from/${controlId}`, { method: 'POST' });
 
-export interface TenantPolicy {
-  id: string;
-  control_id: string;
-  provenance: 'derived' | 'custom';
-  rego_source: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export const listTenantPolicies = () =>
-  request<TenantPolicy[]>('/api/v1/tenant-policies');
-
 // ─── ADR 007 — Scan definitions + Findings ───────────────────────────────
 import type {
   ScanDefinition,
@@ -940,6 +928,18 @@ export const validateRego = (rego_source: string) =>
   });
 
 // ─── end Tenant policies ────────────────────────────────────────────────────
+
+// ─── Retroactive evaluation (ADR 011 D10) ───────────────────────────────────
+
+import type { ReplayRequest, ReplayResponse } from './types';
+
+export const replayEvaluation = (req: ReplayRequest) =>
+  request<ReplayResponse>('/api/v1/evaluations/replay', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+
+// ─── end Retroactive evaluation ─────────────────────────────────────────────
 
 // Absolute SSE URL builder — combines the active DC base URL with the
 // /api/v1/events/stream path and the minted token. Exposed so
